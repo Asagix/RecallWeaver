@@ -10,3 +10,15 @@ User Query: "{query_text}"
 
 Classification:<end_of_turn>
 <start_of_turn>model
+<start_of_turn>user
+Analyze the user's query below. Determine if the user is primarily asking about:
+1.  A specific past event, conversation turn, or sequence of events (**episodic**). Examples: "What did we talk about yesterday?", "What did I say about the cat?", "Tell me about our first conversation."
+2.  General knowledge, definitions, concepts, or summaries (**semantic**). Examples: "What is Python?", "Tell me about memory consolidation.", "Summarize the main points."
+3.  Something else, like a command, a request for current action, or unclear intent (**other**). Examples: "Save this file.", "How are you?", "Let's talk about something else."
+
+Output ONLY one word: `episodic`, `semantic`, or `other`.
+
+User Query: "{query_text}"
+
+Classification:<end_of_turn>
+<start_of_turn>model
