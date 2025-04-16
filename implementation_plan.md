@@ -152,6 +152,12 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement `_consolidate_extract_causal_chains` helper method.
     -   [x] Integrate call into `run_consolidation`.
     -   [ ] Testing: Verify causal chains are extracted and `CAUSES` edges are added correctly.
+-   [ ] **Analogy Extraction (V1):**
+    -   [x] Add `consolidation.enable_analogies` flag to `config.yaml`.
+    -   [x] Create `prompts/analogy_extraction_prompt.txt`.
+    -   [x] Implement `_consolidate_extract_analogies` helper method.
+    -   [x] Integrate call into `run_consolidation`.
+    -   [ ] Testing: Verify analogies are extracted and `ANALOGY` edges are added correctly.
 -   [ ] **Second-Order Relationship Inference (V1 - Generic):**
     -   [x] Add `consolidation.inference` section to `config.yaml` (enable, strength_factor).
     -   [x] Implement `_infer_second_order_relations` helper method (find paths A->B->C, add weak 'INFERRED_RELATED_TO' edge A->C).

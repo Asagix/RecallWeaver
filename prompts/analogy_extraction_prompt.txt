@@ -1,0 +1,27 @@
+<start_of_turn>user
+Analyze the following conversation context and the extracted key concepts. Identify any analogies *explicitly stated or strongly implied* where one concept is compared to another (e.g., "Concept A is like Concept B", "Concept X functions similarly to Concept Y").
+
+**Concepts (Use ONLY these exact strings):**
+{concept_list_str}
+
+**Conversation Context:**
+--- START ---
+{context_text}
+--- END ---
+
+**Output Format:** Respond ONLY with a valid JSON list of lists. Each inner list represents one identified analogy and MUST contain exactly two concept strings `[["Concept A", "Concept B"]]`, indicating A is analogous to B.
+- Use the exact concept strings from the list provided above.
+- Only include concepts from the list in the pairs.
+- If no analogies are found between the provided concepts based on the context, output an empty JSON list `[]`.
+- Do NOT invent analogies or use concepts not in the list.
+
+**Example Output (for different concepts/context):**
+```json
+[
+  ["Memory System", "Filing Cabinet"],
+  ["Neural Network", "Brain"]
+]
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

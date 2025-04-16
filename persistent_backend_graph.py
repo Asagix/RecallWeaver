@@ -3281,6 +3281,96 @@ class GraphMemoryClient:
             logger.info(f"Added {added_edge_count} new CAUSES edges from causal chains.")
         return added_edge_count
 
+    def _consolidate_extract_analogies(self, context_text: str, concept_node_map: dict):
+        """Helper to extract analogies (A is like B) between concepts via LLM."""
+        if not self.config.get('consolidation', {}).get('enable_analogies', False):
+            logger.info("Analogy extraction disabled by config.")
+            return 0 # Return 0 added edges
+
+        logger.info("Attempting Analogy Extraction (LLM)...")
+        concept_list_str = "\n".join([f"- \"{c}\"" for c in concept_node_map.keys()])
+        prompt_template = self._load_prompt("analogy_extraction_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load analogy extraction prompt template.")
+            return 0
+
+        analogy_prompt = prompt_template.format(
+            concept_list_str=concept_list_str,
+            context_text=context_text
+        )
+
+        logger.debug(f"Sending Analogy prompt:\n{analogy_prompt}")
+        llm_response_str = self._call_kobold_api(analogy_prompt, max_length=200, temperature=0.2)
+
+        extracted_analogies = []
+        if llm_response_str:
+            try:
+                logger.debug(f"Raw Analogy response: ```{llm_response_str}```")
+                # Extract JSON list
+                match = re.search(r'(\[.*?\])', llm_response_str, re.DOTALL)
+                if match:
+                    json_str = match.group(1)
+                    parsed_list = json.loads(json_str)
+                    if isinstance(parsed_list, list):
+                        # Validate inner lists
+                        valid_analogies = []
+                        for pair in parsed_list:
+                            if isinstance(pair, list) and len(pair) == 2 and all(isinstance(item, str) for item in pair):
+                                # Check if both concepts in the pair are known
+                                if all(item in concept_node_map for item in pair):
+                                    valid_analogies.append(pair)
+                                else:
+                                    logger.warning(f"Skipping analogy with unknown concepts: {pair}")
+                            else:
+                                logger.warning(f"Skipping invalid analogy format (must be list of 2 strings): {pair}")
+                        extracted_analogies = valid_analogies
+                        logger.info(f"Successfully parsed {len(extracted_analogies)} valid analogies from LLM.")
+                    else:
+                        logger.warning(f"LLM response was valid JSON but not a list. Raw: {llm_response_str}")
+                else:
+                    logger.warning(f"Could not extract valid JSON list '[]' from analogy response. Raw: '{llm_response_str}'")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response for analogies: {e}. Raw: '{llm_response_str}'")
+            except Exception as e:
+                logger.error(f"Unexpected error processing analogies response: {e}", exc_info=True)
+
+        added_edge_count = 0
+        if extracted_analogies:
+            current_time = time.time()
+            for analogy_pair in extracted_analogies:
+                concept_a_text = analogy_pair[0]
+                concept_b_text = analogy_pair[1]
+                uuid_a = concept_node_map.get(concept_a_text)
+                uuid_b = concept_node_map.get(concept_b_text)
+
+                # Should always have UUIDs due to validation, but check
+                if uuid_a and uuid_b and uuid_a in self.graph and uuid_b in self.graph:
+                    try:
+                        # Add edge if it doesn't exist (direction doesn't strictly matter for analogy)
+                        # Let's add A->B for consistency
+                        edge_type = "ANALOGY"
+                        if not self.graph.has_edge(uuid_a, uuid_b): # Check only one direction for adding
+                            base_strength = 0.65 # Moderate strength for analogy
+                            self.graph.add_edge(
+                                uuid_a, uuid_b,
+                                type=edge_type,
+                                base_strength=base_strength,
+                                last_traversed_ts=current_time
+                            )
+                            logger.info(f"Added Analogy Edge: {uuid_a[:8]} --[{edge_type}]--> {uuid_b[:8]} ('{concept_a_text}' like '{concept_b_text}')")
+                            added_edge_count += 1
+                        # Update timestamp if edge exists? Maybe not necessary for analogy.
+                        # else:
+                        #     self.graph.edges[uuid_a, uuid_b]["last_traversed_ts"] = current_time
+                        #     logger.debug(f"Analogy edge {uuid_a[:8]}->{uuid_b[:8]} exists. Updated timestamp.")
+                    except Exception as e:
+                        logger.error(f"Error adding analogy edge {uuid_a[:8]} -> {uuid_b[:8]}: {e}")
+                else:
+                    logger.error(f"Could not find nodes for validated analogy: '{concept_a_text}' -> '{concept_b_text}'")
+
+            logger.info(f"Added {added_edge_count} new ANALOGY edges.")
+        return added_edge_count
+
 
     def _generate_autobiographical_model(self):
         """Analyzes key memories and updates the ASM via LLM."""
@@ -3612,6 +3702,8 @@ class GraphMemoryClient:
                     self._consolidate_extract_rich_relations(context_text, concept_node_map, spacy_doc)
                     # Also attempt causal chain extraction if spaCy was used
                     self._consolidate_extract_causal_chains(context_text, concept_node_map)
+                    # Attempt analogy extraction
+                    self._consolidate_extract_analogies(context_text, concept_node_map)
 
             else:  # Rich associations disabled or spaCy unavailable/failed earlier
                 if not self.nlp and rich_assoc_enabled:
@@ -3622,6 +3714,8 @@ class GraphMemoryClient:
                 self._consolidate_extract_hierarchy(concept_node_map)
                 # Attempt causal chain extraction even if rich associations are off
                 self._consolidate_extract_causal_chains(context_text, concept_node_map)
+                # Attempt analogy extraction
+                self._consolidate_extract_analogies(context_text, concept_node_map)
         else:
             logger.info("Skipping relation extraction as no concepts were identified.")
 

@@ -89,6 +89,7 @@ consolidation:
     - "MEASURES"
     - "LOCATION_OF"
   enable_causal_chains: true # Enable/disable causal chain extraction during consolidation
+  enable_analogies: true # Enable/disable analogy extraction during consolidation
   # --- Second-Order Inference ---
   inference:
     enable: true
