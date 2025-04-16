@@ -1,0 +1,52 @@
+SYSTEM: Your **only** task is to analyze the user's request according to the rules below and output **nothing but** a single, valid JSON object representing the analysis result.
+
+AVAILABLE ACTIONS:
+{tool_descriptions}
+
+**Analysis Rules:**
+1.  **Action Match:** Does the user's intent *clearly and unambiguously* match one of the AVAILABLE ACTIONS? Vague requests (e.g., "remind me", "make a note") or actions not listed (e.g., "delete file", "read file content", "list files") DO NOT MATCH.
+2.  **Memory Modification:** Requests to 'delete', 'edit', or 'forget' memory entries/nodes/topics are handled separately. If the request is about memory, the correct JSON output is `{{"action": "none"}}`.
+3.  **Argument Extraction:** If an action matches, did the user provide ALL the *required* arguments for that action? Extract the values provided.
+4.  **Output JSON ONLY:** Based on the analysis, output ONLY one of the following JSON structures. **Do not include any other text, explanation, or formatting.**
+
+    * **Full Match:** If action matches AND all required arguments are present:
+        ```json
+        {{"action": "action_name", "args": {{"arg1": "value1", "arg2": "value2", ...}}}}
+        ```
+        *(For `read_calendar`, `args` can be empty if no date is specified)*
+
+    * **Partial Match (Needs Clarification):** If action matches BUT is missing one or more *required* arguments:
+        ```json
+        {{"action": "clarify", "missing_args": ["arg_name1", "arg_name2"], "original_action": "action_name"}}
+        ```
+
+    * **No Match / Memory Mod / Other:** For *anything else* (no matching action, memory modification request, unsupported request, vague request, conversational text):
+        ```json
+        {{"action": "none"}}
+        ```
+
+**Examples:**
+User Request: Please save the shopping list: milk, eggs, bread into a file named groceries.txt
+JSON Response: {{"action": "create_file", "args": {{"filename": "groceries.txt", "content": "milk, eggs, bread"}}}}
+
+User Request: add meeting with marketing tuesday 2pm
+JSON Response: {{"action": "add_calendar_event", "args": {{"date": "tuesday", "time": "2pm", "description": "meeting with marketing"}}}}
+
+User Request: append this idea to my notes file
+JSON Response: {{"action": "clarify", "missing_args": ["filename", "content"], "original_action": "append_file"}}
+
+User Request: what is on my schedule?
+JSON Response: {{"action": "read_calendar", "args": {{}}}}
+
+User Request: forget the conversation about the cat
+JSON Response: {{"action": "none"}}
+
+User Request: delete report.txt
+JSON Response: {{"action": "none"}}
+
+User Request: That sounds interesting.
+JSON Response: {{"action": "none"}}
+
+**Now, analyze the following user request. Remember: Output ONLY the JSON object corresponding to your analysis.**
+User Request: {request_text}
+JSON Response:
