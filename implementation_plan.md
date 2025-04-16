@@ -69,20 +69,20 @@ This document tracks the implementation progress and outlines future enhancement
     -   [ ] **Implement V1 Emotion Analysis:**
         -   [ ] Integrate local sentiment/emotion library analysis during `run_consolidation`.
         -   [ ] Call `_analyze_and_update_emotion` helper to store results on relevant nodes.
-    -   [ ] Implement mechanism for automatic/periodic consolidation trigger.
--   [ ] **Nuanced Forgetting (V1 Implementation):**
-    -   [ ] **Enable Flag:** Check `features.enable_forgetting`.
-    * [ ] **Implement `run_memory_maintenance()` Method:**
-        -   [ ] Add trigger mechanism (interaction count based) in `Worker`.
-        -   [ ] Implement efficient candidate node filtering (status='active', type, age, activation thresholds from config).
-        -   [ ] Implement normalization functions for score factors.
-        -   [ ] Implement forgettability score calculation (weighted sum formula).
-        -   [ ] Implement **soft delete** (set `status='archived'`) if score exceeds threshold.
-        -   [ ] Add clear logging for archived nodes.
-    * [ ] **Modify Retrieval:** Update `retrieve_memory_chain` and `_search_similar_nodes` to filter out `status=='archived'` nodes.
-    * [ ] **Update `config.yaml`:** Define `forgetting` section with enable flag, trigger, thresholds, weights, candidate/protected types. Define `saliency_factor` and `emotion_resistance_factor` weights.
+    -   [x] Implement mechanism for automatic/periodic consolidation trigger.
+-   [x] **Nuanced Forgetting (V1 Implementation):**
+    -   [x] **Enable Flag:** Check `features.enable_forgetting`.
+    * [x] **Implement `run_memory_maintenance()` Method:**
+        -   [x] Add trigger mechanism (interaction count based) in `Worker`.
+        -   [x] Implement efficient candidate node filtering (status='active', type, age, activation thresholds from config).
+        -   [x] Implement normalization functions for score factors.
+        -   [x] Implement forgettability score calculation (weighted sum formula).
+        -   [x] Implement **soft delete** (set `status='archived'`) if score exceeds threshold.
+        -   [x] Add clear logging for archived nodes.
+    * [x] **Modify Retrieval:** Update `retrieve_memory_chain` and `_search_similar_nodes` to filter out `status=='archived'` nodes.
+    * [x] **Update `config.yaml`:** Define `forgetting` section with enable flag, trigger, thresholds, weights, candidate/protected types. Define `saliency_factor` and `emotion_resistance_factor` weights. (Config already updated)
     * [ ] **Testing (Forgetting):** Test candidate filtering, score calculation, archiving logic, and retrieval exclusion. Verify tuning knobs work.
-    * [ ] **(V2 Placeholder):** Define `purge_archived_nodes()` stub method.
+    * [x] **(V2 Placeholder):** Define `purge_archived_nodes()` stub method.
 -   [ ] **Action/Tool Handling (via Focused Intent Analysis):**
     -   [x] Backend: Basic structure for `analyze_action_request` and `execute_action` exists.
     -   [x] Backend: Basic file/calendar wrapper methods exist.
