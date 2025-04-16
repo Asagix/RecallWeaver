@@ -110,7 +110,8 @@ class Worker(QThread):
         self.interaction_count = 0 # Tracks user/AI turns since last maintenance/consolidation trigger
         self.personality = personality_name
         self.config_path = config_path
-        self.pending_clarification = None # NEW: Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
+        self.pending_clarification = None # Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
+        self.pending_confirmation = None # NEW: Store pending confirmation details {'action': str, 'args': dict}
 
         # Load config for keywords and trigger counts
         try:
@@ -381,8 +382,30 @@ class Worker(QThread):
         if self.client:
             success = False; message = f"Failed to execute action '{action}'."; action_suffix = f"{action}_fail"
             try:
-                # Backend now returns (bool, message, suffix)
-                success, message, action_suffix = self.client.execute_action(action_data)
+                # Backend now returns (bool, message, suffix) or dict for confirmation
+                backend_response = self.client.execute_action(action_data)
+
+                # --- Check if confirmation is needed (backend returns dict) ---
+                if isinstance(backend_response, dict) and backend_response.get("action") == "confirm_overwrite":
+                    gui_logger.info(f"Overwrite confirmation needed for action: {backend_response}")
+                    # Store the details needed to perform the action later
+                    self.pending_confirmation = {
+                        'action': 'create_file', # The action to perform if confirmed
+                        'args': backend_response.get('args', {})
+                    }
+                    # Emit confirmation signal instead of modification response
+                    self.signals.confirmation_needed.emit("confirm_overwrite", backend_response.get("args", {}))
+                    return # Stop processing here, wait for GUI confirmation
+                # --- Otherwise, assume (success, message, suffix) tuple ---
+                elif isinstance(backend_response, tuple) and len(backend_response) == 3:
+                     success, message, action_suffix = backend_response
+                else:
+                     # Handle unexpected response format
+                     logger.error(f"Unexpected response format from execute_action: {backend_response}")
+                     success = False
+                     message = "Received unexpected response from backend during action execution."
+                     action_suffix = f"{action}_error"
+
             except Exception as e:
                 error_msg = f"Error calling backend execute_action for '{action}': {e}"
                 self.signals.error.emit(error_msg)
@@ -780,7 +803,8 @@ class ChatWindow(QMainWindow):
         self.worker = None # Worker thread instance
         self.attached_file_path = None # Store path of file to attach
         self.is_processing = False # Flag to prevent concurrent processing
-        self.awaiting_clarification = False # NEW: Flag for clarification state
+        self.awaiting_clarification = False # Flag for clarification state
+        self.pending_confirmation = None # NEW: Store details for pending confirmation {'action': str, 'args': dict}
 
         # --- Initial State ---
         self.set_input_enabled(False) # Start with input disabled
