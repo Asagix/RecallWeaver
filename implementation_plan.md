@@ -159,8 +159,13 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement UI for clarification (Improved prompt/indicator implemented).
     -   [x] Implement UI for action confirmations (Overwrite file).
 -   [ ] **(Future GUI Enhancements):**
-    -   [ ] Add interface to view/manage 'archived' nodes.
-    -   [ ] Add UI for user feedback on memory saliency.
+    -   [ ] Add interface to view/manage 'archived' nodes. (Now 'weak' nodes)
+    -   [x] Add UI for user feedback on memory saliency:
+        -   [x] Config: Add `saliency.feedback_factor`.
+        -   [x] Backend: Implement `update_node_saliency` logic.
+        -   [x] GUI: Add `[+S]/[-S]` links and signal to `CollapsibleMemoryWidget`.
+        -   [x] GUI: Connect signal and add handler slot in `ChatWindow`.
+        -   [x] GUI: Add worker method and task handler for saliency updates.
     -   [ ] Add basic graph visualization capabilities.
 
 ## Phase 3: Configuration & Refinement
