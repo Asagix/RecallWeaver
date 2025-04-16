@@ -1,6 +1,6 @@
-# Implementation Plan: Persistent Graph-Based Memory System
+# Implementation Plan: Persistent Graph-Based Memory System (v3)
 
-This document tracks the implementation progress and outlines future enhancements based on the Software Design Document V1.0 and subsequent analysis.
+This document tracks the implementation progress and outlines future enhancements, including detailed steps for Phase 1 features.
 
 ## Phase 1: Backend Core (`persistent_backend_graph.py`)
 
@@ -17,6 +17,19 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement `_get_embedding` helper.
     -   [x] Implement `add_memory_node` (UUID, timestamp, embedding generation, add to graph, add to FAISS, update mappings).
     -   [x] Add temporal edge creation in `add_memory_node`.
+-   [ ] **Data Model Enhancements (Phase 1):**
+    -   [ ] **Modify `add_memory_node`:** Initialize new node attributes: `status` ('active'), `access_count` (0), default `emotion_valence`/`arousal` (from config), initial `saliency_score` (calculated based on V1 formula - see Saliency section).
+    -   [ ] **Verify Save/Load:** Test `_save_memory` and `_load_memory` to ensure new attributes are persisted correctly.
+    -   [ ] **Update `config.yaml`:** Add `features` section with enable flags. Add `emotion_analysis` section with `default_valence`/`arousal`. Add placeholders in `forgetting.weights`.
+-   [ ] **V1 Saliency Implementation (Phase 1):**
+    -   [ ] **Enable Flag:** Check `features.enable_saliency` in relevant code sections.
+    * [ ] **Modify `add_memory_node`:** Implement V1 initial `saliency_score` calculation (based on node type base score + default emotion arousal influence, clamped 0-1) as detailed in Data Model changes.
+    * [ ] **Modify `retrieve_memory_chain` (Access Count):** Increment `access_count` attribute for nodes in the final `relevant_nodes` list. Ensure `last_accessed_ts` is also updated.
+    * [ ] **Modify `retrieve_memory_chain` (Activation Influence):** Factor `saliency_score` into the `act_pass` calculation (e.g., `act_pass *= (1.0 + source_saliency * activation_influence)`) using configured `activation_influence` factor.
+    * [ ] **Modify `run_consolidation`:** Ensure new summary/concept nodes created via `add_memory_node` receive their initial saliency score automatically.
+    * [ ] **Add Placeholder Method:** Add stub `update_node_saliency(self, node_uuid, change_factor)` method to `GraphMemoryClient` for V2.
+    * [ ] **Update `config.yaml`:** Define `saliency` section with `initial_scores`, `emotion_influence_factor`, `activation_influence`.
+    * [ ] **Testing (Saliency):** Unit test calculation logic. Integration test attribute persistence, `access_count` increment, activation influence, and consolidation assignment.
 -   [x] **LLM Interaction:**
     -   [x] Implement `_call_kobold_api` (Generate API).
     -   [x] Implement `_call_kobold_multimodal_api` (Chat Completions API).
@@ -29,134 +42,99 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Define activation parameters (now in config).
     -   [x] Implement helper `_calculate_node_decay`.
     -   [x] Implement helper `_calculate_dynamic_edge_strength`.
-    -   [x] Implement `retrieve_memory_chain` core logic:
-        -   [x] Initialize activation levels for initial nodes.
-        -   [x] Implement activation spreading loop (bi-directional).
-        -   [x] Apply node decay.
-        -   [x] Identify nodes above threshold.
-        -   [x] Return ordered list of node data dictionaries.
-        -   [x] Utilize edge type propagation factors from config.
+    -   [x] Implement `retrieve_memory_chain` core logic (Initialization, Spreading Loop, Decay, Thresholding, Edge Factors).
     -   [x] Update `process_interaction` to use the results of `retrieve_memory_chain`.
 -   [x] **Context Injection Refinement:**
     -   [x] Integrate `transformers.AutoTokenizer` for accurate token counting.
-    -   [x] Update `_construct_prompt` to:
-        -   [x] Calculate available token budget.
-        -   [x] Format retrieved memory chain nodes correctly (with timestamps/tags).
-        -   [x] Inject memory chain context chronologically, pruning older entries if budget exceeded.
-        -   [x] Assemble final prompt respecting Gemma Instruct format.
-        -   [x] Inject current time information.
-        -   [x] Add explicit instruction for LLM to use context for recall.
-        -   [x] Fix duplicate user input issue in history processing.
+    -   [x] Update `_construct_prompt` (Budgeting, Formatting, Chronological Injection, Gemma Format, Time Info, Recall Instruction).
 -   [x] **Memory Manipulation:**
-    -   [x] Implement `analyze_memory_modification_request` using direct extraction and LLM fallback.
-    -   [x] Implement `delete_memory_entry`:
-        -   [x] Remove node from NetworkX graph.
-        -   [x] Remove embedding from `self.embeddings`.
-        -   [x] Remove vector from FAISS index (via index rebuild).
-        -   [x] Update FAISS ID mappings.
-    -   [x] Implement `edit_memory_entry` (by deleting old node and adding a new one, relinking temporal edges).
-    -   [x] Implement `forget_topic`:
-        -   [x] Embed topic.
-        -   [x] Find related nodes via FAISS search.
-        -   [x] Call `delete_memory_entry` for identified nodes.
-    -   [x] Trigger `_save_memory` consistently after modifications (Currently saved after consolidation/deletion/exit).
--   [~] **Consolidation:**
+    -   [x] Implement `analyze_memory_modification_request`.
+    -   [x] Implement `delete_memory_entry`.
+    -   [x] Implement `edit_memory_entry`.
+    -   [x] Implement `forget_topic`.
+    -   [x] Trigger `_save_memory` consistently after modifications.
+-   [ ] **Consolidation (V1 Enhancements):**
     -   [x] Implement `run_consolidation` basic structure.
-    -   [x] Define initial LLM prompts for summarization, concept extraction, associative linking, and basic hierarchical linking.
-    -   [x] Add logic to select nodes for consolidation.
-    -   [x] Add logic to parse LLM response and add new nodes/edges (`summary`, `concept`, `SUMMARY_OF`, `MENTIONS_CONCEPT`, `ASSOCIATIVE`, `HIERARCHICAL`).
-    -   [x] Implement concept deduplication (linking to existing concepts).
-    -   [x] Implement pruning of summarized 'turn' nodes (with connectivity safety check).
-    -   [ ] **Refine LLM prompts** for more robust/accurate summarization, concept extraction, relationship, and hierarchy identification.
-    -   [ ] **Implement more robust parsing** for consolidation LLM responses (e.g., handle variations, consider JSON mode if available).
-    -   [ ] **Explore deeper relationship analysis** (e.g., causality, sentiment, purpose) during consolidation.
-    -   [ ] **Implement mechanism for automatic/periodic consolidation trigger** (e.g., based on interaction count, time).
+    -   [x] Define initial LLM prompts.
+    -   [x] Add logic to select nodes.
+    -   [x] Add logic to parse LLM response and add nodes/edges.
+    -   [x] Implement concept deduplication.
+    -   [x] Implement pruning of summarized 'turn' nodes.
+    -   [ ] **Refine LLM prompts** for summarization, concept extraction.
+    -   [ ] **Implement Hybrid Association Extraction (V1.1):**
+        -   [ ] Integrate NLP library (e.g., spaCy) to extract basic entities/dependency relations first.
+        -   [ ] Store these basic relations.
+        -   [ ] *Optionally* (if `features.enable_rich_associations` is true) call LLM with text + extracted info, asking for specific *additional* typed relations (e.g., `CAUSES`) from a core set (`IS_A`, `PART_OF`, `CAUSES`, `HAS_PROPERTY`, `RELATED_TO`).
+        -   [ ] Implement **robust parsing** for LLM's structured (JSON) output for relationships.
+    -   [ ] **Implement V1 Emotion Analysis:**
+        -   [ ] Integrate local sentiment/emotion library analysis during `run_consolidation`.
+        -   [ ] Call `_analyze_and_update_emotion` helper to store results on relevant nodes.
+    -   [ ] Implement mechanism for automatic/periodic consolidation trigger.
+-   [ ] **Nuanced Forgetting (V1 Implementation):**
+    -   [ ] **Enable Flag:** Check `features.enable_forgetting`.
+    * [ ] **Implement `run_memory_maintenance()` Method:**
+        -   [ ] Add trigger mechanism (interaction count based) in `Worker`.
+        -   [ ] Implement efficient candidate node filtering (status='active', type, age, activation thresholds from config).
+        -   [ ] Implement normalization functions for score factors.
+        -   [ ] Implement forgettability score calculation (weighted sum formula).
+        -   [ ] Implement **soft delete** (set `status='archived'`) if score exceeds threshold.
+        -   [ ] Add clear logging for archived nodes.
+    * [ ] **Modify Retrieval:** Update `retrieve_memory_chain` and `_search_similar_nodes` to filter out `status=='archived'` nodes.
+    * [ ] **Update `config.yaml`:** Define `forgetting` section with enable flag, trigger, thresholds, weights, candidate/protected types. Define `saliency_factor` and `emotion_resistance_factor` weights.
+    * [ ] **Testing (Forgetting):** Test candidate filtering, score calculation, archiving logic, and retrieval exclusion. Verify tuning knobs work.
+    * [ ] **(V2 Placeholder):** Define `purge_archived_nodes()` stub method.
 -   [ ] **Action/Tool Handling (via Focused Intent Analysis):**
-    -   [x] **Backend:** Basic structure for `analyze_action_request` and `execute_action` exists.
-    -   [x] **Backend:** Basic file/calendar wrapper methods exist in `file_manager.py` and `GraphMemoryClient`.
-    -   [ ] **Backend:** **Refine LLM prompt** for `analyze_action_request` to reliably detect file/calendar actions, extract arguments, and handle clarification needs (JSON output preferred).
-    -   [ ] **Backend:** **Implement robust JSON parsing & argument validation** for `analyze_action_request` response.
-    -   [ ] **Backend:** **Enhance error handling** within `execute_action` and file/calendar wrappers.
-    -   [ ] **GUI:** Integrate action analysis call into `Worker.add_input`.
-    -   [ ] **GUI:** Implement full logic in `Worker` to handle `clarify` responses and queue/execute specific action tasks.
-    -   [ ] **GUI:** Implement UI elements/flow for clarification requests and potential confirmations.
+    -   [x] Backend: Basic structure for `analyze_action_request` and `execute_action` exists.
+    -   [x] Backend: Basic file/calendar wrapper methods exist.
+    -   [ ] Backend: Refine LLM prompt for `analyze_action_request`.
+    -   [ ] Backend: Implement robust JSON parsing & argument validation for `analyze_action_request`.
+    -   [ ] Backend: Enhance error handling within `execute_action` and file/calendar wrappers.
+    -   [ ] GUI: Integrate action analysis call into `Worker.add_input`.
+    -   [ ] GUI: Implement full logic in `Worker` to handle `clarify` responses and queue/execute specific action tasks.
+    -   [ ] GUI: Implement UI elements/flow for clarification requests and potential confirmations.
 
 ## Phase 2: GUI (`gui_chat.py`)
 
--   [x] **Basic UI Structure:**
-    -   [x] Create `gui_chat.py`.
-    -   [x] Set up main PyQt6 window (`QMainWindow`).
-    -   [x] Add input field (`PasteLineEdit` supporting image paste/drop).
-    -   [x] Add output display area (`QScrollArea` with `QVBoxLayout`).
-    -   [x] Add Send, Attach, Reset Memory, Consolidate buttons.
-    -   [x] Implement basic Markdown->HTML formatting (`display_message`).
-    -   [x] Add image thumbnail display in chat bubbles.
-    -   [x] Implement dark theme and styling based on `config.yaml`.
-    -   [x] Add status bar with status indicator light.
-    -   [x] Add personality selection menu.
-    -   [x] Fix auto-scrolling behavior.
--   [x] **Backend Worker Thread:**
-    -   [x] Define `Worker` class inheriting from `QThread`.
-    -   [x] Implement `run` method for the worker loop.
-    -   [x] Define signals for communication (including `backend_ready`).
-    -   [x] Instantiate `GraphMemoryClient` within the worker for the selected personality.
-    -   [x] Load modification keywords and consolidation trigger count from config in worker.
-    -   [x] Add Reset Memory & Consolidate task handling.
--   [x] **Connecting UI and Worker:**
-    -   [x] Connect UI elements (Send, Reset, Consolidate, Menu) to worker slots/methods.
-    -   [x] Connect worker signals back to UI slots (including `on_backend_ready`).
-    -   [x] Handle thread starting/stopping gracefully (including saving on stop/close).
-    -   [x] Implement personality switching logic (stop old worker, start new).
--   [x] **Displaying Conversation:**
-    -   [x] Update UI display area with user input and AI responses in bubbles.
-    -   [x] Worker maintains short-term conversation history.
-    -   [x] Display image attachments from user.
--   [x] **Handling Memory Modification Commands:**
-    -   [x] Add keyword check in UI input handling (using config).
-    -   [x] Send modification requests to the worker.
-    -   [x] Worker calls backend analysis and execution methods.
-    -   [x] Display confirmation/results back in the UI with action indicators.
--   [x] **Displaying Memory Context:**
-    -   [x] Add `CollapsibleMemoryWidget`.
-    -   [x] Pass memory data from backend through worker to GUI.
-    -   [x] Instantiate and display widget in `display_response`.
-    -   [x] Fix content display issue in widget.
+-   [x] **Basic UI Structure & Features** (Input, Output, Buttons, Formatting, Styling, Status Bar, Menu, Image Handling).
+-   [x] **Backend Worker Thread** (Setup, Signals, Task Handling, Personality Switching).
+-   [x] **Connecting UI and Worker**.
+-   [x] **Displaying Conversation & Memory Context**.
+-   [x] **Handling Memory Modification Commands**.
 -   [ ] **Action/Tool Handling (GUI Layer):** (See Backend section for details)
-    -   [ ] Modify `Worker.add_input` to call `client.analyze_action_request` first.
-    -   [ ] Add logic to `Worker` to check analysis result and queue specific action tasks.
-    -   [ ] Implement new `handle_..._task` methods in `Worker` to call `client.execute_action`.
-    -   [ ] Define and emit new/updated signals from `Worker` for action success/failure/clarification needed.
-    -   [ ] Add slots in `ChatWindow` to handle these new signals.
-    -   [ ] Implement UI for clarification requests (e.g., missing arguments).
-    -   [ ] Implement UI for potential confirmation steps (e.g., getting file content).
+    -   [ ] Integrate action analysis call.
+    -   [ ] Add Worker logic for clarification/execution tasks.
+    -   [ ] Implement UI for clarification/confirmation.
+-   [ ] **(Future GUI Enhancements):**
+    -   [ ] Add interface to view/manage 'archived' nodes.
+    -   [ ] Add UI for user feedback on memory saliency.
+    -   [ ] Add basic graph visualization capabilities.
 
 ## Phase 3: Configuration & Refinement
 
--   [x] **Configuration File:**
-    -   [x] Create `config.yaml`.
-    -   [x] Move constants (paths, model names, API URL, activation parameters, GUI styles etc.) to config file.
-    -   [x] Load configuration using PyYAML in `GraphMemoryClient` and `Worker`.
+-   [x] **Configuration File (`config.yaml`)**.
 -   [ ] **Parameter Tuning & Evaluation:**
-    -   [~] Experimented with activation spreading parameters.
-    -   [ ] **Develop systematic test scenarios** for evaluating retrieval and consolidation quality.
-    -   [ ] **Systematically tune** activation parameters (`spreading_depth`, decay rates, propagation factors) based on test results.
-    -   [ ] **Systematically tune** consolidation parameters (e.g., `concept_similarity_threshold`).
-    -   [ ] **Tune Faiss search parameter (`k`)**.
-    -   [ ] **Tune LLM generation parameters** (temperature, etc.) for interaction vs. consolidation/analysis.
-    -   [ ] **Evaluate prompting strategies** (e.g., memory/history budget ratios).
+    -   [ ] Develop systematic test scenarios.
+    -   [ ] Systematically tune activation parameters.
+    -   [ ] Systematically tune consolidation parameters (including association extraction).
+    -   [ ] Systematically tune **forgetting parameters** (weights, thresholds, triggers).
+    -   [ ] Systematically tune **saliency parameters** (initial scores, influences).
+    -   [ ] Tune Faiss search parameter (`k`).
+    -   [ ] Tune LLM generation parameters.
+    -   [ ] Evaluate prompting strategies.
 -   [ ] **Error Handling & Robustness:**
-    -   [~] Added some error handling.
-    -   [ ] **Implement more robust parsing** of LLM responses (consolidation, analysis).
-    -   [ ] **Enhance file I/O and FAISS error handling** (e.g., backups, recovery, disk space checks).
-    -   [ ] **Add more thorough checks for graph/index consistency** on load.
+    -   [ ] Implement more robust parsing of LLM responses (consolidation, analysis).
+    -   [ ] Enhance file I/O and FAISS error handling.
+    -   [ ] Add more thorough checks for graph/index consistency.
 -   [ ] **Testing & Documentation:**
-    -   [~] Basic `if __name__ == "__main__":` tests exist.
-    -   [x] Added basic docstrings to `GraphMemoryClient` methods.
+    -   [x] Basic `if __name__ == "__main__":` tests exist.
+    -   [x] Added basic docstrings.
     -   [x] Created initial README.
-    -   [ ] **Develop unit tests** for core backend functions (`file_manager`, specific `GraphMemoryClient` helpers).
-    -   [ ] **Develop integration tests** for interaction/consolidation flows.
-    -   [ ] **Complete/Refine docstrings** throughout the codebase.
-    -   [ ] **Update README** as features evolve.
+    -   [ ] Develop **unit tests** for new helpers (saliency calc, forgettability score, normalization, emotion analysis wrappers, parsers).
+    -   [ ] Develop **integration tests** for Phase 1 features (saliency influence, forgetting cycle) and existing flows.
+    -   [ ] Complete/Refine docstrings.
+    -   [ ] Update README as features evolve.
+    -   [ ] Add clear documentation for all `config.yaml` parameters.
 -   [ ] **Scalability Enhancements (Future):**
-    -   [ ] Evaluate and potentially implement optimized FAISS index (e.g., `IndexIVFFlat`) if memory size grows significantly.
-    -   [ ] Evaluate graph database alternatives if NetworkX performance becomes a bottleneck.
+    -   [ ] Evaluate optimized FAISS index.
+    -   [ ] Evaluate graph database alternatives.
+
