@@ -2717,9 +2717,8 @@ class GraphMemoryClient:
                                                 # Reduce activation towards dynamic baseline
                                                 # Adjustment is negative, proportional to how far *above* dynamic baseline it is
                                                 adjustment = -max(0, current_activation - dynamic_baseline) * satisfaction_factor
-                                                # Reduce activation towards baseline (or even below if very satisfied?)
-                                                # Adjustment is negative, proportional to how far *above* baseline it is
-                                                adjustment = -max(0, current_activation - baseline) * satisfaction_factor
+                                                # The line below was redundant and used the wrong variable, removing it.
+                                                # adjustment = -max(0, current_activation - baseline) * satisfaction_factor
                                                 logger.debug(f"  Drive '{drive_name}' satisfied. Adjustment: {adjustment:.3f}")
                                             elif status == "frustrated":
                                                 # Increase activation away from baseline
