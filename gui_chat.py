@@ -109,6 +109,7 @@ class Worker(QThread):
         self.interaction_count = 0 # Tracks user/AI turns since last maintenance/consolidation trigger
         self.personality = personality_name
         self.config_path = config_path
+        self.pending_clarification = None # NEW: Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
 
         # Load config for keywords and trigger counts
         try:
