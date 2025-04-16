@@ -28,6 +28,13 @@ except ImportError:
     ZoneInfoNotFoundError = Exception # Placeholder
 from collections import defaultdict
 
+# *** Import Emotion Analysis Library ***
+try:
+    import text2emotion as te
+except ImportError:
+    logging.warning("text2emotion library not found. Emotion analysis will be disabled. Run `pip install text2emotion`")
+    te = None
+
 # *** Import file manager ***
 import file_manager # Assuming file_manager.py exists in the same directory
 
@@ -197,6 +204,71 @@ class GraphMemoryClient:
 
         logger.info(f"GraphMemoryClient initialized for personality '{self.personality}'.")
 
+
+    # --- Emotion Analysis Helper ---
+    def _analyze_and_update_emotion(self, node_uuid: str):
+        """Analyzes text of a node and updates its emotion attributes."""
+        if not te: # Check if library was imported
+            # logger.debug("text2emotion library not available, skipping emotion analysis.")
+            return
+        if not self.config.get('features', {}).get('enable_emotion_analysis', False):
+            # logger.debug("Emotion analysis feature disabled in config.")
+            return
+
+        if node_uuid not in self.graph:
+            logger.warning(f"Cannot analyze emotion for non-existent node: {node_uuid}")
+            return
+
+        node_data = self.graph.nodes[node_uuid]
+        text_to_analyze = node_data.get('text')
+
+        if not text_to_analyze:
+            # logger.debug(f"Node {node_uuid[:8]} has no text, skipping emotion analysis.")
+            return
+
+        try:
+            # logger.debug(f"Analyzing emotion for node {node_uuid[:8]}...")
+            emotion_scores = te.get_emotion(text_to_analyze)
+            # Example: Map primary emotions to valence/arousal (Russell's Circumplex Model)
+            # This is a VERY simplified mapping and needs refinement.
+            # Valence: Happy(+) vs Sad/Angry/Fear(-)
+            # Arousal: Angry/Fear/Surprise(+) vs Sad(-) vs Happy/Neutral(~)
+            valence = 0.0
+            arousal = 0.0 # Start slightly above zero baseline
+
+            # Positive Valence
+            valence += emotion_scores.get('Happy', 0.0) * 0.8
+            valence += emotion_scores.get('Surprise', 0.0) * 0.2 # Surprise can be +/-
+
+            # Negative Valence
+            valence -= emotion_scores.get('Sad', 0.0) * 0.9
+            valence -= emotion_scores.get('Angry', 0.0) * 0.7
+            valence -= emotion_scores.get('Fear', 0.0) * 0.8
+
+            # Arousal
+            arousal += emotion_scores.get('Angry', 0.0) * 0.8
+            arousal += emotion_scores.get('Fear', 0.0) * 0.9
+            arousal += emotion_scores.get('Surprise', 0.0) * 0.7
+            # Sadness can lower arousal slightly?
+            arousal -= emotion_scores.get('Sad', 0.0) * 0.3
+            # Happy can have moderate arousal
+            arousal += emotion_scores.get('Happy', 0.0) * 0.4
+
+            # Clamp values (e.g., -1 to 1 for valence, 0 to 1 for arousal)
+            final_valence = max(-1.0, min(1.0, valence))
+            final_arousal = max(0.0, min(1.0, arousal)) # Ensure arousal is non-negative
+
+            # Update node attributes
+            node_data['emotion_valence'] = final_valence
+            node_data['emotion_arousal'] = final_arousal
+
+            logger.debug(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})")
+
+        except Exception as e:
+            logger.error(f"Error during text2emotion analysis for node {node_uuid[:8]}: {e}", exc_info=True)
+            # Optionally reset to default if analysis fails?
+            # node_data['emotion_valence'] = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+            # node_data['emotion_arousal'] = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
 
 
     # --- Config Loading Method ---
@@ -477,7 +549,9 @@ class GraphMemoryClient:
                 activation_level=0.0, # Initial activation, updated during retrieval
                 last_accessed_ts=current_time # Timestamp of last access/creation
             )
-            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Status: {node_data.get('status')}, Saliency: {node_data.get('saliency_score')}).") # Use node_data after adding
+            # Access node data *after* adding it to the graph
+            node_data = self.graph.nodes[node_uuid]
+            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Status: {node_data.get('status')}, Saliency: {node_data.get('saliency_score')}).")
         except Exception as e:
              logger.error(f"Failed adding node {node_uuid} to graph: {e}")
              return None
@@ -2520,7 +2594,7 @@ class GraphMemoryClient:
         features_cfg = self.config.get('features', {})
         rich_assoc_enabled = features_cfg.get('enable_rich_associations', False)
         emotion_analysis_enabled = features_cfg.get('enable_emotion_analysis',
-                                                    False)  # Assuming you might add this later
+                                                    False)
 
         # --- 1. Select Nodes ---
         nodes_to_consolidate = self._select_nodes_for_consolidation(count=turn_count_for_consolidation)
@@ -2665,6 +2739,23 @@ class GraphMemoryClient:
                 self._consolidate_extract_hierarchy(concept_node_map)
         else:
             logger.info("Skipping relation extraction as no concepts were identified.")
+
+        # --- 7b. Emotion Analysis (Optional) ---
+        if emotion_analysis_enabled and te:
+            logger.info("Running V1 Emotion Analysis on consolidated nodes...")
+            nodes_for_emotion = set(active_nodes_to_process)
+            if summary_node_uuid: nodes_for_emotion.add(summary_node_uuid)
+            nodes_for_emotion.update(concept_node_map.values())
+
+            emotion_analyzed_count = 0
+            for node_uuid in nodes_for_emotion:
+                 if node_uuid in self.graph:
+                      self._analyze_and_update_emotion(node_uuid)
+                      emotion_analyzed_count += 1
+            logger.info(f"Emotion analysis attempted for {emotion_analyzed_count} nodes.")
+        elif emotion_analysis_enabled and not te:
+             logger.warning("Emotion analysis enabled but text2emotion library not loaded.")
+
 
         # --- 8. Pruning (Optional) ---
         if prune_summarized and summary_created:

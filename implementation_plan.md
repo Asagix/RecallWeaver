@@ -61,14 +61,14 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement concept deduplication.
     -   [x] Implement pruning of summarized 'turn' nodes.
     -   [ ] **Refine LLM prompts** for summarization, concept extraction.
-    -   [ ] **Implement Hybrid Association Extraction (V1.1):**
-        -   [ ] Integrate NLP library (e.g., spaCy) to extract basic entities/dependency relations first.
-        -   [ ] Store these basic relations.
-        -   [ ] *Optionally* (if `features.enable_rich_associations` is true) call LLM with text + extracted info, asking for specific *additional* typed relations (e.g., `CAUSES`) from a core set (`IS_A`, `PART_OF`, `CAUSES`, `HAS_PROPERTY`, `RELATED_TO`).
-        -   [ ] Implement **robust parsing** for LLM's structured (JSON) output for relationships.
-    -   [ ] **Implement V1 Emotion Analysis:**
-        -   [ ] Integrate local sentiment/emotion library analysis during `run_consolidation`.
-        -   [ ] Call `_analyze_and_update_emotion` helper to store results on relevant nodes.
+    -   [x] **Implement Hybrid Association Extraction (V1.1):**
+        -   [x] Integrate NLP library (e.g., spaCy) to extract basic entities/dependency relations first. (spaCy loaded, basic structure in place)
+        -   [ ] Store these basic relations. (Not explicitly storing spaCy deps yet)
+        -   [x] *Optionally* (if `features.enable_rich_associations` is true) call LLM with text + extracted info, asking for specific *additional* typed relations (e.g., `CAUSES`) from a core set (`IS_A`, `PART_OF`, `CAUSES`, `HAS_PROPERTY`, `RELATED_TO`). (LLM call implemented)
+        -   [x] Implement **robust parsing** for LLM's structured (JSON) output for relationships. (Basic JSON list parsing implemented)
+    -   [x] **Implement V1 Emotion Analysis:**
+        -   [x] Integrate local sentiment/emotion library analysis during `run_consolidation`. (Using text2emotion)
+        -   [x] Call `_analyze_and_update_emotion` helper to store results on relevant nodes.
     -   [x] Implement mechanism for automatic/periodic consolidation trigger.
 -   [x] **Nuanced Forgetting (V1 Implementation):**
     -   [x] **Enable Flag:** Check `features.enable_forgetting`.
