@@ -886,6 +886,72 @@ class GraphMemoryClient:
             logger.debug(f" Step {depth+1} finished. Active Nodes: {len(active_nodes)}. Max Activation: {max(activation_levels.values()) if activation_levels else 0:.3f}")
             if not active_nodes: break
 
+        # --- Interference Simulation Step ---
+        interference_cfg = act_cfg.get('interference', {})
+        if interference_cfg.get('enable', False) and self.index and self.index.ntotal > 0:
+            logger.info("--- Applying Interference Simulation ---")
+            check_threshold = interference_cfg.get('check_threshold', 0.15)
+            sim_threshold = interference_cfg.get('similarity_threshold', 0.25) # L2 distance
+            penalty_factor = interference_cfg.get('penalty_factor', 0.90)
+            k_neighbors = interference_cfg.get('max_neighbors_check', 5)
+            penalized_nodes = set() # Track nodes penalized in this step
+            interference_applied_count = 0
+
+            # Iterate through nodes activated above the check threshold
+            nodes_to_check = sorted(activation_levels.items(), key=lambda item: item[1], reverse=True)
+
+            for source_uuid, source_activation in nodes_to_check:
+                if source_uuid in penalized_nodes: continue # Already penalized, skip check
+                if source_activation < check_threshold: continue # Below threshold to cause interference
+
+                source_embedding = self.embeddings.get(source_uuid)
+                if source_embedding is None: continue
+
+                # Find nearest neighbors in embedding space
+                try:
+                    source_embed_np = np.array([source_embedding], dtype='float32')
+                    distances, indices = self.index.search(source_embed_np, k_neighbors + 1) # Search k+1 to include self potentially
+
+                    local_cluster = [] # (uuid, activation, distance)
+                    if len(indices) > 0:
+                        for i, faiss_id in enumerate(indices[0]):
+                            neighbor_uuid = self.faiss_id_to_uuid.get(int(faiss_id))
+                            if neighbor_uuid == source_uuid: continue # Skip self
+                            neighbor_activation = activation_levels.get(neighbor_uuid)
+                            distance = distances[0][i]
+
+                            # Check if neighbor is activated and close enough
+                            if neighbor_activation is not None and distance <= sim_threshold:
+                                local_cluster.append((neighbor_uuid, neighbor_activation, distance))
+
+                    # Apply interference if similar activated neighbors found
+                    if local_cluster:
+                        # Include source node itself in the cluster for comparison
+                        cluster_with_source = [(source_uuid, source_activation, 0.0)] + local_cluster
+                        # Find node with max activation in the cluster
+                        dominant_uuid, max_act, _ = max(cluster_with_source, key=lambda item: item[1])
+
+                        # Penalize non-dominant nodes in the cluster
+                        for neighbor_uuid, neighbor_activation, dist in cluster_with_source:
+                            if neighbor_uuid != dominant_uuid and neighbor_uuid not in penalized_nodes:
+                                original_activation = activation_levels[neighbor_uuid]
+                                activation_levels[neighbor_uuid] *= penalty_factor
+                                penalized_nodes.add(neighbor_uuid)
+                                interference_applied_count += 1
+                                logger.debug(f"  Interference: Dominant '{dominant_uuid[:8]}' ({max_act:.3f}) penalized '{neighbor_uuid[:8]}'. "
+                                             f"Activation {original_activation:.3f} -> {activation_levels[neighbor_uuid]:.3f} (Dist: {dist:.3f})")
+
+                except Exception as e:
+                    logger.error(f"Error during interference check for node {source_uuid[:8]}: {e}", exc_info=True)
+
+            if interference_applied_count > 0:
+                 logger.info(f"Interference applied to {interference_applied_count} node activations.")
+            else:
+                 logger.info("No interference applied in this retrieval.")
+        else:
+             logger.debug("Interference simulation disabled or index unavailable.")
+
+
         # --- Final Selection & Update ---
         relevant_nodes_dict = {} # Use dict to avoid duplicates easily: uuid -> node_info
         processed_uuids_for_access_count = set()

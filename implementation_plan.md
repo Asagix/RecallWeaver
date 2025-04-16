@@ -99,6 +99,11 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement logic in `retrieve_memory_chain` to apply `context_focus_boost` to initial activation of relevant nodes.
     -   [x] Add `activation.context_focus_boost` parameter to `config.yaml`.
     -   [ ] Testing: Verify boost is applied correctly and influences retrieval as expected.
+-   [ ] **Interference Simulation:**
+    -   [x] Add `activation.interference` section to `config.yaml` (enable, thresholds, factor).
+    -   [x] Modify `retrieve_memory_chain` to identify semantically similar, co-activated nodes.
+    -   [x] Implement logic to apply `interference_penalty_factor` to non-dominant nodes within similar clusters.
+    -   [ ] Testing: Verify interference is applied correctly and subtly reduces activation of competing similar memories.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

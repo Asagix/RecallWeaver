@@ -43,6 +43,13 @@ activation:
     UNKNOWN: 0.5
   # --- Context Focus ---
   context_focus_boost: 0.15 # Multiplicative boost to initial activation for recently mentioned concepts/turns
+  # --- Interference Simulation ---
+  interference:
+    enable: true
+    check_threshold: 0.15 # Activation level above which nodes trigger interference checks
+    similarity_threshold: 0.25 # Max FAISS L2 distance for neighbors to interfere (Lower = more similar)
+    penalty_factor: 0.90 # Multiplicative factor applied to activation of interfered nodes (e.g., 0.9 reduces activation by 10%)
+    max_neighbors_check: 5 # How many nearest neighbors to check for interference
 
 # --- Prompting & Context Configuration ---
 prompting:
