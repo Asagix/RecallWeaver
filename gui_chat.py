@@ -27,7 +27,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMi
 from PyQt6.QtGui import QTextCursor, QColor, QPalette, QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
     QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence
 
-from persistent_backend_graph import GraphMemoryClient, logger as backend_logger
+from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger
 import file_manager
 
 # --- Logger Setup ---
