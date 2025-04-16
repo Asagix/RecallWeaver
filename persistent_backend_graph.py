@@ -1883,24 +1883,7 @@ class GraphMemoryClient:
                 logger.info("No valid image attachment. Using standard Generate API.")
                 memory_chain_data = [] # Reset just in case
 
-                # --- Find concepts mentioned in the last two turns (BEFORE retrieval) ---
-                # This needs to happen regardless of whether retrieval occurs,
-                # but the result is only used if retrieval *does* occur.
-                recent_concept_uuids = set()
-                nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs captured above
-                for turn_uuid in nodes_to_check_for_concepts:
-                    if turn_uuid and turn_uuid in self.graph:
-                        try:
-                            # Check outgoing edges for MENTIONS_CONCEPT
-                            for successor_uuid in self.graph.successors(turn_uuid):
-                                edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
-                                if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
-                                    if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
-                                        recent_concept_uuids.add(successor_uuid)
-                                        logger.debug(f"Identified recent concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}'")
-                        except Exception as concept_find_e:
-                             logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
-                logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
+                # Concept finding logic moved to AFTER node creation
 
                 # Only retrieve memory if it's not explicitly an image placeholder input
                 # (This check might be redundant if multimodal handles all image cases now)
@@ -1954,7 +1937,23 @@ class GraphMemoryClient:
             logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
-            # Concept finding logic moved earlier (before retrieval call)
+            # --- Find concepts mentioned in the last two turns (AFTER adding both nodes) ---
+            recent_concept_uuids = set()
+            nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs captured above
+            for turn_uuid in nodes_to_check_for_concepts:
+                if turn_uuid and turn_uuid in self.graph:
+                    try:
+                        # Check outgoing edges for MENTIONS_CONCEPT
+                        for successor_uuid in self.graph.successors(turn_uuid):
+                            edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
+                            if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
+                                    recent_concept_uuids.add(successor_uuid)
+                                    logger.debug(f"Identified recent concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}'")
+                    except Exception as concept_find_e:
+                         logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
+            logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
+            # This set 'recent_concept_uuids' will be used in the text-only path below.
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)
