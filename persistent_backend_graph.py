@@ -897,6 +897,16 @@ class GraphMemoryClient:
                     node_info['guaranteed_inclusion'] = False # Mark as normally included
                     relevant_nodes_dict[uuid] = node_info
 
+                    # --- Boost Saliency on Successful Recall (Threshold Pass) ---
+                    if saliency_enabled:
+                        boost_factor = saliency_cfg.get('recall_boost_factor', 0.05)
+                        if boost_factor > 0:
+                            current_saliency = node_data.get('saliency_score', 0.0)
+                            new_saliency = min(1.0, current_saliency + boost_factor) # Additive boost, clamped
+                            if new_saliency > current_saliency:
+                                node_data['saliency_score'] = new_saliency
+                                logger.debug(f"Boosted saliency (threshold recall) for {uuid[:8]} to {new_saliency:.3f}")
+
         logger.info(f"Found {len(relevant_nodes_dict)} active nodes above activation threshold ({activation_threshold}).")
 
         # Pass 2: Check for high-saliency nodes missed by activation threshold
@@ -919,6 +929,17 @@ class GraphMemoryClient:
                         node_info['guaranteed_inclusion'] = True # Mark as guaranteed
                         relevant_nodes_dict[uuid] = node_info
                         guaranteed_added_count += 1
+
+                        # --- Boost Saliency on Successful Recall (Guarantee Pass) ---
+                        if saliency_enabled:
+                            boost_factor = saliency_cfg.get('recall_boost_factor', 0.05)
+                            if boost_factor > 0:
+                                current_saliency = node_data.get('saliency_score', 0.0)
+                                new_saliency = min(1.0, current_saliency + boost_factor) # Additive boost, clamped
+                                if new_saliency > current_saliency:
+                                    node_data['saliency_score'] = new_saliency
+                                    logger.debug(f"Boosted saliency (guaranteed recall) for {uuid[:8]} to {new_saliency:.3f}")
+
 
         if guaranteed_added_count > 0:
             logger.info(f"Added {guaranteed_added_count} additional nodes due to high saliency guarantee.")
@@ -1103,9 +1124,10 @@ class GraphMemoryClient:
         access_count = node_data.get('access_count', 0)
 
         # --- Normalize Factors (Example - needs tuning via config weights) ---
-        # Normalize recency (e.g., using exponential decay or mapping to 0-1 over a time range)
-        # Simple linear scaling over 1 week (604800 seconds) - older = higher score
-        norm_recency = min(1.0, recency_sec / 604800.0)
+        # Normalize recency using exponential decay (Ebbinghaus-like curve)
+        # Higher decay constant = faster forgetting
+        decay_constant = weights.get('recency_decay_constant', 0.000005) # Default decay over seconds
+        norm_recency = 1.0 - math.exp(-decay_constant * recency_sec) # Score approaches 1 as time increases
 
         # Normalize activation (already 0-1 theoretically, but use inverse)
         # Low activation -> high score component

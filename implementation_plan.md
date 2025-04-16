@@ -118,8 +118,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [ ] Develop systematic test scenarios.
     -   [ ] Systematically tune activation parameters.
     -   [ ] Systematically tune consolidation parameters (including association extraction).
-    -   [ ] Systematically tune **forgetting parameters** (weights, thresholds, triggers).
-    -   [ ] Systematically tune **saliency parameters** (initial scores, influences).
+    -   [ ] Systematically tune **forgetting parameters** (weights, thresholds, triggers, **recency_decay_constant**).
+    -   [ ] Systematically tune **saliency parameters** (initial scores, influences, **recall_boost_factor**).
     -   [ ] Tune Faiss search parameter (`k`).
     -   [ ] Tune LLM generation parameters.
     -   [ ] Evaluate prompting strategies.
@@ -131,8 +131,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Basic `if __name__ == "__main__":` tests exist.
     -   [x] Added basic docstrings.
     -   [x] Created initial README.
-    -   [ ] Develop **unit tests** for new helpers (saliency calc, forgettability score, normalization, emotion analysis wrappers, parsers).
-    -   [ ] Develop **integration tests** for Phase 1 features (saliency influence, forgetting cycle) and existing flows.
+    -   [ ] Develop **unit tests** for new helpers (saliency calc, forgettability score (incl. exponential decay), normalization, emotion analysis wrappers, parsers, saliency boost logic).
+    -   [ ] Develop **integration tests** for Phase 1 features (saliency influence & recall boost, forgetting cycle with exponential decay) and existing flows.
     -   [ ] Complete/Refine docstrings.
     -   [ ] Update README as features evolve.
     -   [ ] Add clear documentation for all `config.yaml` parameters.

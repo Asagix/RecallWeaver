@@ -82,6 +82,8 @@ forgetting:
     emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
     connectivity_factor: 0.1 # Higher degree = less forgettable (Placeholder)
     access_count_factor: 0.0 # Higher access count = less forgettable (Placeholder, add weight if desired)
+    # --- Recency Decay Constant (Higher value = faster initial forgetting) ---
+    recency_decay_constant: 0.000005 # Example value (adjust based on desired time scale, e.g., for seconds)
   # --- Saliency Protection ---
   saliency_protection_threshold: 0.9 # Nodes with saliency >= this are never archived
 
@@ -127,3 +129,4 @@ saliency:
   emotion_influence_factor: 0.2 # How much default arousal boosts initial saliency
   activation_influence: 0.1 # How much saliency boosts activation spreading
   guaranteed_saliency_threshold: 0.85 # Nodes above this saliency are always included in retrieval if reached
+  recall_boost_factor: 0.05 # Additive boost to saliency score upon successful recall (clamped 0-1)
