@@ -18,7 +18,7 @@ except ImportError:
     ZoneInfoNotFoundError = Exception # Placeholder
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QLineEdit,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QTextBrowser, QLineEdit, # Added QTextBrowser
     QPushButton, QScrollArea, QLabel, QHBoxLayout, QFrame, QSplitter,
     QSizePolicy, QSpacerItem, QMessageBox, QInputDialog, QComboBox,
     QMenuBar, QMenu, QFileDialog
@@ -673,7 +673,7 @@ class CollapsibleMemoryWidget(QWidget):
         self.memories = memories or []
         self.toggle_button = QPushButton()
         self.toggle_button.setObjectName("MemoryToggle")
-        self.content_area = QTextEdit()
+        self.content_area = QTextBrowser() # Changed from QTextEdit
         self.content_area.setReadOnly(True)
         self.content_area.setVisible(False)
         self.content_area.setObjectName("MemoryContent")
