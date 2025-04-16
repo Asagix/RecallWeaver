@@ -680,8 +680,12 @@ class GraphMemoryClient:
         edge_decay_rate = self.config.get('activation', {}).get('edge_decay_rate', 0.01)
         base = edge_data.get('base_strength', 0.5); last_trav = edge_data.get('last_traversed_ts', current_time); time_delta = max(0, current_time - last_trav); decay_mult = (1.0 - edge_decay_rate) ** time_delta; dyn_str = base * decay_mult; return max(0.0, dyn_str)
 
-    def _search_similar_nodes(self, query_text: str, k: int = None, node_type_filter: str = None) -> list[tuple[str, float]]:
-        """Searches FAISS for nodes similar to query_text, optionally filtering by type."""
+    def _search_similar_nodes(self, query_text: str, k: int = None, node_type_filter: str = None, query_type: str = 'other') -> list[tuple[str, float]]:
+        """
+        Searches FAISS for nodes similar to query_text.
+        Optionally filters by node_type_filter.
+        Optionally biases search based on query_type ('episodic', 'semantic', 'other').
+        """
         # --- Config Access ---
         act_cfg = self.config.get('activation', {})
         # features_cfg = self.config.get('features', {}) # No longer needed for status check
@@ -1957,6 +1961,26 @@ class GraphMemoryClient:
         except Exception as e:
              logger.error(f"Unexpected error parsing memory mod response: {e}", exc_info=True)
              return {'action': 'error', 'reason': f'Unexpected error: {e}', 'raw_response': llm_response_str}
+
+    def _classify_query_type(self, query_text: str) -> str:
+        """Uses LLM to classify query as 'episodic', 'semantic', or 'other'."""
+        logger.debug(f"Classifying query type for: '{query_text[:100]}...'")
+        prompt_template = self._load_prompt("query_type_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load query type prompt template. Defaulting to 'other'.")
+            return "other"
+
+        full_prompt = prompt_template.format(query_text=query_text)
+        # Use low temperature for classification
+        llm_response = self._call_kobold_api(full_prompt, max_length=10, temperature=0.1)
+        classification = llm_response.strip().lower()
+
+        if classification in ["episodic", "semantic", "other"]:
+            logger.info(f"Query classified as: {classification}")
+            return classification
+        else:
+            logger.warning(f"LLM returned unexpected query classification '{classification}'. Defaulting to 'other'.")
+            return "other"
 
     # *** NEW: Action Dispatcher ***
     def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
