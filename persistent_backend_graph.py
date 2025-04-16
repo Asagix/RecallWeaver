@@ -1490,94 +1490,127 @@ class GraphMemoryClient:
         logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
         llm_response_str = self._call_kobold_api(full_prompt, max_length=512, temperature=0.1)
 
-        # ... (Parsing and validation logic remains the same as the last corrected version) ...
         if not llm_response_str:
             logger.error("LLM call failed for action analysis (empty response).")
             return {'action': 'error', 'reason': 'LLM call failed for action analysis'}
 
         parsed_result = None
+        json_str = "" # Initialize json_str for potential use in error logging
         try:
             logger.debug(f"Raw action analysis response: ```{llm_response_str}```")
-            cleaned_response = llm_response_str.strip()
-            if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
-            if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
-            if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
-
-            start_brace = cleaned_response.find('{')
-            end_brace = cleaned_response.rfind('}')
-
-            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
-                json_str = cleaned_response[start_brace:end_brace + 1]
-                logger.debug(f"Extracted JSON string after cleaning: {json_str}")
+            # --- Improved JSON Extraction ---
+            # Attempt to find the outermost JSON object {} or list []
+            # This handles cases where the LLM might add explanations before/after
+            match = re.search(r'(\{.*\}|\[.*\])', llm_response_str, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                logger.debug(f"Extracted potential JSON string using regex: {json_str}")
                 parsed_result = json.loads(json_str)
             else:
-                logger.error(
-                    f"Could not find valid JSON object in cleaned response. Cleaned: '{cleaned_response}', Raw: '{llm_response_str}'")
-                return {'action': 'error', 'reason': 'Could not extract valid JSON object from LLM response.',
-                        'raw_response': llm_response_str}
+                # Fallback: try cleaning markdown fences if regex fails
+                cleaned_response = llm_response_str.strip()
+                if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+                if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+                if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+                start_brace = cleaned_response.find('{')
+                end_brace = cleaned_response.rfind('}')
+                if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                    json_str = cleaned_response[start_brace:end_brace + 1]
+                    logger.debug(f"Extracted JSON string using brace finding (fallback): {json_str}")
+                    parsed_result = json.loads(json_str)
+                else:
+                    logger.error(f"Could not find valid JSON object in LLM response. Raw: '{llm_response_str}'")
+                    return {'action': 'error', 'reason': 'Could not extract valid JSON object from LLM response.',
+                            'raw_response': llm_response_str}
+
+            # --- Validation ---
+            if not isinstance(parsed_result, dict):
+                 raise ValueError(f"Parsed JSON is not a dictionary (type: {type(parsed_result)}).")
 
             logger.info(f"LLM Parsed Action: {parsed_result}")
             action = parsed_result.get("action")
             if not action or not isinstance(action, str):
-                raise ValueError("Missing or invalid 'action' key in JSON response.")
+                raise ValueError("Missing or invalid 'action' key (must be a string) in JSON response.")
+
             valid_actions = ["none", "clarify", "error"] + list(tools.keys())
             if action not in valid_actions:
-                logger.warning(
-                    f"LLM returned unknown action '{action}'. Treating as 'none'. Raw: {llm_response_str}")
-                return {"action": "none"}
+                logger.warning(f"LLM returned unknown action '{action}'. Treating as 'none'. Raw: {llm_response_str}")
+                return {"action": "none"} # Treat unknown as none
+
             if action == "none": return {"action": "none"}
-            if action == "error": return parsed_result
-            if action == "clarify":
-                if not isinstance(parsed_result.get("missing_args"), list) or \
-                        not isinstance(parsed_result.get("original_action"), str):
-                    raise ValueError(
-                        "Clarify action missing required 'missing_args' (list) or 'original_action' (string).")
-                if parsed_result["original_action"] not in tools:
-                    raise ValueError(
-                        f"Clarify action refers to an invalid original_action '{parsed_result['original_action']}'.")
-                return parsed_result
+            if action == "error": return parsed_result # Pass through LLM-reported error
+
+            # --- Argument Validation ---
             args = parsed_result.get("args", {})
             if not isinstance(args, dict):
-                raise ValueError(f"Invalid 'args' format for action '{action}'. Expected a dictionary.")
+                raise ValueError(f"Invalid 'args' format for action '{action}'. Expected a dictionary, got {type(args)}.")
+
+            if action == "clarify":
+                # Validate clarify structure
+                missing_args = parsed_result.get("missing_args")
+                original_action = parsed_result.get("original_action")
+                if not isinstance(missing_args, list) or not all(isinstance(item, str) for item in missing_args):
+                    raise ValueError("Clarify action missing or invalid 'missing_args' (must be a list of strings).")
+                if not isinstance(original_action, str):
+                    raise ValueError("Clarify action missing or invalid 'original_action' (must be a string).")
+                if original_action not in tools:
+                    raise ValueError(f"Clarify action refers to an invalid original_action '{original_action}'.")
+                logger.info(f"Clarification requested for '{original_action}', missing: {missing_args}")
+                return parsed_result # Return valid clarify request
+
+            # --- Validate Required Args for Specific Actions ---
             required_args = tools.get(action, [])
             missing = []
+            validated_args = {} # Store validated/sanitized args
+
             for req_arg in required_args:
-                if req_arg not in args or args[req_arg] is None or (
-                        isinstance(args[req_arg], str) and not args[req_arg].strip()):
-                    missing.append(req_arg)
-            if action == "read_calendar" and "date" in missing:
-                missing.remove("date")
+                arg_value = args.get(req_arg)
+                # Check if missing, None, or empty string
+                if arg_value is None or (isinstance(arg_value, str) and not arg_value.strip()):
+                    # Special case: 'date' is optional for 'read_calendar'
+                    if not (action == "read_calendar" and req_arg == "date"):
+                        missing.append(req_arg)
+                else:
+                    # Basic type validation/conversion (ensure strings)
+                    if not isinstance(arg_value, str):
+                         logger.warning(f"Argument '{req_arg}' for action '{action}' is not a string (type: {type(arg_value)}). Converting.")
+                         validated_args[req_arg] = str(arg_value)
+                    else:
+                         validated_args[req_arg] = arg_value.strip() # Store stripped string
+
             if missing:
-                logger.warning(
-                    f"Action '{action}' identified, but missing required args: {missing}. Requesting clarification.")
+                logger.warning(f"Action '{action}' identified, but missing required args: {missing}. Requesting clarification.")
+                # Return a well-formed clarify request
                 return {"action": "clarify", "missing_args": missing, "original_action": action}
-            if "filename" in args:
-                original_filename = args.get("filename", "")
-                safe_filename = os.path.basename(str(original_filename))
-                if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
-                    logger.error(
-                        f"Invalid or unsafe filename extracted after sanitization: '{original_filename}' -> '{safe_filename}'")
-                    return {'action': 'error', 'reason': f"Invalid filename provided: '{original_filename}'",
+
+            # --- Sanitize Filename ---
+            if "filename" in validated_args:
+                original_filename = validated_args["filename"]
+                safe_filename = os.path.basename(original_filename) # Removes path components
+                # Additional checks for safety
+                if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip() or '/' in safe_filename or '\\' in safe_filename:
+                    logger.error(f"Invalid or unsafe filename extracted after sanitization: '{original_filename}' -> '{safe_filename}'")
+                    return {'action': 'error', 'reason': f"Invalid or potentially unsafe filename provided: '{original_filename}'",
                             'raw_response': llm_response_str, 'parsed': parsed_result}
-                args["filename"] = safe_filename
+                validated_args["filename"] = safe_filename # Update with sanitized name
                 logger.debug(f"Sanitized filename: '{original_filename}' -> '{safe_filename}'")
 
-            logger.info(f"Action analysis successful: Action='{action}', Args={args}")
-            return {"action": action, "args": args}
+            # --- Success ---
+            logger.info(f"Action analysis successful: Action='{action}', Args={validated_args}")
+            return {"action": action, "args": validated_args} # Return validated args
 
         except json.JSONDecodeError as e:
-            logger.error(
-                f"LLM Action Parse Error (JSONDecodeError): {e}. Cleaned String: '{json_str if 'json_str' in locals() else 'N/A'}'. Raw: '{llm_response_str}'")
-            return {'action': 'error', 'reason': f'LLM response JSON parsing failed: {e}',
-                    'raw_response': llm_response_str}
+            logger.error(f"LLM Action Parse Error (JSONDecodeError): {e}. Extracted String: '{json_str}'. Raw: '{llm_response_str}'")
+            return {'action': 'error', 'reason': f'LLM response JSON parsing failed: {e}', 'raw_response': llm_response_str}
         except ValueError as e:
-            logger.error(f"LLM Action Validation Error: {e}. Parsed JSON: {parsed_result}")
-            return {'action': 'error', 'reason': f'LLM response validation failed: {e}',
-                    'raw_response': llm_response_str, 'parsed': parsed_result}
+            # Catch validation errors raised above
+            logger.error(f"LLM Action Validation Error: {e}. Parsed JSON: {parsed_result}. Raw: '{llm_response_str}'")
+            return {'action': 'error', 'reason': f'LLM response validation failed: {e}', 'raw_response': llm_response_str, 'parsed': parsed_result}
         except Exception as e:
+            # Catch any other unexpected errors
             logger.error(f"Unexpected error parsing/validating action response: {e}", exc_info=True)
-            return {'action': 'error', 'reason': f'Unexpected action parsing error: {e}',
-                    'raw_response': llm_response_str}
+            return {'action': 'error', 'reason': f'Unexpected action parsing error: {e}', 'raw_response': llm_response_str}
 
     # (Keep Example Usage Block unchanged)
     #if __name__ == "__main__":
