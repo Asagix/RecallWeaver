@@ -418,6 +418,50 @@ class Worker(QThread):
 
         gui_logger.info(f"Worker received input: Text='{text[:50]}...', Attachment Type='{attachment.get('type') if attachment else None}'")
 
+        # --- Check for Pending Clarification ---
+        if self.pending_clarification:
+            gui_logger.info(f"Handling input as clarification response for action: {self.pending_clarification.get('original_action')}")
+            # Assume the new text provides the missing arguments.
+            # A more robust approach might try to parse the new text specifically
+            # for the missing args, but let's start simple.
+            # We'll merge the new text into a likely missing argument.
+            # This is heuristic - assumes the user provides *only* the missing info.
+
+            original_action = self.pending_clarification.get('original_action')
+            current_args = self.pending_clarification.get('args', {})
+            missing_args = self.pending_clarification.get('missing_args', [])
+
+            # Simple strategy: Assume the text fills the *first* missing argument.
+            # This might need refinement based on typical user responses.
+            if missing_args:
+                first_missing = missing_args[0]
+                current_args[first_missing] = text # Assign the user's input text
+                gui_logger.debug(f"Attempting to fill missing arg '{first_missing}' with text: '{text[:50]}...'")
+
+                # Construct the action data to execute
+                action_data_to_execute = {
+                    "action": original_action,
+                    "args": current_args
+                }
+
+                # Clear pending state *before* queuing execution
+                self.pending_clarification = None
+
+                # Add user's clarification text to history
+                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                # Queue the execution task
+                gui_logger.info(f"Queuing action '{original_action}' for execution with clarified args: {current_args}")
+                self.input_queue.append(('execute_action', action_data_to_execute))
+                return # Stop further processing of this input
+
+            else:
+                # Should not happen if pending_clarification is set correctly, but handle defensively.
+                gui_logger.warning("Clarification was pending, but no missing args listed. Clearing state and proceeding normally.")
+                self.pending_clarification = None
+                # Fall through to normal processing...
+
+        # --- If no clarification pending, proceed as normal ---
+
         # --- Prioritize Image Attachment ---
         if attachment and attachment.get('type') == 'image':
              gui_logger.info("Image attachment found. Queuing chat task directly.")
@@ -439,11 +483,25 @@ class Worker(QThread):
             elif action == "clarify":
                 # If clarification is needed, add user text to history and emit signal
                 self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-                self.signals.clarification_needed.emit(analysis_result.get("original_action", "?"), analysis_result.get("missing_args", []))
+                # --- Store pending clarification state ---
+                self.pending_clarification = {
+                    "original_action": analysis_result.get("original_action", "?"),
+                    "args": analysis_result.get("args", {}), # Store args already extracted by LLM
+                    "missing_args": analysis_result.get("missing_args", [])
+                }
+                gui_logger.info(f"Stored pending clarification: {self.pending_clarification}")
+                self.signals.clarification_needed.emit(
+                    self.pending_clarification["original_action"],
+                    self.pending_clarification["missing_args"]
+                )
                 # Don't queue chat task, wait for user clarification
                 return
             elif action != "none":
                 # If a specific file/calendar action is identified, queue it
+                # Clear any potentially stale clarification state if a new, complete action is detected
+                if self.pending_clarification:
+                    gui_logger.debug("Clearing stale pending clarification due to new complete action.")
+                    self.pending_clarification = None
                 gui_logger.info(f"Action '{action}' detected. Queuing execution task.")
                 # Add user text to history before queuing action
                 self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
@@ -468,11 +526,19 @@ class Worker(QThread):
 
         if is_modification:
             gui_logger.info("Memory modification keyword detected. Queuing modify task.")
+            # Clear any potentially stale clarification state
+            if self.pending_clarification:
+                gui_logger.debug("Clearing stale pending clarification due to modification request.")
+                self.pending_clarification = None
             # Don't add user input to history here, let handle_modify_task decide
             self.input_queue.append(('modify', text))
         else:
             # --- If not action or modification, treat as regular chat ---
             gui_logger.info("No specific action/modification detected. Queuing chat task.")
+            # Clear any potentially stale clarification state
+            if self.pending_clarification:
+                gui_logger.debug("Clearing stale pending clarification due to regular chat input.")
+                self.pending_clarification = None
             task_data = {'text': text, 'attachment': None} # Ensure chat task always gets dict
             self.input_queue.append(('chat', task_data))
 
