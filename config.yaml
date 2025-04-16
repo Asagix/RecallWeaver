@@ -12,7 +12,7 @@ default_personality: "default"
 # --- Models & API ---
 embedding_model: "all-MiniLM-L6-v2"
 tokenizer_name: "google/gemma-7b-it"
-kobold_api_url: "http://localhost:5001/api/v1/generate"
+kobold_api_url: "http://localhost:5001/api/v1/generate" # <<< CHECK AND UPDATE THIS URL based on your KoboldCpp setup
 
 # --- Feature Flags ---
 features:
