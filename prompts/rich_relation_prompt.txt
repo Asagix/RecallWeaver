@@ -1,0 +1,29 @@
+<start_of_turn>user
+Analyze the following conversation context and the extracted key concepts. Identify specific relationships between pairs of these concepts based *only* on the context provided.
+
+**Target Relationship Types:** {target_relations_str}
+(Use 'RELATED_TO' for general associations not covered by other types. Use 'IS_A' for type/instance relationships.)
+
+**Concepts:**
+{concept_list_str}
+
+**Conversation Context:**
+--- START ---
+{context_text}
+--- END ---
+
+**Output Format:** Respond ONLY with a valid JSON list containing objects, where each object represents a single identified relationship. Each object must have keys "subject", "relation", and "object". The relation value MUST be one of the Target Relationship Types. Use the exact concept text from the list above for subject and object. If no target relationships are found, output an empty JSON list `[]`.
+
+**Example Output (for different concepts/context):**
+```json
+[
+  {{"subject": "increased server load", "relation": "CAUSES", "object": "slow response time"}},
+  {{"subject": "wheel", "relation": "PART_OF", "object": "bicycle"}},
+  {{"subject": "apple", "relation": "HAS_PROPERTY", "object": "red color"}},
+  {{"subject": "project alpha", "relation": "RELATED_TO", "object": "deadline"}},
+  {{"subject": "poodle", "relation": "IS_A", "object": "dog"}}
+]
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

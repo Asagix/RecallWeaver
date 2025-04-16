@@ -1,0 +1,10 @@
+<start_of_turn>user
+Consider the following concepts extracted from a conversation:
+{concept_list_str}
+
+Identify any clear hierarchical relationships (e.g., 'Concept A' is a specific type/instance of 'Concept B', or 'Part C' is a component of 'Whole D').
+If relationships exist, list them one per line using ONLY the format: '"CHILD_CONCEPT" is_a "PARENT_CONCEPT"' or '"PART_CONCEPT" is_part_of "WHOLE_CONCEPT"'. Use the exact quoted concept text.
+If no clear hierarchical relationships exist *among these specific concepts*, output the single word "NONE".
+
+Hierarchical relationships:<end_of_turn>
+<start_of_turn>model

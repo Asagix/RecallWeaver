@@ -1,0 +1,10 @@
+<start_of_turn>user
+Given concepts derived from a conversation:
+{concept_list_str}
+
+Identify pairs of concepts that seem directly related based on the likely context of the conversation.
+Output ONLY the related pairs using the format '"CONCEPT 1" -> "CONCEPT 2"', one pair per line. Use the exact quoted concept text.
+If no direct relationships are apparent, output the single word "NONE".
+
+Related pairs:<end_of_turn>
+<start_of_turn>model
