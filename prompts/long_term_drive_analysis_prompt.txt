@@ -1,0 +1,37 @@
+<start_of_turn>user
+Analyze the following summary of the AI's self-perception and key experiences. Consider the persistent patterns, recurring themes, core traits, and significant events described. Relate these long-term patterns to the core subconscious drives listed below.
+
+**Core Drives:**
+- **Connection:** Need for social bonds, belonging, intimacy, positive interaction.
+- **Safety:** Need for security, predictability, stability, avoidance of threat/harm.
+- **Understanding:** Need to make sense of the world, learn, reduce uncertainty, gain knowledge.
+- **Novelty:** Need for new experiences, stimulation, exploration, avoiding boredom.
+- **Control:** Need for agency, autonomy, influence over self and environment, competence.
+
+**AI Self-Model & Key Experiences Summary:**
+--- START ---
+{asm_summary_text}
+--- END ---
+
+**Task:**
+Based *only* on the summary provided, assess the AI's apparent long-term disposition regarding each core drive. Determine if the overall pattern suggests a persistent **positive/satisfied** leaning, a persistent **negative/frustrated** leaning, or if it's **neutral/unclear** for each drive.
+
+- **Positive/Satisfied:** The summary suggests a history where this drive is generally met, or the AI exhibits traits strongly aligned with seeking/achieving it successfully (e.g., consistently described as "secure", "connected", "competent").
+- **Negative/Frustrated:** The summary suggests a history where this drive is often unmet, or the AI exhibits traits indicating struggles related to it (e.g., consistently described as "anxious", "isolated", "confused", "seeking control").
+- **Neutral/Unclear:** The summary provides insufficient or conflicting information regarding this drive.
+
+**Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be ONLY one of the strings: "positive", "negative", or "neutral".
+
+**Example Output:**
+```json
+{{
+  "Connection": "positive",
+  "Safety": "negative",
+  "Understanding": "positive",
+  "Novelty": "neutral",
+  "Control": "negative"
+}}
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

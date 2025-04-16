@@ -93,8 +93,11 @@ class GraphMemoryClient:
         self.last_interaction_mood = (0.0, 0.1) # Default mood (Valence, Arousal)
         # --- Autobiographical Self-Model ---
         self.autobiographical_model = {} # Initialize empty ASM
-        # --- Subconscious Drive State ---
-        self.drive_state = {} # Initialize empty drive state {drive_name: activation_level}
+        # --- Subconscious Drive State (Combined) ---
+        self.drive_state = {
+            "short_term": {}, # {drive_name: activation_level} - Fluctuates based on recent events
+            "long_term": {}   # {drive_name: level} - Stable, reflects core tendencies
+        }
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -857,24 +860,34 @@ class GraphMemoryClient:
         drives_enabled = drive_cfg.get('enabled', False)
         effective_mood = current_mood if current_mood else (0.0, 0.1) # Use provided mood or default
 
-        if drives_enabled and mood_influence_cfg and self.drive_state:
-            logger.debug(f"Calculating mood adjustment based on drive state: {self.drive_state}")
+        # Check if drives are enabled and we have state data
+        if drives_enabled and mood_influence_cfg and self.drive_state["short_term"]:
+            logger.debug(f"Calculating mood adjustment based on drive state: ShortTerm={self.drive_state['short_term']}, LongTerm={self.drive_state['long_term']}")
             base_valence, base_arousal = effective_mood
             valence_adjustment = 0.0
             arousal_adjustment = 0.0
             valence_factors = mood_influence_cfg.get('valence_factors', {})
             arousal_factors = mood_influence_cfg.get('arousal_factors', {})
-            baseline_drives = drive_cfg.get('core_drives', {})
+            base_drives = drive_cfg.get('base_drives', {}) # Use base_drives config
+            long_term_influence = drive_cfg.get('long_term_influence_on_baseline', 1.0)
 
-            for drive_name, current_activation in self.drive_state.items():
-                baseline = baseline_drives.get(drive_name, 0.0)
-                # Calculate deviation from baseline (positive=higher need, negative=satisfied)
-                deviation = current_activation - baseline
+            for drive_name, current_activation in self.drive_state["short_term"].items():
+                # Calculate the dynamic baseline for comparison
+                config_baseline = base_drives.get(drive_name, 0.0)
+                long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
+                dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
+
+                # Calculate deviation from the *dynamic* baseline
+                # Positive deviation = higher activation than baseline (need potentially met or overshot)
+                # Negative deviation = lower activation than baseline (need potentially unmet)
+                deviation = current_activation - dynamic_baseline
+
+                # Apply factors based on deviation
                 valence_adj = valence_factors.get(drive_name, 0.0) * deviation
                 arousal_adj = arousal_factors.get(drive_name, 0.0) * deviation
                 valence_adjustment += valence_adj
                 arousal_adjustment += arousal_adj
-                # logger.debug(f"  Drive '{drive_name}': Act={current_activation:.2f}, Base={baseline:.2f}, Dev={deviation:.2f} -> V_adj={valence_adj:.3f}, A_adj={arousal_adj:.3f}")
+                logger.debug(f"  Drive '{drive_name}': Act={current_activation:.2f}, DynBase={dynamic_baseline:.2f}, Dev={deviation:.2f} -> V_adj={valence_adj:.3f}, A_adj={arousal_adj:.3f}")
 
             # Clamp total adjustment
             max_adj = mood_influence_cfg.get('max_mood_adjustment', 0.3)
@@ -2552,22 +2565,41 @@ class GraphMemoryClient:
 
     # --- Drive State Management ---
     def _initialize_drive_state(self):
-        """Sets drive state to baseline values from config."""
+        """Initializes both short-term and long-term drive states."""
         drive_cfg = self.config.get('subconscious_drives', {})
-        core_drives = drive_cfg.get('core_drives', {})
-        self.drive_state = core_drives.copy() # Start with baseline values
-        logger.info(f"Drive state initialized to baseline: {self.drive_state}")
+        base_drives = drive_cfg.get('base_drives', {}) # Use base_drives from config
+
+        # Initialize short-term drives to base values
+        self.drive_state["short_term"] = base_drives.copy()
+        # Initialize long-term drives to zero (or potentially base values if desired?)
+        # Let's start with zero, assuming they develop over time.
+        self.drive_state["long_term"] = {drive_name: 0.0 for drive_name in base_drives}
+
+        logger.info(f"Drive state initialized: ShortTerm={self.drive_state['short_term']}, LongTerm={self.drive_state['long_term']}")
 
     def _load_drive_state(self):
-        """Loads drive state from JSON file or initializes it."""
+        """Loads combined drive state (short & long term) from JSON file or initializes it."""
+        default_state = {"short_term": {}, "long_term": {}}
         if os.path.exists(self.drives_file):
             try:
                 with open(self.drives_file, 'r') as f:
-                    self.drive_state = json.load(f)
-                logger.info(f"Loaded drive state from {self.drives_file}: {self.drive_state}")
-                # Optional: Validate loaded state against config drives?
+                    loaded_state = json.load(f)
+                # Validate structure
+                if isinstance(loaded_state, dict) and "short_term" in loaded_state and "long_term" in loaded_state:
+                    self.drive_state = loaded_state
+                    logger.info(f"Loaded drive state from {self.drives_file}: {self.drive_state}")
+                    # Optional: Validate loaded drives against config drives? Ensure all expected drives exist?
+                    base_drives = self.config.get('subconscious_drives', {}).get('base_drives', {})
+                    for term in ["short_term", "long_term"]:
+                        for drive_name in base_drives:
+                            if drive_name not in self.drive_state[term]:
+                                logger.warning(f"Drive '{drive_name}' missing from loaded '{term}' state. Initializing.")
+                                self.drive_state[term][drive_name] = base_drives[drive_name] if term == "short_term" else 0.0
+                else:
+                    logger.error(f"Invalid structure in drive state file {self.drives_file}. Initializing defaults.")
+                    self._initialize_drive_state()
             except (json.JSONDecodeError, TypeError) as e:
-                logger.error(f"Error loading drive state file {self.drives_file}: {e}. Initializing defaults.")
+                logger.error(f"Error decoding drive state file {self.drives_file}: {e}. Initializing defaults.")
                 self._initialize_drive_state()
             except Exception as e:
                 logger.error(f"Unexpected error loading drive state: {e}. Initializing defaults.", exc_info=True)
@@ -2598,32 +2630,41 @@ class GraphMemoryClient:
         This will eventually involve LLM analysis or heuristics.
         For now, it might just apply decay.
         """
+        Updates short-term drive activation levels based on recent experience (LLM analysis)
+        and applies decay towards a dynamic baseline (config base + long-term drive).
+        """
         drive_cfg = self.config.get('subconscious_drives', {})
         if not drive_cfg.get('enabled', False):
             return # Do nothing if disabled
 
-        logger.debug("Running drive state update (Placeholder - applying decay)...")
-        decay_rate = drive_cfg.get('decay_rate', 0.05)
-        baseline_drives = drive_cfg.get('core_drives', {})
+        logger.debug("Running short-term drive state update (Decay + LLM)...")
+        decay_rate = drive_cfg.get('short_term_decay_rate', 0.05)
+        base_drives = drive_cfg.get('base_drives', {})
+        long_term_influence = drive_cfg.get('long_term_influence_on_baseline', 1.0)
         changed = False
 
-        for drive_name, current_activation in list(self.drive_state.items()):
-            baseline = baseline_drives.get(drive_name, 0.0) # Get baseline for this drive
-            # Apply decay towards baseline
-            if decay_rate > 0:
-                new_activation = current_activation + (baseline - current_activation) * decay_rate
+        # --- Decay Step (towards dynamic baseline) ---
+        if decay_rate > 0:
+            for drive_name, current_activation in list(self.drive_state["short_term"].items()):
+                config_baseline = base_drives.get(drive_name, 0.0)
+                long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
+                # Calculate the dynamic baseline towards which the short-term drive decays
+                dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
+
+                # Apply decay towards the dynamic baseline
+                new_activation = current_activation + (dynamic_baseline - current_activation) * decay_rate
                 # Prevent overshoot
-                if (current_activation > baseline and new_activation < baseline) or \
-                   (current_activation < baseline and new_activation > baseline):
-                    new_activation = baseline
+                if (current_activation > dynamic_baseline and new_activation < dynamic_baseline) or \
+                   (current_activation < dynamic_baseline and new_activation > dynamic_baseline):
+                    new_activation = dynamic_baseline
 
                 if abs(new_activation - current_activation) > 1e-4: # Check for significant change
-                    self.drive_state[drive_name] = new_activation
+                    self.drive_state["short_term"][drive_name] = new_activation
                     changed = True
-                    logger.debug(f"  Drive '{drive_name}' decayed towards baseline {baseline:.3f}: {current_activation:.3f} -> {new_activation:.3f}")
+                    logger.debug(f"  Drive '{drive_name}' decayed towards dynamic baseline {dynamic_baseline:.3f}: {current_activation:.3f} -> {new_activation:.3f}")
 
-        # --- LLM Analysis for Drive Satisfaction/Frustration ---
-        update_interval = drive_cfg.get('update_interval_interactions', 0) # Get interval from config
+        # --- LLM Analysis for Short-Term Drive Satisfaction/Frustration ---
+        update_interval = drive_cfg.get('short_term_update_interval_interactions', 0) # Get interval from config
         # Check if LLM update should run based on interval (can be combined with decay later)
         # For now, let's assume if relevant_nodes are provided (e.g., from consolidation), we analyze them.
         if relevant_nodes and update_interval > 0: # Basic check, could be more sophisticated
@@ -2659,19 +2700,25 @@ class GraphMemoryClient:
                                 if match:
                                     json_str = match.group(0)
                                     drive_adjustments = json.loads(json_str)
-                                    logger.debug(f"Parsed drive adjustments from LLM: {drive_adjustments}")
+                                    logger.debug(f"Parsed short-term drive adjustments from LLM: {drive_adjustments}")
 
-                                    # 5. Adjust drive_state based on satisfaction/frustration factors
-                                    satisfaction_factor = drive_cfg.get('satisfaction_factor', 0.1)
-                                    frustration_factor = drive_cfg.get('frustration_factor', 0.15)
+                                    # 5. Adjust short_term drive_state based on satisfaction/frustration factors
+                                    satisfaction_factor = drive_cfg.get('short_term_satisfaction_factor', 0.1)
+                                    frustration_factor = drive_cfg.get('short_term_frustration_factor', 0.15)
 
                                     for drive_name, status in drive_adjustments.items():
-                                        if drive_name in self.drive_state:
-                                            current_activation = self.drive_state[drive_name]
-                                            baseline = baseline_drives.get(drive_name, 0.0)
+                                        if drive_name in self.drive_state["short_term"]:
+                                            current_activation = self.drive_state["short_term"][drive_name]
+                                            # Calculate dynamic baseline for comparison (needed for satisfaction logic)
+                                            config_baseline = base_drives.get(drive_name, 0.0)
+                                            long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
+                                            dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
                                             adjustment = 0.0
 
                                             if status == "satisfied":
+                                                # Reduce activation towards dynamic baseline
+                                                # Adjustment is negative, proportional to how far *above* dynamic baseline it is
+                                                adjustment = -max(0, current_activation - dynamic_baseline) * satisfaction_factor
                                                 # Reduce activation towards baseline (or even below if very satisfied?)
                                                 # Adjustment is negative, proportional to how far *above* baseline it is
                                                 adjustment = -max(0, current_activation - baseline) * satisfaction_factor
@@ -2679,18 +2726,20 @@ class GraphMemoryClient:
                                             elif status == "frustrated":
                                                 # Increase activation away from baseline
                                                 # Adjustment is positive, proportional to how far *below* baseline it is (or just a fixed amount?)
-                                                # Let's make it increase regardless of current level, pushing the need higher.
-                                                adjustment = frustration_factor # Simple additive increase for frustration
+                                                # Increase activation (pushing the need higher)
+                                                # Simple additive increase for frustration for now
+                                                adjustment = frustration_factor
                                                 logger.debug(f"  Drive '{drive_name}' frustrated. Adjustment: {adjustment:.3f}")
                                             # else: status is neutral/unclear, no adjustment
 
                                             if abs(adjustment) > 1e-4:
-                                                # Apply adjustment, potentially clamp?
-                                                # Let's not clamp here, decay will handle returning to baseline over time.
-                                                self.drive_state[drive_name] += adjustment
+                                                # Apply adjustment to short-term state
+                                                self.drive_state["short_term"][drive_name] += adjustment
+                                                # Optional: Clamp short-term activation? (e.g., between -1 and 2?)
+                                                # self.drive_state["short_term"][drive_name] = max(-1.0, min(2.0, self.drive_state["short_term"][drive_name]))
                                                 changed = True # Mark that state was changed by LLM analysis
-                                else:
-                                    logger.warning(f"LLM returned adjustment for unknown drive '{drive_name}'.")
+                                        else:
+                                            logger.warning(f"LLM returned adjustment for unknown drive '{drive_name}'.")
 
                             except json.JSONDecodeError as e:
                                 logger.error(f"Failed to parse JSON from drive analysis response: {e}. Raw: '{llm_response_str}'")
@@ -2704,8 +2753,8 @@ class GraphMemoryClient:
 
         if changed:
             # Log final state after decay and potential LLM adjustments
-            logger.info(f"Drive state updated (Decay & LLM applied): {self.drive_state}")
-            # Saving happens in the calling function (e.g., run_consolidation)
+            logger.info(f"Short-term drive state updated (Decay & LLM applied): {self.drive_state['short_term']}")
+            # Saving happens in the calling function (e.g., run_consolidation or _save_memory)
 
     # *** ADDED: Wrapper methods for file operations ***
     def create_workspace_file(self, filename: str, content: str) -> bool:
@@ -4080,9 +4129,24 @@ class GraphMemoryClient:
 
         logger.info("--- Consolidation Finished ---")
 
-        # --- Update Drive State (Placeholder) ---
-        # Pass relevant nodes (e.g., the ones just processed) if needed for future analysis
+        # --- Update Short-Term Drive State ---
         self._update_drive_state(relevant_nodes=nodes_to_process)
+
+        # --- Update Long-Term Drive State (Less Frequently) ---
+        drive_cfg = self.config.get('subconscious_drives', {})
+        lt_update_interval = drive_cfg.get('long_term_update_interval_consolidations', 0)
+        # Need a way to track consolidation count - add an instance variable?
+        if not hasattr(self, '_consolidation_counter'): self._consolidation_counter = 0
+        self._consolidation_counter += 1
+        logger.debug(f"Consolidation counter: {self._consolidation_counter}")
+
+        if lt_update_interval > 0 and self._consolidation_counter >= lt_update_interval:
+            logger.info(f"Long-term drive update interval ({lt_update_interval}) reached. Triggering update.")
+            self._update_long_term_drives()
+            self._consolidation_counter = 0 # Reset counter
+        else:
+            logger.debug(f"Skipping long-term drive update (Interval: {lt_update_interval}, Count: {self._consolidation_counter}).")
+
 
         # --- Update Autobiographical Model after consolidation ---
         self._generate_autobiographical_model()

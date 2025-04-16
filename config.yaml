@@ -182,28 +182,35 @@ gui_style:
 # --- Subconscious Drives ---
 subconscious_drives:
   enabled: true # Master switch for the drive system
-  # Define the core drives and their baseline activation/need level (e.g., 0=neutral, >0=active need)
-  core_drives:
-    Connection: 0.1 # Slight baseline need for connection
-    Safety: 0.2     # Baseline need for safety/predictability
+  # --- Short-Term Drive Dynamics ---
+  # Define the core drives and their *base* configuration baseline (before long-term influence)
+  base_drives: # Renamed from core_drives for clarity
+    Connection: 0.1 # Base need for connection
+    Safety: 0.2     # Base need for safety/predictability
     Understanding: 0.1 # Baseline drive to understand
     Novelty: 0.05   # Slight baseline drive for new things
-    Control: 0.1    # Baseline drive for agency/control
-  # Parameters for future drive updates (placeholders for now)
-  update_interval_interactions: 10 # How often to potentially update drives
-  decay_rate: 0.05 # How quickly drive activation returns to baseline (0=no decay)
-  satisfaction_factor: 0.1 # How much satisfaction reduces drive activation
-  frustration_factor: 0.15 # How much frustration increases drive activation
-  # Influence parameters
+    Control: 0.1    # Base drive for agency/control
+  # Parameters for short-term drive updates (based on recent interactions)
+  short_term_update_interval_interactions: 10 # How often to potentially update short-term drives via LLM
+  short_term_decay_rate: 0.05 # How quickly short-term activation returns towards dynamic baseline (0=no decay)
+  short_term_satisfaction_factor: 0.1 # How much satisfaction reduces short-term drive activation
+  short_term_frustration_factor: 0.15 # How much frustration increases short-term drive activation
+
+  # --- Long-Term Drive Dynamics ---
+  long_term_update_interval_consolidations: 5 # How many consolidations before updating long-term drives (0=disable)
+  long_term_adjustment_factor: 0.05 # How much LLM analysis nudges long-term drives (0-1 scale)
+  long_term_influence_on_baseline: 1.0 # Multiplier for how much long-term drives affect short-term baseline (0=none, 1=direct addition)
+
+  # --- Mood Influence (Based on Short-Term Drive Deviation from Dynamic Baseline) ---
   mood_influence:
-    # How much drive activation influences valence/arousal (V/A)
+    # How much short-term drive activation *deviation from the dynamic baseline* influences valence/arousal (V/A)
     # Example: High unmet 'Safety' might increase arousal and decrease valence
     # Format: drive_name: [valence_factor, arousal_factor]
     # Positive factor = increases V/A, Negative factor = decreases V/A
-    # Factors are multiplied by the drive's current activation level (relative to baseline?)
+    # Factors are multiplied by the drive's current *deviation* (short_term_activation - dynamic_baseline)
     valence_factors:
-      Connection: 0.1  # High connection need slightly increases positive valence pull
-      Safety: -0.2     # High safety need strongly decreases valence pull (more negative)
+      Connection: 0.1  # High unmet connection need slightly increases positive valence pull
+      Safety: -0.2     # High unmet safety need strongly decreases valence pull (more negative)
       Understanding: 0.05
       Novelty: 0.05
       Control: -0.1    # High control need slightly decreases valence pull
