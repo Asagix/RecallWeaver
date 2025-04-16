@@ -677,8 +677,7 @@ class CollapsibleMemoryWidget(QWidget):
         self.content_area.setReadOnly(True)
         self.content_area.setVisible(False)
         self.content_area.setObjectName("MemoryContent")
-        # Enable link clicking
-        self.content_area.setOpenExternalLinks(False) # We handle links internally
+        # Enable link clicking (anchorClicked signal handles this)
         self.content_area.anchorClicked.connect(self.handle_link_click) # Connect signal
 
         layout = QVBoxLayout(self)
