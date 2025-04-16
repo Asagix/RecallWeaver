@@ -40,7 +40,21 @@ activation:
     ASSOCIATIVE: 0.8
     HIERARCHICAL_fwd: 1.1
     HIERARCHICAL_bwd: 0.5
-    UNKNOWN: 0.5
+    # --- NEW Relation Types (Add factors for types used in consolidation) ---
+    CAUSES: 1.1             # Cause->Effect might be strong forward
+    PART_OF: 1.0            # Part->Whole might be standard
+    HAS_PROPERTY: 0.9       # Entity->Property might be slightly weaker
+    ENABLES: 1.0
+    PREVENTS: 1.0           # Contradiction/Prevention might warrant specific handling later
+    CONTRADICTS: 1.0
+    SUPPORTS: 1.0
+    EXAMPLE_OF: 0.9
+    MEASURES: 0.9
+    LOCATION_OF: 0.9
+    ANALOGY: 0.8            # Analogy might be similar to associative
+    INFERRED_RELATED_TO: 0.6 # Inferred links should likely be weaker
+    SPACY_REL: 0.7          # Generic factor for spaCy-derived relations
+    UNKNOWN: 0.5            # Fallback for truly unknown types
   # --- Context Focus ---
   context_focus_boost: 0.15 # Multiplicative boost to initial activation for recently mentioned concepts/turns
   # --- Interference Simulation ---

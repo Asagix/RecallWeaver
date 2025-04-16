@@ -802,9 +802,33 @@ class GraphMemoryClient:
         activation_threshold = act_cfg.get('threshold', 0.1)
         prop_base = act_cfg.get('propagation_factor_base', 0.65)
         prop_factors = act_cfg.get('propagation_factors', {})
-        # (Load specific factors...)
-        prop_temporal_fwd = prop_factors.get('TEMPORAL_fwd', 1.0); prop_temporal_bwd = prop_factors.get('TEMPORAL_bwd', 0.8); prop_summary_fwd = prop_factors.get('SUMMARY_OF_fwd', 1.1); prop_summary_bwd = prop_factors.get('SUMMARY_OF_bwd', 0.4); prop_concept_fwd = prop_factors.get('MENTIONS_CONCEPT_fwd', 1.0); prop_concept_bwd = prop_factors.get('MENTIONS_CONCEPT_bwd', 0.9); prop_assoc = prop_factors.get('ASSOCIATIVE', 0.8); prop_hier_fwd = prop_factors.get('HIERARCHICAL_fwd', 1.1); prop_hier_bwd = prop_factors.get('HIERARCHICAL_bwd', 0.5); prop_unknown = prop_factors.get('UNKNOWN', 0.5)
-        guaranteed_saliency_threshold = act_cfg.get('guaranteed_saliency_threshold', 0.85) # NEW Threshold
+        # --- Load ALL propagation factors ---
+        prop_temporal_fwd = prop_factors.get('TEMPORAL_fwd', 1.0)
+        prop_temporal_bwd = prop_factors.get('TEMPORAL_bwd', 0.8)
+        prop_summary_fwd = prop_factors.get('SUMMARY_OF_fwd', 1.1)
+        prop_summary_bwd = prop_factors.get('SUMMARY_OF_bwd', 0.4)
+        prop_concept_fwd = prop_factors.get('MENTIONS_CONCEPT_fwd', 1.0)
+        prop_concept_bwd = prop_factors.get('MENTIONS_CONCEPT_bwd', 0.9)
+        prop_assoc = prop_factors.get('ASSOCIATIVE', 0.8)
+        prop_hier_fwd = prop_factors.get('HIERARCHICAL_fwd', 1.1)
+        prop_hier_bwd = prop_factors.get('HIERARCHICAL_bwd', 0.5)
+        # Load NEW factors (provide defaults matching config)
+        prop_causes = prop_factors.get('CAUSES', 1.1)
+        prop_part_of = prop_factors.get('PART_OF', 1.0)
+        prop_has_prop = prop_factors.get('HAS_PROPERTY', 0.9)
+        prop_enables = prop_factors.get('ENABLES', 1.0)
+        prop_prevents = prop_factors.get('PREVENTS', 1.0)
+        prop_contradicts = prop_factors.get('CONTRADICTS', 1.0)
+        prop_supports = prop_factors.get('SUPPORTS', 1.0)
+        prop_example_of = prop_factors.get('EXAMPLE_OF', 0.9)
+        prop_measures = prop_factors.get('MEASURES', 0.9)
+        prop_location_of = prop_factors.get('LOCATION_OF', 0.9)
+        prop_analogy = prop_factors.get('ANALOGY', 0.8)
+        prop_inferred = prop_factors.get('INFERRED_RELATED_TO', 0.6)
+        prop_spacy = prop_factors.get('SPACY_REL', 0.7) # Generic for spaCy
+        prop_unknown = prop_factors.get('UNKNOWN', 0.5) # Fallback
+
+        guaranteed_saliency_threshold = act_cfg.get('guaranteed_saliency_threshold', 0.85)
 
         saliency_enabled = features_cfg.get('enable_saliency', False)
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
@@ -895,12 +919,30 @@ class GraphMemoryClient:
                     if not edge_data: continue
 
                     edge_type = edge_data.get('type', 'UNKNOWN')
-                    type_factor = prop_unknown
+                    type_factor = prop_unknown # Default
+
+                    # --- Assign type_factor based on edge_type ---
+                    # Note: Directionality might matter more for some types than others.
+                    # For now, many new types use the same factor regardless of direction.
                     if edge_type == 'TEMPORAL': type_factor = prop_temporal_fwd if is_forward else prop_temporal_bwd
                     elif edge_type == 'SUMMARY_OF': type_factor = prop_summary_fwd if is_forward else prop_summary_bwd
                     elif edge_type == 'MENTIONS_CONCEPT': type_factor = prop_concept_fwd if is_forward else prop_concept_bwd
                     elif edge_type == 'ASSOCIATIVE': type_factor = prop_assoc
                     elif edge_type == 'HIERARCHICAL': type_factor = prop_hier_fwd if is_forward else prop_hier_bwd
+                    elif edge_type == 'CAUSES': type_factor = prop_causes # Assume forward A->B means A causes B
+                    elif edge_type == 'PART_OF': type_factor = prop_part_of
+                    elif edge_type == 'HAS_PROPERTY': type_factor = prop_has_prop
+                    elif edge_type == 'ENABLES': type_factor = prop_enables
+                    elif edge_type == 'PREVENTS': type_factor = prop_prevents
+                    elif edge_type == 'CONTRADICTS': type_factor = prop_contradicts
+                    elif edge_type == 'SUPPORTS': type_factor = prop_supports
+                    elif edge_type == 'EXAMPLE_OF': type_factor = prop_example_of
+                    elif edge_type == 'MEASURES': type_factor = prop_measures
+                    elif edge_type == 'LOCATION_OF': type_factor = prop_location_of
+                    elif edge_type == 'ANALOGY': type_factor = prop_analogy
+                    elif edge_type == 'INFERRED_RELATED_TO': type_factor = prop_inferred
+                    elif edge_type.startswith('SPACY_'): type_factor = prop_spacy # Generic for all spaCy types
+                    # else: type_factor remains prop_unknown
 
                     dyn_str = self._calculate_dynamic_edge_strength(edge_data, current_time)
                     saliency_boost = 1.0 + (source_saliency * activation_influence) if saliency_enabled else 1.0
