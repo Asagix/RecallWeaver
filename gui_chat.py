@@ -118,16 +118,14 @@ class Worker(QThread):
             self.mod_keywords = [str(kw).lower() for kw in loaded_keywords] if isinstance(loaded_keywords, list) else FALLBACK_MODIFICATION_KEYWORDS
             gui_logger.info(f"Worker({self.personality}) loaded keywords: {self.mod_keywords}")
 
-            consolidation_cfg = config.get('consolidation', {})
-            # Ensure trigger count is an integer, default to 0 (disabled)
-            self.consolidation_trigger_count = int(consolidation_cfg.get('consolidation_trigger_count', 0))
-
+            # Load forgetting trigger count (used for memory maintenance)
             forgetting_cfg = config.get('forgetting', {})
-            # Ensure trigger count is an integer, default to 0 (disabled)
             self.forgetting_trigger_count = int(forgetting_cfg.get('trigger_interaction_count', 0))
-
-            gui_logger.info(f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
             gui_logger.info(f"Worker({self.personality}) Forgetting trigger count: {self.forgetting_trigger_count}")
+
+            # Consolidation trigger based on interaction count is removed as it's not in config
+            self.consolidation_trigger_count = 0 # Set to 0 explicitly
+            gui_logger.info(f"Worker({self.personality}) Consolidation trigger count (interaction-based): Disabled")
 
         except Exception as e:
             gui_logger.error(f"Error loading config for worker: {e}. Using fallbacks.", exc_info=True)
@@ -240,14 +238,8 @@ class Worker(QThread):
                  self.input_queue.append(('memory_maintenance', None)) # Add maintenance task
                  # Reset counter immediately after queuing to avoid multiple triggers if queue processes slowly
                  self.interaction_count = 0
-             # Check Consolidation Trigger (only if forgetting didn't reset counter)
-             # Ensure trigger count is positive (enabled)
-             elif self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
-                 gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
-                 # Pass flag indicating automatic trigger? Might be useful later.
-                 self.handle_consolidation_task(triggered_automatically=True)
-                 # Reset counter only if a task was actually triggered and queued
-                 self.interaction_count = 0
+             # Automatic consolidation trigger based on interaction count removed
+             # Manual consolidation via /consolidate command still works.
 
 
     def handle_memory_maintenance_task(self):

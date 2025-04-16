@@ -1894,24 +1894,11 @@ class GraphMemoryClient:
 
                     if initial_uuids:
                         logger.info("Retrieving memory chain...")
-                        # Find concepts mentioned in the *current* interaction (user+AI turns just added)
-                        recent_concept_uuids_for_retrieval = set()
-                        nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs captured above
-                        for turn_uuid in nodes_to_check_for_concepts:
-                            if turn_uuid and turn_uuid in self.graph:
-                                try:
-                                    for successor_uuid in self.graph.successors(turn_uuid):
-                                        edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
-                                        if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
-                                            if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
-                                                recent_concept_uuids_for_retrieval.add(successor_uuid)
-                                except Exception as concept_find_e:
-                                     logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]} during retrieval prep: {concept_find_e}")
-
-                        logger.info(f"Passing {len(recent_concept_uuids_for_retrieval)} recent concept UUIDs to retrieval.")
+                        # Use the 'recent_concept_uuids' set calculated earlier
+                        logger.info(f"Passing {len(recent_concept_uuids)} recent concept UUIDs to retrieval.")
                         memory_chain_data = self.retrieve_memory_chain(
                             initial_uuids,
-                            recent_concept_uuids=list(recent_concept_uuids_for_retrieval) # Pass the list
+                            recent_concept_uuids=list(recent_concept_uuids) # Pass the list
                         )
                         logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
                     else:
@@ -1948,12 +1935,13 @@ class GraphMemoryClient:
             logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
-            # --- Find concepts mentioned in the last two turns ---
+            # --- Find concepts mentioned in the last two turns (AFTER adding both nodes) ---
             recent_concept_uuids = set()
             nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid]
             for turn_uuid in nodes_to_check_for_concepts:
                 if turn_uuid and turn_uuid in self.graph:
                     try:
+                        # Check outgoing edges for MENTIONS_CONCEPT
                         for successor_uuid in self.graph.successors(turn_uuid):
                             edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
                             if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
@@ -1963,8 +1951,7 @@ class GraphMemoryClient:
                     except Exception as concept_find_e:
                          logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
             logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
-            # Store these to potentially pass to retrieve_memory_chain if needed later
-            # For now, we'll pass them directly in the text-only path below.
+            # This set 'recent_concept_uuids' will be used in the text-only path below.
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)
@@ -2609,10 +2596,10 @@ class GraphMemoryClient:
                                 logger.info(
                                     f"Added Edge: {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')"
                                 )
-                                    added_llm_edge_count += 1
-                                else:
-                                    # Update timestamp even if edge exists, but maybe don't overwrite type?
-                                    # For now, update timestamp regardless.
+                                added_llm_edge_count += 1
+                            else:
+                                # Update timestamp even if edge exists, but maybe don't overwrite type?
+                                # For now, update timestamp regardless.
                                     self.graph.edges[subj_uuid, obj_uuid]["last_traversed_ts"] = current_time
                                     logger.debug(
                                         f"LLM Edge {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} already exists. Updated timestamp."
@@ -2673,9 +2660,9 @@ class GraphMemoryClient:
                     if (
                             uuid1 and uuid2
                             and uuid1 in self.graph
-                            and self.graph.nodes[uuid1].get('status', 'active') == 'active'
+                            # and self.graph.nodes[uuid1].get('status', 'active') == 'active' # Status removed
                             and uuid2 in self.graph
-                            and self.graph.nodes[uuid2].get('status', 'active') == 'active'
+                            # and self.graph.nodes[uuid2].get('status', 'active') == 'active' # Status removed
                     ):
                         try:
                             if not self.graph.has_edge(uuid1, uuid2):
@@ -2690,7 +2677,7 @@ class GraphMemoryClient:
                             logger.error(f"Error adding/updating assoc edge: {e}")
                     else:
                         logger.warning(
-                            f"Could not find active nodes for relation: '{c1_txt}' -> '{c2_txt}' (UUIDs: {uuid1}, {uuid2})"
+                            f"Could not find nodes in graph for relation: '{c1_txt}' -> '{c2_txt}' (UUIDs: {uuid1}, {uuid2})"
                         )
                 else:
                     logger.debug(f"Line did not match V1 associative format: '{line}'")
@@ -2765,7 +2752,6 @@ class GraphMemoryClient:
                                     f"Hierarchical edge {parent_uuid[:8]}->{child_uuid[:8]} exists. Updated timestamp.")
                         except Exception as e:
                             logger.error(f"Error adding/updating hierarchical edge: {e}")
-                    # else: logger.warning(...) # No longer needed
                     else:
                         logger.warning(
                             f"Could not find nodes in graph for hierarchy: Child='{child_text}' ({child_uuid}), Parent='{parent_text}' ({parent_uuid})")
@@ -2813,7 +2799,7 @@ class GraphMemoryClient:
                 f"Consolidation skipped: Only {len(nodes_to_process)} suitable nodes found (min: {min_nodes_for_consolidation}).")
             return
 
-        logger.info(f"Consolidating {len(active_nodes_to_process)} nodes: {active_nodes_to_process}")
+        logger.info(f"Consolidating {len(nodes_to_process)} nodes: {nodes_to_process}")
 
         # --- 2. Prepare Context ---
         nodes_data.sort(key=lambda x: x.get('timestamp', ''))  # Ensure chronological order for context
@@ -2822,7 +2808,7 @@ class GraphMemoryClient:
 
         # --- 3. Summarization ---
         summary_node_uuid, summary_created = self._consolidate_summarize(context_text, nodes_data,
-                                                                         active_nodes_to_process)
+                                                                         nodes_to_process) # Use correct variable
 
         # --- 4. Concept Extraction (LLM) ---
         llm_concepts = self._consolidate_extract_concepts(context_text)
