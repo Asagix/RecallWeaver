@@ -2538,16 +2538,16 @@ class GraphMemoryClient:
                         try:
                             if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != rel_type:
                                 base_strength = 0.7
-                                    self.graph.add_edge(
-                                        subj_uuid,
-                                        obj_uuid,
-                                        type=rel_type,
-                                        base_strength=base_strength,
-                                        last_traversed_ts=current_time,
-                                    )
-                                    logger.info(
-                                        f"Added Edge: {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')"
-                                    )
+                                self.graph.add_edge(
+                                    subj_uuid,
+                                    obj_uuid,
+                                    type=rel_type,
+                                    base_strength=base_strength,
+                                    last_traversed_ts=current_time,
+                                )
+                                logger.info(
+                                    f"Added Edge: {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')"
+                                )
                                     added_llm_edge_count += 1
                                 else:
                                     # Update timestamp even if edge exists, but maybe don't overwrite type?
