@@ -1,0 +1,33 @@
+<start_of_turn>user
+Analyze the following conversation excerpt. Consider the underlying needs and motivations potentially expressed or implied, relating them to the core subconscious drives listed below.
+
+**Core Drives:**
+- **Connection:** Need for social bonds, belonging, intimacy, positive interaction.
+- **Safety:** Need for security, predictability, stability, avoidance of threat/harm.
+- **Understanding:** Need to make sense of the world, learn, reduce uncertainty, gain knowledge.
+- **Novelty:** Need for new experiences, stimulation, exploration, avoiding boredom.
+- **Control:** Need for agency, autonomy, influence over self and environment, competence.
+
+**Conversation Excerpt:**
+--- START ---
+{context_text}
+--- END ---
+
+**Task:**
+For **each** core drive listed above, determine if the conversation excerpt suggests the drive was primarily **satisfied**, **frustrated**, or **neutral/unclear** for the AI participant based *only* on the provided text.
+
+**Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be ONLY one of the strings: "satisfied", "frustrated", or "neutral".
+
+**Example Output:**
+```json
+{{
+  "Connection": "satisfied",
+  "Safety": "neutral",
+  "Understanding": "satisfied",
+  "Novelty": "frustrated",
+  "Control": "neutral"
+}}
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

@@ -2622,15 +2622,89 @@ class GraphMemoryClient:
                     changed = True
                     logger.debug(f"  Drive '{drive_name}' decayed towards baseline {baseline:.3f}: {current_activation:.3f} -> {new_activation:.3f}")
 
-        # --- TODO: Add LLM analysis call here ---
-        # 1. Select relevant nodes (e.g., from consolidation or recent history)
-        # 2. Format context for drive_analysis_prompt.txt
-        # 3. Call LLM
-        # 4. Parse response (e.g., {"Connection": "satisfied", "Safety": "frustrated"})
-        # 5. Adjust drive_state based on satisfaction/frustration factors
+        # --- LLM Analysis for Drive Satisfaction/Frustration ---
+        update_interval = drive_cfg.get('update_interval_interactions', 0) # Get interval from config
+        # Check if LLM update should run based on interval (can be combined with decay later)
+        # For now, let's assume if relevant_nodes are provided (e.g., from consolidation), we analyze them.
+        if relevant_nodes and update_interval > 0: # Basic check, could be more sophisticated
+            logger.info("Attempting LLM analysis for drive state update...")
+            try:
+                # 1. Select Nodes & Format Context
+                # Use the nodes passed in (e.g., from consolidation)
+                context_nodes_data = []
+                for node_uuid in relevant_nodes:
+                    if node_uuid in self.graph:
+                        context_nodes_data.append(self.graph.nodes[node_uuid])
+                context_nodes_data.sort(key=lambda x: x.get('timestamp', '')) # Sort chronologically
+                context_text = "\n".join([f"{d.get('speaker', '?')}: {d.get('text', '')}" for d in context_nodes_data])
+
+                if not context_text.strip():
+                     logger.warning("No text context available from relevant nodes for drive analysis.")
+                else:
+                    # 2. Load Prompt
+                    prompt_template = self._load_prompt("drive_analysis_prompt.txt")
+                    if not prompt_template:
+                        logger.error("Failed to load drive analysis prompt template. Skipping LLM update.")
+                    else:
+                        # 3. Call LLM
+                        full_prompt = prompt_template.format(context_text=context_text)
+                        logger.debug(f"Sending drive analysis prompt:\n{full_prompt[:300]}...")
+                        llm_response_str = self._call_kobold_api(full_prompt, max_length=150, temperature=0.3)
+
+                        # 4. Parse Response
+                        if llm_response_str and not llm_response_str.startswith("Error:"):
+                            try:
+                                # Extract JSON
+                                match = re.search(r'(\{.*?\})', llm_response_str, re.DOTALL)
+                                if match:
+                                    json_str = match.group(0)
+                                    drive_adjustments = json.loads(json_str)
+                                    logger.debug(f"Parsed drive adjustments from LLM: {drive_adjustments}")
+
+                                    # 5. Adjust drive_state based on satisfaction/frustration factors
+                                    satisfaction_factor = drive_cfg.get('satisfaction_factor', 0.1)
+                                    frustration_factor = drive_cfg.get('frustration_factor', 0.15)
+
+                                    for drive_name, status in drive_adjustments.items():
+                                        if drive_name in self.drive_state:
+                                            current_activation = self.drive_state[drive_name]
+                                            baseline = baseline_drives.get(drive_name, 0.0)
+                                            adjustment = 0.0
+
+                                            if status == "satisfied":
+                                                # Reduce activation towards baseline (or even below if very satisfied?)
+                                                # Adjustment is negative, proportional to how far *above* baseline it is
+                                                adjustment = -max(0, current_activation - baseline) * satisfaction_factor
+                                                logger.debug(f"  Drive '{drive_name}' satisfied. Adjustment: {adjustment:.3f}")
+                                            elif status == "frustrated":
+                                                # Increase activation away from baseline
+                                                # Adjustment is positive, proportional to how far *below* baseline it is (or just a fixed amount?)
+                                                # Let's make it increase regardless of current level, pushing the need higher.
+                                                adjustment = frustration_factor # Simple additive increase for frustration
+                                                logger.debug(f"  Drive '{drive_name}' frustrated. Adjustment: {adjustment:.3f}")
+                                            # else: status is neutral/unclear, no adjustment
+
+                                            if abs(adjustment) > 1e-4:
+                                                # Apply adjustment, potentially clamp?
+                                                # Let's not clamp here, decay will handle returning to baseline over time.
+                                                self.drive_state[drive_name] += adjustment
+                                                changed = True # Mark that state was changed by LLM analysis
+                                else:
+                                    logger.warning(f"LLM returned adjustment for unknown drive '{drive_name}'.")
+
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Failed to parse JSON from drive analysis response: {e}. Raw: '{llm_response_str}'")
+                            except Exception as e:
+                                logger.error(f"Error processing drive analysis LLM response: {e}", exc_info=True)
+                        else:
+                            logger.error(f"LLM call failed or returned error for drive analysis: {llm_response_str}")
+
+            except Exception as e:
+                 logger.error(f"Unexpected error during LLM drive state analysis: {e}", exc_info=True)
 
         if changed:
-            logger.info(f"Drive state updated (decay applied): {self.drive_state}")
+            # Log final state after decay and potential LLM adjustments
+            logger.info(f"Drive state updated (Decay & LLM applied): {self.drive_state}")
             # Saving happens in the calling function (e.g., run_consolidation)
 
     # *** ADDED: Wrapper methods for file operations ***
