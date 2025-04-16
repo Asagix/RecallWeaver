@@ -2061,15 +2061,18 @@ class GraphMemoryClient:
                     logger.info(f"Initial UUIDs: {initial_uuids}")
 
                     if initial_uuids:
-                        # Concept finding and mood calculation moved to AFTER node creation
+                        # --- Use context from PREVIOUS interaction for retrieval bias ---
+                        concepts_for_retrieval = self.last_interaction_concept_uuids
+                        mood_for_retrieval = self.last_interaction_mood
+                        logger.info(f"Using previous interaction context for retrieval: Concepts={len(concepts_for_retrieval)}, Mood={mood_for_retrieval}")
+
                         # --- Now call retrieval ---
                         logger.info("Retrieving memory chain...")
-                        # The recent_concept_uuids and current_mood variables are now defined above.
-                        logger.info(f"Passing {len(recent_concept_uuids)} recent concept UUIDs and current mood {current_mood} to retrieval.") # Log re-added
+                        # logger.info(f"Passing {len(concepts_for_retrieval)} recent concept UUIDs and current mood {mood_for_retrieval} to retrieval.") # Redundant log
                         memory_chain_data = self.retrieve_memory_chain(
                             initial_node_uuids=initial_uuids,
-                            recent_concept_uuids=list(recent_concept_uuids), # Pass the list
-                            current_mood=current_mood # Pass the calculated mood
+                            recent_concept_uuids=list(concepts_for_retrieval), # Pass previous concepts
+                            current_mood=mood_for_retrieval # Pass previous mood
                         )
                         logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
                     else:
@@ -2106,7 +2109,40 @@ class GraphMemoryClient:
             logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
-            # Concept finding and mood calculation logic moved to AFTER node creation and BEFORE return
+            # --- Calculate and Store context for NEXT interaction's retrieval bias ---
+            current_turn_concept_uuids = set()
+            nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs just added
+            for turn_uuid in nodes_to_check_for_concepts:
+                if turn_uuid and turn_uuid in self.graph:
+                    try:
+                        # Check outgoing edges for MENTIONS_CONCEPT
+                        for successor_uuid in self.graph.successors(turn_uuid):
+                            edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
+                            if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
+                                    current_turn_concept_uuids.add(successor_uuid)
+                                    # logger.debug(f"Identified concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}' for next bias")
+                    except Exception as concept_find_e:
+                         logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]} for next bias: {concept_find_e}")
+            logger.info(f"Storing {len(current_turn_concept_uuids)} concepts for next interaction's bias.")
+            self.last_interaction_concept_uuids = current_turn_concept_uuids # Update state
+
+            current_turn_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
+            mood_nodes_found = 0
+            total_valence = 0.0
+            total_arousal = 0.0
+            for node_uuid in [user_node_uuid, ai_node_uuid]:
+                if node_uuid and node_uuid in self.graph:
+                    node_data = self.graph.nodes[node_uuid]
+                    default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                    default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                    total_valence += node_data.get('emotion_valence', default_v)
+                    total_arousal += node_data.get('emotion_arousal', default_a)
+                    mood_nodes_found += 1
+            if mood_nodes_found > 0:
+                current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
+            logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias.")
+            self.last_interaction_mood = current_turn_mood # Update state
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)
