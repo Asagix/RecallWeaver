@@ -1150,26 +1150,31 @@ class GraphMemoryClient:
 
         return final_score
 
-
-    def purge_archived_nodes(self, older_than_days: int = 30):
+    def purge_weak_nodes(self):
         """
-        Placeholder: Permanently deletes nodes with status 'archived' that
-        are older than a specified threshold (based on timestamp).
+        Permanently deletes nodes whose memory_strength is below a configured threshold
+        and are older than a configured minimum age.
         """
-        if not self.config.get('features', {}).get('enable_forgetting', False): return
+        if not self.config.get('features', {}).get('enable_forgetting', False):
+            logger.debug("Forgetting/Purging feature disabled. Skipping purge.")
+            return
 
-        logger.warning(f"--- Purging Archived Nodes (Older than {older_than_days} days) ---")
-        # 1. Identify archived nodes older than threshold
-        # 2. Use delete_memory_entry (or a bulk delete if more efficient)
-        # 3. Rebuild index and save
+        strength_cfg = self.config.get('memory_strength', {})
+        purge_threshold = strength_cfg.get('purge_threshold', 0.01)
+        min_age_days = strength_cfg.get('purge_min_age_days', 60)
+        min_age_seconds = min_age_days * 24 * 3600
+
+        logger.warning(f"--- Purging Weak Nodes (Strength < {purge_threshold}, Age > {min_age_days} days) ---")
+
         purge_count = 0
         current_time = time.time()
-        threshold_seconds = older_than_days * 24 * 3600
         nodes_to_purge = []
         nodes_snapshot = list(self.graph.nodes(data=True)) # Snapshot
 
         for uuid, data in nodes_snapshot:
-            if data.get('status') == 'archived':
+            current_strength = data.get('memory_strength', 1.0)
+            if current_strength < purge_threshold:
+                # Check age
                 timestamp_str = data.get('timestamp')
                 node_age_sec = current_time # Default to max age if no timestamp
                 if timestamp_str:
@@ -1180,28 +1185,28 @@ class GraphMemoryClient:
                              dt_obj = dt_obj.replace(tzinfo=timezone.utc)
                         node_age_sec = (datetime.now(timezone.utc) - dt_obj).total_seconds()
                     except ValueError:
-                        logger.warning(f"Could not parse timestamp for archived node {uuid[:8]}: {timestamp_str}")
+                        logger.warning(f"Could not parse timestamp for weak node {uuid[:8]}: {timestamp_str}")
 
-                if node_age_sec >= threshold_seconds:
+                if node_age_sec >= min_age_seconds:
                     nodes_to_purge.append(uuid)
-                    logger.debug(f"Marked archived node {uuid[:8]} for purging (Age: {node_age_sec / 3600:.1f} hrs)")
+                    logger.debug(f"Marked weak node {uuid[:8]} for purging (Strength: {current_strength:.3f}, Age: {node_age_sec / 3600 / 24:.1f} days)")
+                # else:
+                    # logger.debug(f"Node {uuid[:8]} is weak ({current_strength:.3f}) but too young ({node_age_sec / 3600 / 24:.1f} days) for purging.")
+            # else: pass # Node strength is above threshold
 
         # Perform deletion
         if nodes_to_purge:
-            logger.info(f"Attempting to permanently purge {len(nodes_to_purge)} archived nodes...")
+            logger.info(f"Attempting to permanently purge {len(nodes_to_purge)} weak nodes...")
             for uuid in list(nodes_to_purge): # Iterate over copy
-                if self.delete_memory_entry(uuid): # delete_memory_entry handles graph, embed, index, map
+                if self.delete_memory_entry(uuid): # delete_memory_entry handles graph, embed, index, map, rebuild
                     purge_count += 1
                 else:
-                    logger.error(f"Failed to purge archived node {uuid[:8]}. It might have been deleted already.")
+                    logger.error(f"Failed to purge weak node {uuid[:8]}. It might have been deleted already.")
 
             logger.info(f"--- Purge Complete: {purge_count} nodes permanently deleted. ---")
-            # delete_memory_entry already rebuilds/saves if successful, but a final save might be good practice
-            # if multiple deletes happened without rebuilds in between (current delete does rebuild each time).
-            # self._save_memory() # Likely redundant with current delete_memory_entry
+            # delete_memory_entry already rebuilds/saves if successful.
         else:
-            logger.info("--- Purge Complete: No archived nodes met the age criteria. ---")
-
+            logger.info("--- Purge Complete: No weak nodes met the criteria for purging. ---")
 
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
@@ -2667,7 +2672,7 @@ class GraphMemoryClient:
                         similar_parents = self._search_similar_nodes(parent_text, k=1, node_type_filter='concept')
                         if similar_parents and similar_parents[0][1] <= concept_sim_threshold:
                             parent_uuid = similar_parents[0][0]
-                            logger.info(f"Found existing active node for parent: {parent_uuid[:8]}")
+                            logger.debug(f"Found existing node for parent: {parent_uuid[:8]}")
                             if parent_text not in concept_node_map:
                                 concept_node_map[parent_text] = parent_uuid
                         else:
@@ -2821,7 +2826,7 @@ class GraphMemoryClient:
                             f"Error adding MENTIONS_CONCEPT edge from summary {summary_node_uuid[:8]} to {concept_uuid[:8]}: {e}")
 
                 # Link concept to original turn nodes where it might appear (less precise)
-                for node_uuid in active_nodes_to_process:
+                for node_uuid in nodes_to_process:
                     if node_uuid in self.graph and concept_text.lower() in self.graph.nodes[node_uuid].get('text',
                                                                                                            '').lower():
                         try:
