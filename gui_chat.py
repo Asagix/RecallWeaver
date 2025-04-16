@@ -457,7 +457,7 @@ class Worker(QThread):
                 action_suffix = "unknown_action_fail"
 
         except Exception as e:
-            logger.error(f"Exception during execution of CONFIRMED action '{action}': {e}", exc_info=True)
+            gui_logger.error(f"Exception during execution of CONFIRMED action '{action}': {e}", exc_info=True)
             message = f"An internal error occurred while trying to perform confirmed action '{action}'."
             success = False
             action_suffix = f"{action}_exception"
