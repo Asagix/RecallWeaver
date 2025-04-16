@@ -146,6 +146,11 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Call `_generate_autobiographical_model` at the end of `run_consolidation`.
     -   [x] Modify `_construct_prompt` to inject `asm_summary` into the prompt context, respecting token limits.
     -   [ ] Testing: Verify ASM is generated, saved/loaded, and appears correctly in prompts.
+-   [ ] **Second-Order Relationship Inference (V1 - Generic):**
+    -   [x] Add `consolidation.inference` section to `config.yaml` (enable, strength_factor).
+    -   [x] Implement `_infer_second_order_relations` helper method (find paths A->B->C, add weak 'INFERRED_RELATED_TO' edge A->C).
+    -   [x] Call `_infer_second_order_relations` at the end of `run_consolidation`.
+    -   [ ] Testing: Verify inferred edges are created correctly with appropriate strength.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

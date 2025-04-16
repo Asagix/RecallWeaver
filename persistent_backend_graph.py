@@ -3291,6 +3291,85 @@ class GraphMemoryClient:
 
         logger.info("--- ASM Generation Finished ---")
 
+    def _infer_second_order_relations(self):
+        """Infers generic 'INFERRED_RELATED_TO' edges based on paths of length 2."""
+        inference_cfg = self.config.get('consolidation', {}).get('inference', {})
+        if not inference_cfg.get('enable', False):
+            logger.info("Second-order inference disabled by config.")
+            return
+
+        logger.info("--- Inferring Second-Order Relationships ---")
+        strength_factor = inference_cfg.get('strength_factor', 0.3)
+        max_depth = 2 # Fixed for V1
+        inferred_edge_count = 0
+        current_time = time.time()
+
+        # Consider only concept and summary nodes as start/end/intermediate points for V1
+        candidate_nodes = [
+            uuid for uuid, data in self.graph.nodes(data=True)
+            if data.get('node_type') in ['concept', 'summary']
+        ]
+
+        if len(candidate_nodes) < 3:
+            logger.info("Skipping inference: Not enough concept/summary nodes.")
+            return
+
+        logger.debug(f"Checking {len(candidate_nodes)} candidate nodes for inference...")
+
+        # Iterate through all pairs of candidate nodes (A, C)
+        for node_a_uuid in candidate_nodes:
+            for node_c_uuid in candidate_nodes:
+                if node_a_uuid == node_c_uuid: continue
+
+                # Check if a direct edge already exists (A->C or C->A)
+                if self.graph.has_edge(node_a_uuid, node_c_uuid) or self.graph.has_edge(node_c_uuid, node_a_uuid):
+                    continue
+
+                # Find paths of length 2 (A -> B -> C) where B is also a candidate node
+                found_path = False
+                path_strength_sum = 0.0
+                path_count = 0
+
+                # Check A -> B edges
+                for _, node_b_uuid, edge_ab_data in self.graph.out_edges(node_a_uuid, data=True):
+                    if node_b_uuid in candidate_nodes: # Check if intermediate is concept/summary
+                        # Check B -> C edges
+                        if self.graph.has_edge(node_b_uuid, node_c_uuid):
+                            edge_bc_data = self.graph.get_edge_data(node_b_uuid, node_c_uuid)
+                            if edge_bc_data:
+                                found_path = True
+                                # Calculate path strength (e.g., product of edge strengths * factor)
+                                strength_ab = edge_ab_data.get('base_strength', 0.5) # Use base_strength for calculation
+                                strength_bc = edge_bc_data.get('base_strength', 0.5)
+                                path_strength = strength_ab * strength_bc * strength_factor
+                                path_strength_sum += path_strength
+                                path_count += 1
+                                logger.debug(f"  Found path: {node_a_uuid[:4]}->{node_b_uuid[:4]}->{node_c_uuid[:4]} (Strength: {path_strength:.3f})")
+
+                if found_path:
+                    # Calculate average strength if multiple paths exist? Or max? Let's use average.
+                    avg_strength = path_strength_sum / path_count if path_count > 0 else 0.0
+                    clamped_strength = max(0.01, min(1.0, avg_strength)) # Ensure minimum strength, clamp max
+
+                    # Add the inferred edge
+                    try:
+                        self.graph.add_edge(
+                            node_a_uuid, node_c_uuid,
+                            type='INFERRED_RELATED_TO',
+                            base_strength=clamped_strength,
+                            last_traversed_ts=current_time # Set timestamp to now
+                        )
+                        inferred_edge_count += 1
+                        logger.info(f"Added inferred edge: {node_a_uuid[:8]} --[INFERRED_RELATED_TO ({clamped_strength:.3f})]--> {node_c_uuid[:8]}")
+                    except Exception as e:
+                        logger.error(f"Error adding inferred edge {node_a_uuid[:8]} -> {node_c_uuid[:8]}: {e}")
+
+        if inferred_edge_count > 0:
+            logger.info(f"Added {inferred_edge_count} new inferred relationship edges.")
+            self._save_memory() # Save graph if changes were made
+        else:
+            logger.info("No new second-order relationships were inferred.")
+
 
     def run_consolidation(self, active_nodes_to_process=None):
         """
@@ -3491,6 +3570,9 @@ class GraphMemoryClient:
 
         # --- Update Autobiographical Model after consolidation ---
         self._generate_autobiographical_model()
+
+        # --- Infer Second-Order Relationships ---
+        self._infer_second_order_relations()
 
 #Function call
 if __name__ == "__main__":

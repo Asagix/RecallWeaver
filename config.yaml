@@ -88,6 +88,11 @@ consolidation:
     - "EXAMPLE_OF"
     - "MEASURES"
     - "LOCATION_OF"
+  # --- Second-Order Inference ---
+  inference:
+    enable: true
+    max_depth: 2 # Fixed at 2 for V1 generic relatedness
+    strength_factor: 0.3 # Multiplier for inferred edge strength (based on path strengths)
 
 # --- Emotion Analysis ---
 emotion_analysis:
