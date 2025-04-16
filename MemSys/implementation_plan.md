@@ -1,0 +1,162 @@
+# Implementation Plan: Persistent Graph-Based Memory System
+
+This document tracks the implementation progress and outlines future enhancements based on the Software Design Document V1.0 and subsequent analysis.
+
+## Phase 1: Backend Core (`persistent_backend_graph.py`)
+
+-   [x] **Basic Setup & Persistence:**
+    -   [x] Create `persistent_backend_graph.py`.
+    -   [x] Define `GraphMemoryClient` class structure.
+    -   [x] Implement `__init__` method (initialize graph, embedder, paths).
+    -   [x] Implement `_load_memory` (load graph, embeddings, index, mapping from files).
+    -   [x] Implement `_save_memory` (save graph, embeddings, index, mapping to files).
+    -   [x] Implement `_rebuild_index_from_graph_embeddings` for consistency checks.
+    -   [x] Add basic logging.
+    -   [x] Add `if __name__ == "__main__":` test block for initialization.
+-   [x] **Memory Addition:**
+    -   [x] Implement `_get_embedding` helper.
+    -   [x] Implement `add_memory_node` (UUID, timestamp, embedding generation, add to graph, add to FAISS, update mappings).
+    -   [x] Add temporal edge creation in `add_memory_node`.
+-   [x] **LLM Interaction:**
+    -   [x] Implement `_call_kobold_api` (Generate API).
+    -   [x] Implement `_call_kobold_multimodal_api` (Chat Completions API).
+    -   [x] Include basic error handling for API calls.
+-   [x] **Basic Interaction Flow & Retrieval:**
+    -   [x] Implement `_search_similar_nodes` using FAISS for initial node retrieval.
+    -   [x] Implement `process_interaction` structure (call search, retrieval, construct prompt, call LLM, add turns to memory, handle image attachments).
+    -   [x] Implement basic `_construct_prompt`.
+-   [x] **Memory Retrieval (Activation Spreading):**
+    -   [x] Define activation parameters (now in config).
+    -   [x] Implement helper `_calculate_node_decay`.
+    -   [x] Implement helper `_calculate_dynamic_edge_strength`.
+    -   [x] Implement `retrieve_memory_chain` core logic:
+        -   [x] Initialize activation levels for initial nodes.
+        -   [x] Implement activation spreading loop (bi-directional).
+        -   [x] Apply node decay.
+        -   [x] Identify nodes above threshold.
+        -   [x] Return ordered list of node data dictionaries.
+        -   [x] Utilize edge type propagation factors from config.
+    -   [x] Update `process_interaction` to use the results of `retrieve_memory_chain`.
+-   [x] **Context Injection Refinement:**
+    -   [x] Integrate `transformers.AutoTokenizer` for accurate token counting.
+    -   [x] Update `_construct_prompt` to:
+        -   [x] Calculate available token budget.
+        -   [x] Format retrieved memory chain nodes correctly (with timestamps/tags).
+        -   [x] Inject memory chain context chronologically, pruning older entries if budget exceeded.
+        -   [x] Assemble final prompt respecting Gemma Instruct format.
+        -   [x] Inject current time information.
+        -   [x] Add explicit instruction for LLM to use context for recall.
+        -   [x] Fix duplicate user input issue in history processing.
+-   [x] **Memory Manipulation:**
+    -   [x] Implement `analyze_memory_modification_request` using direct extraction and LLM fallback.
+    -   [x] Implement `delete_memory_entry`:
+        -   [x] Remove node from NetworkX graph.
+        -   [x] Remove embedding from `self.embeddings`.
+        -   [x] Remove vector from FAISS index (via index rebuild).
+        -   [x] Update FAISS ID mappings.
+    -   [x] Implement `edit_memory_entry` (by deleting old node and adding a new one, relinking temporal edges).
+    -   [x] Implement `forget_topic`:
+        -   [x] Embed topic.
+        -   [x] Find related nodes via FAISS search.
+        -   [x] Call `delete_memory_entry` for identified nodes.
+    -   [x] Trigger `_save_memory` consistently after modifications (Currently saved after consolidation/deletion/exit).
+-   [~] **Consolidation:**
+    -   [x] Implement `run_consolidation` basic structure.
+    -   [x] Define initial LLM prompts for summarization, concept extraction, associative linking, and basic hierarchical linking.
+    -   [x] Add logic to select nodes for consolidation.
+    -   [x] Add logic to parse LLM response and add new nodes/edges (`summary`, `concept`, `SUMMARY_OF`, `MENTIONS_CONCEPT`, `ASSOCIATIVE`, `HIERARCHICAL`).
+    -   [x] Implement concept deduplication (linking to existing concepts).
+    -   [x] Implement pruning of summarized 'turn' nodes (with connectivity safety check).
+    -   [ ] **Refine LLM prompts** for more robust/accurate summarization, concept extraction, relationship, and hierarchy identification.
+    -   [ ] **Implement more robust parsing** for consolidation LLM responses (e.g., handle variations, consider JSON mode if available).
+    -   [ ] **Explore deeper relationship analysis** (e.g., causality, sentiment, purpose) during consolidation.
+    -   [ ] **Implement mechanism for automatic/periodic consolidation trigger** (e.g., based on interaction count, time).
+-   [ ] **Action/Tool Handling (via Focused Intent Analysis):**
+    -   [x] **Backend:** Basic structure for `analyze_action_request` and `execute_action` exists.
+    -   [x] **Backend:** Basic file/calendar wrapper methods exist in `file_manager.py` and `GraphMemoryClient`.
+    -   [ ] **Backend:** **Refine LLM prompt** for `analyze_action_request` to reliably detect file/calendar actions, extract arguments, and handle clarification needs (JSON output preferred).
+    -   [ ] **Backend:** **Implement robust JSON parsing & argument validation** for `analyze_action_request` response.
+    -   [ ] **Backend:** **Enhance error handling** within `execute_action` and file/calendar wrappers.
+    -   [ ] **GUI:** Integrate action analysis call into `Worker.add_input`.
+    -   [ ] **GUI:** Implement full logic in `Worker` to handle `clarify` responses and queue/execute specific action tasks.
+    -   [ ] **GUI:** Implement UI elements/flow for clarification requests and potential confirmations.
+
+## Phase 2: GUI (`gui_chat.py`)
+
+-   [x] **Basic UI Structure:**
+    -   [x] Create `gui_chat.py`.
+    -   [x] Set up main PyQt6 window (`QMainWindow`).
+    -   [x] Add input field (`PasteLineEdit` supporting image paste/drop).
+    -   [x] Add output display area (`QScrollArea` with `QVBoxLayout`).
+    -   [x] Add Send, Attach, Reset Memory, Consolidate buttons.
+    -   [x] Implement basic Markdown->HTML formatting (`display_message`).
+    -   [x] Add image thumbnail display in chat bubbles.
+    -   [x] Implement dark theme and styling based on `config.yaml`.
+    -   [x] Add status bar with status indicator light.
+    -   [x] Add personality selection menu.
+    -   [x] Fix auto-scrolling behavior.
+-   [x] **Backend Worker Thread:**
+    -   [x] Define `Worker` class inheriting from `QThread`.
+    -   [x] Implement `run` method for the worker loop.
+    -   [x] Define signals for communication (including `backend_ready`).
+    -   [x] Instantiate `GraphMemoryClient` within the worker for the selected personality.
+    -   [x] Load modification keywords and consolidation trigger count from config in worker.
+    -   [x] Add Reset Memory & Consolidate task handling.
+-   [x] **Connecting UI and Worker:**
+    -   [x] Connect UI elements (Send, Reset, Consolidate, Menu) to worker slots/methods.
+    -   [x] Connect worker signals back to UI slots (including `on_backend_ready`).
+    -   [x] Handle thread starting/stopping gracefully (including saving on stop/close).
+    -   [x] Implement personality switching logic (stop old worker, start new).
+-   [x] **Displaying Conversation:**
+    -   [x] Update UI display area with user input and AI responses in bubbles.
+    -   [x] Worker maintains short-term conversation history.
+    -   [x] Display image attachments from user.
+-   [x] **Handling Memory Modification Commands:**
+    -   [x] Add keyword check in UI input handling (using config).
+    -   [x] Send modification requests to the worker.
+    -   [x] Worker calls backend analysis and execution methods.
+    -   [x] Display confirmation/results back in the UI with action indicators.
+-   [x] **Displaying Memory Context:**
+    -   [x] Add `CollapsibleMemoryWidget`.
+    -   [x] Pass memory data from backend through worker to GUI.
+    -   [x] Instantiate and display widget in `display_response`.
+    -   [x] Fix content display issue in widget.
+-   [ ] **Action/Tool Handling (GUI Layer):** (See Backend section for details)
+    -   [ ] Modify `Worker.add_input` to call `client.analyze_action_request` first.
+    -   [ ] Add logic to `Worker` to check analysis result and queue specific action tasks.
+    -   [ ] Implement new `handle_..._task` methods in `Worker` to call `client.execute_action`.
+    -   [ ] Define and emit new/updated signals from `Worker` for action success/failure/clarification needed.
+    -   [ ] Add slots in `ChatWindow` to handle these new signals.
+    -   [ ] Implement UI for clarification requests (e.g., missing arguments).
+    -   [ ] Implement UI for potential confirmation steps (e.g., getting file content).
+
+## Phase 3: Configuration & Refinement
+
+-   [x] **Configuration File:**
+    -   [x] Create `config.yaml`.
+    -   [x] Move constants (paths, model names, API URL, activation parameters, GUI styles etc.) to config file.
+    -   [x] Load configuration using PyYAML in `GraphMemoryClient` and `Worker`.
+-   [ ] **Parameter Tuning & Evaluation:**
+    -   [~] Experimented with activation spreading parameters.
+    -   [ ] **Develop systematic test scenarios** for evaluating retrieval and consolidation quality.
+    -   [ ] **Systematically tune** activation parameters (`spreading_depth`, decay rates, propagation factors) based on test results.
+    -   [ ] **Systematically tune** consolidation parameters (e.g., `concept_similarity_threshold`).
+    -   [ ] **Tune Faiss search parameter (`k`)**.
+    -   [ ] **Tune LLM generation parameters** (temperature, etc.) for interaction vs. consolidation/analysis.
+    -   [ ] **Evaluate prompting strategies** (e.g., memory/history budget ratios).
+-   [ ] **Error Handling & Robustness:**
+    -   [~] Added some error handling.
+    -   [ ] **Implement more robust parsing** of LLM responses (consolidation, analysis).
+    -   [ ] **Enhance file I/O and FAISS error handling** (e.g., backups, recovery, disk space checks).
+    -   [ ] **Add more thorough checks for graph/index consistency** on load.
+-   [ ] **Testing & Documentation:**
+    -   [~] Basic `if __name__ == "__main__":` tests exist.
+    -   [x] Added basic docstrings to `GraphMemoryClient` methods.
+    -   [x] Created initial README.
+    -   [ ] **Develop unit tests** for core backend functions (`file_manager`, specific `GraphMemoryClient` helpers).
+    -   [ ] **Develop integration tests** for interaction/consolidation flows.
+    -   [ ] **Complete/Refine docstrings** throughout the codebase.
+    -   [ ] **Update README** as features evolve.
+-   [ ] **Scalability Enhancements (Future):**
+    -   [ ] Evaluate and potentially implement optimized FAISS index (e.g., `IndexIVFFlat`) if memory size grows significantly.
+    -   [ ] Evaluate graph database alternatives if NetworkX performance becomes a bottleneck.
