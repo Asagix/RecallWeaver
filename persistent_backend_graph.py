@@ -67,7 +67,8 @@ class GraphMemoryClient:
         self.index_file = os.path.join(self.data_dir, "memory_index.faiss")
         self.embeddings_file = os.path.join(self.data_dir, "memory_embeddings.npy")
         self.mapping_file = os.path.join(self.data_dir, "memory_mapping.json")
-        self.asm_file = os.path.join(self.data_dir, "asm.json") # NEW: ASM file path
+        self.asm_file = os.path.join(self.data_dir, "asm.json")
+        self.drives_file = os.path.join(self.data_dir, "drives.json") # NEW: Drives file path
 
         # API URLs
         self.kobold_api_url = self.config.get('kobold_api_url', "http://localhost:5001/api/v1/generate")
@@ -89,9 +90,11 @@ class GraphMemoryClient:
         self.nlp = None # <<< Initialize spaCy model attribute
         # --- State for Contextual Retrieval Bias ---
         self.last_interaction_concept_uuids = set()
-        self.last_interaction_mood = (0.0, 0.1) # Default mood
+        self.last_interaction_mood = (0.0, 0.1) # Default mood (Valence, Arousal)
         # --- Autobiographical Self-Model ---
         self.autobiographical_model = {} # Initialize empty ASM
+        # --- Subconscious Drive State ---
+        self.drive_state = {} # Initialize empty drive state {drive_name: activation_level}
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -380,6 +383,8 @@ class GraphMemoryClient:
                 loaded_something = True
             except Exception as e: logger.error(f"Failed loading ASM: {e}", exc_info=True); self.autobiographical_model = {}
         else: logger.info("ASM file not found."); self.autobiographical_model = {}
+        # --- Load Drive State ---
+        self._load_drive_state() # Load or initialize drive state
 
         if not loaded_something: logger.info("No existing memory data found.")
         else: logger.info("Memory loading complete.")
@@ -497,6 +502,8 @@ class GraphMemoryClient:
             try:
                 with open(self.asm_file, 'w') as f: json.dump(self.autobiographical_model, f, indent=4)
             except Exception as e: logger.error(f"Failed saving ASM: {e}")
+            # --- Save Drive State ---
+            self._save_drive_state()
 
             logger.info(f"Memory saving done ({time.time() - start_time:.2f}s).")
         except Exception as e: logger.error(f"Unexpected save error: {e}", exc_info=True)
@@ -843,9 +850,51 @@ class GraphMemoryClient:
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
         context_focus_boost = act_cfg.get('context_focus_boost', 0.0) # Get boost factor, default 0 (no boost)
         recent_concept_uuids_set = set(recent_concept_uuids) if recent_concept_uuids else set() # Use set for faster lookup
-        # --- Emotional Context Config ---
+
+        # --- Drive State Influence on Mood ---
+        drive_cfg = self.config.get('subconscious_drives', {})
+        mood_influence_cfg = drive_cfg.get('mood_influence', {})
+        drives_enabled = drive_cfg.get('enabled', False)
+        effective_mood = current_mood if current_mood else (0.0, 0.1) # Use provided mood or default
+
+        if drives_enabled and mood_influence_cfg and self.drive_state:
+            logger.debug(f"Calculating mood adjustment based on drive state: {self.drive_state}")
+            base_valence, base_arousal = effective_mood
+            valence_adjustment = 0.0
+            arousal_adjustment = 0.0
+            valence_factors = mood_influence_cfg.get('valence_factors', {})
+            arousal_factors = mood_influence_cfg.get('arousal_factors', {})
+            baseline_drives = drive_cfg.get('core_drives', {})
+
+            for drive_name, current_activation in self.drive_state.items():
+                baseline = baseline_drives.get(drive_name, 0.0)
+                # Calculate deviation from baseline (positive=higher need, negative=satisfied)
+                deviation = current_activation - baseline
+                valence_adj = valence_factors.get(drive_name, 0.0) * deviation
+                arousal_adj = arousal_factors.get(drive_name, 0.0) * deviation
+                valence_adjustment += valence_adj
+                arousal_adjustment += arousal_adj
+                # logger.debug(f"  Drive '{drive_name}': Act={current_activation:.2f}, Base={baseline:.2f}, Dev={deviation:.2f} -> V_adj={valence_adj:.3f}, A_adj={arousal_adj:.3f}")
+
+            # Clamp total adjustment
+            max_adj = mood_influence_cfg.get('max_mood_adjustment', 0.3)
+            valence_adjustment = max(-max_adj, min(max_adj, valence_adjustment))
+            arousal_adjustment = max(-max_adj, min(max_adj, arousal_adjustment))
+
+            # Apply adjustment and clamp final mood
+            adjusted_valence = max(-1.0, min(1.0, base_valence + valence_adjustment))
+            adjusted_arousal = max(0.0, min(1.0, base_arousal + arousal_adjustment)) # Arousal >= 0
+
+            effective_mood = (adjusted_valence, adjusted_arousal)
+            logger.info(f"Mood adjusted by drives: Original=({base_valence:.2f},{base_arousal:.2f}) -> Adjusted=({effective_mood[0]:.2f},{effective_mood[1]:.2f})")
+        else:
+             logger.debug("Subconscious drives disabled or no config/state found, using original mood.")
+
+
+        # --- Emotional Context Config (Uses effective_mood) ---
         emo_ctx_cfg = act_cfg.get('emotional_context', {})
-        emo_ctx_enabled = emo_ctx_cfg.get('enable', False) and current_mood is not None
+        # Enable emotional context bias if the feature is on AND we have a valid mood (original or adjusted)
+        emo_ctx_enabled = emo_ctx_cfg.get('enable', False) and effective_mood is not None
         emo_max_dist = emo_ctx_cfg.get('max_distance', 1.414)
         emo_boost = emo_ctx_cfg.get('boost_factor', 0.0) # Additive boost
         emo_penalty = emo_ctx_cfg.get('penalty_factor', 0.0) # Subtractive penalty
@@ -968,7 +1017,7 @@ class GraphMemoryClient:
                             default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
                             neighbor_v = neighbor_data.get('emotion_valence', default_v)
                             neighbor_a = neighbor_data.get('emotion_arousal', default_a)
-                            mood_v, mood_a = current_mood # Unpack current mood
+                            mood_v, mood_a = effective_mood # Unpack potentially adjusted mood
 
                             # Calculate Euclidean distance in V/A space
                             dist_sq = (neighbor_v - mood_v)**2 + (neighbor_a - mood_a)**2
@@ -1133,7 +1182,7 @@ class GraphMemoryClient:
                                 default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
                                 node_v = node_data.get('emotion_valence', default_v)
                                 node_a = node_data.get('emotion_arousal', default_a)
-                                mood_v, mood_a = current_mood
+                                mood_v, mood_a = effective_mood # Use potentially adjusted mood
                                 dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
                                 emo_dist = math.sqrt(dist_sq)
 
@@ -1195,7 +1244,7 @@ class GraphMemoryClient:
                                     default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
                                     node_v = node_data.get('emotion_valence', default_v)
                                     node_a = node_data.get('emotion_arousal', default_a)
-                                    mood_v, mood_a = current_mood
+                                    mood_v, mood_a = effective_mood # Use potentially adjusted mood
                                     dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
                                     emo_dist = math.sqrt(dist_sq)
 
@@ -2493,8 +2542,91 @@ class GraphMemoryClient:
             logger.info("--- MEMORY RESET COMPLETE ---"); return True
         except Exception as e:
             logger.error(f"Error during memory reset: {e}", exc_info=True)
-            self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); logger.warning("Reset failed, re-initialized empty state.")
+            self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); self._initialize_drive_state(); logger.warning("Reset failed, re-initialized empty state.")
             return False
+
+    # --- Drive State Management ---
+    def _initialize_drive_state(self):
+        """Sets drive state to baseline values from config."""
+        drive_cfg = self.config.get('subconscious_drives', {})
+        core_drives = drive_cfg.get('core_drives', {})
+        self.drive_state = core_drives.copy() # Start with baseline values
+        logger.info(f"Drive state initialized to baseline: {self.drive_state}")
+
+    def _load_drive_state(self):
+        """Loads drive state from JSON file or initializes it."""
+        if os.path.exists(self.drives_file):
+            try:
+                with open(self.drives_file, 'r') as f:
+                    self.drive_state = json.load(f)
+                logger.info(f"Loaded drive state from {self.drives_file}: {self.drive_state}")
+                # Optional: Validate loaded state against config drives?
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Error loading drive state file {self.drives_file}: {e}. Initializing defaults.")
+                self._initialize_drive_state()
+            except Exception as e:
+                logger.error(f"Unexpected error loading drive state: {e}. Initializing defaults.", exc_info=True)
+                self._initialize_drive_state()
+        else:
+            logger.info(f"Drive state file not found ({self.drives_file}). Initializing defaults.")
+            self._initialize_drive_state()
+
+    def _save_drive_state(self):
+        """Saves the current drive state to JSON file."""
+        if not self.drive_state: # Don't save if empty (e.g., during init error)
+            logger.warning("Skipping drive state save because state is empty.")
+            return
+        try:
+            with open(self.drives_file, 'w') as f:
+                json.dump(self.drive_state, f, indent=4)
+            logger.debug(f"Drive state saved to {self.drives_file}.")
+        except IOError as e:
+            logger.error(f"IO error saving drive state to {self.drives_file}: {e}", exc_info=True)
+        except TypeError as e:
+            logger.error(f"Error serializing drive state to JSON: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Unexpected error saving drive state: {e}", exc_info=True)
+
+    def _update_drive_state(self, relevant_nodes: list = None):
+        """
+        Placeholder: Updates drive activation levels based on recent experience.
+        This will eventually involve LLM analysis or heuristics.
+        For now, it might just apply decay.
+        """
+        drive_cfg = self.config.get('subconscious_drives', {})
+        if not drive_cfg.get('enabled', False):
+            return # Do nothing if disabled
+
+        logger.debug("Running drive state update (Placeholder - applying decay)...")
+        decay_rate = drive_cfg.get('decay_rate', 0.05)
+        baseline_drives = drive_cfg.get('core_drives', {})
+        changed = False
+
+        for drive_name, current_activation in list(self.drive_state.items()):
+            baseline = baseline_drives.get(drive_name, 0.0) # Get baseline for this drive
+            # Apply decay towards baseline
+            if decay_rate > 0:
+                new_activation = current_activation + (baseline - current_activation) * decay_rate
+                # Prevent overshoot
+                if (current_activation > baseline and new_activation < baseline) or \
+                   (current_activation < baseline and new_activation > baseline):
+                    new_activation = baseline
+
+                if abs(new_activation - current_activation) > 1e-4: # Check for significant change
+                    self.drive_state[drive_name] = new_activation
+                    changed = True
+                    logger.debug(f"  Drive '{drive_name}' decayed towards baseline {baseline:.3f}: {current_activation:.3f} -> {new_activation:.3f}")
+
+        # --- TODO: Add LLM analysis call here ---
+        # 1. Select relevant nodes (e.g., from consolidation or recent history)
+        # 2. Format context for drive_analysis_prompt.txt
+        # 3. Call LLM
+        # 4. Parse response (e.g., {"Connection": "satisfied", "Safety": "frustrated"})
+        # 5. Adjust drive_state based on satisfaction/frustration factors
+
+        if changed:
+            logger.info(f"Drive state updated (decay applied): {self.drive_state}")
+            # Saving happens in the calling function (e.g., run_consolidation)
 
     # *** ADDED: Wrapper methods for file operations ***
     def create_workspace_file(self, filename: str, content: str) -> bool:
@@ -3869,11 +4001,20 @@ class GraphMemoryClient:
 
         logger.info("--- Consolidation Finished ---")
 
+        # --- Update Drive State (Placeholder) ---
+        # Pass relevant nodes (e.g., the ones just processed) if needed for future analysis
+        self._update_drive_state(relevant_nodes=nodes_to_process)
+
         # --- Update Autobiographical Model after consolidation ---
         self._generate_autobiographical_model()
 
         # --- Infer Second-Order Relationships ---
         self._infer_second_order_relations()
+
+        # --- Final Save (if not already saved by pruning) ---
+        # Check if pruning happened and saved already
+        if not (prune_summarized and summary_created and pruned_count > 0):
+            self._save_memory() # Save all changes (summary, concepts, relations, drives, ASM, inference)
 
 #Function call
 if __name__ == "__main__":

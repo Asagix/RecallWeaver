@@ -178,6 +178,43 @@ gui_style:
     border_radius_px: 15
     padding_vertical_px: 8
     padding_horizontal_px: 16
+
+# --- Subconscious Drives ---
+subconscious_drives:
+  enabled: true # Master switch for the drive system
+  # Define the core drives and their baseline activation/need level (e.g., 0=neutral, >0=active need)
+  core_drives:
+    Connection: 0.1 # Slight baseline need for connection
+    Safety: 0.2     # Baseline need for safety/predictability
+    Understanding: 0.1 # Baseline drive to understand
+    Novelty: 0.05   # Slight baseline drive for new things
+    Control: 0.1    # Baseline drive for agency/control
+  # Parameters for future drive updates (placeholders for now)
+  update_interval_interactions: 10 # How often to potentially update drives
+  decay_rate: 0.05 # How quickly drive activation returns to baseline (0=no decay)
+  satisfaction_factor: 0.1 # How much satisfaction reduces drive activation
+  frustration_factor: 0.15 # How much frustration increases drive activation
+  # Influence parameters
+  mood_influence:
+    # How much drive activation influences valence/arousal (V/A)
+    # Example: High unmet 'Safety' might increase arousal and decrease valence
+    # Format: drive_name: [valence_factor, arousal_factor]
+    # Positive factor = increases V/A, Negative factor = decreases V/A
+    # Factors are multiplied by the drive's current activation level (relative to baseline?)
+    valence_factors:
+      Connection: 0.1  # High connection need slightly increases positive valence pull
+      Safety: -0.2     # High safety need strongly decreases valence pull (more negative)
+      Understanding: 0.05
+      Novelty: 0.05
+      Control: -0.1    # High control need slightly decreases valence pull
+    arousal_factors:
+      Connection: 0.05 # High connection need slightly increases arousal
+      Safety: 0.3      # High safety need strongly increases arousal
+      Understanding: 0.1
+      Novelty: 0.15    # High novelty need increases arousal
+      Control: 0.2     # High control need increases arousal
+    max_mood_adjustment: 0.3 # Maximum absolute change to V or A from drives
+
 # --- Saliency Calculation ---
 saliency:
   initial_scores: # Base scores by node type
