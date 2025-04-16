@@ -1,0 +1,23 @@
+# Core ML/NLP Libraries
+sentence-transformers
+transformers
+torch # Often a dependency for sentence-transformers and transformers
+
+# Graph & Vector Search
+networkx
+numpy
+faiss-cpu # Or faiss-gpu if you have CUDA set up
+
+# GUI
+PyQt6
+
+# Web Requests & Configuration
+requests
+PyYAML
+
+# Timezone Data (Recommended for zoneinfo)
+tzdata
+
+# Note: Standard libraries like os, json, re, datetime, logging, time,
+# uuid, collections, sys, base64, mimetypes are built-in and
+# do not need to be listed here.
