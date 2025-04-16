@@ -104,6 +104,13 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Modify `retrieve_memory_chain` to identify semantically similar, co-activated nodes.
     -   [x] Implement logic to apply `interference_penalty_factor` to non-dominant nodes within similar clusters.
     -   [ ] Testing: Verify interference is applied correctly and subtly reduces activation of competing similar memories.
+-   [ ] **Context Dependency (Emotional State):**
+    -   [x] Calculate `current_mood` (avg V/A of last user/AI turn) in `process_interaction`.
+    -   [x] Pass `current_mood` to `retrieve_memory_chain`.
+    -   [x] Modify activation spreading in `retrieve_memory_chain` to calculate emotional distance between `current_mood` and neighbor nodes.
+    -   [x] Apply subtle activation boost/penalty based on emotional distance using configured factors.
+    -   [x] Add `activation.emotional_context` section to `config.yaml`.
+    -   [ ] Testing: Verify emotional context bias is applied correctly and subtly influences retrieval.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

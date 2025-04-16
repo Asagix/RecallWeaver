@@ -760,8 +760,14 @@ class GraphMemoryClient:
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
         context_focus_boost = act_cfg.get('context_focus_boost', 0.0) # Get boost factor, default 0 (no boost)
         recent_concept_uuids_set = set(recent_concept_uuids) if recent_concept_uuids else set() # Use set for faster lookup
+        # --- Emotional Context Config ---
+        emo_ctx_cfg = act_cfg.get('emotional_context', {})
+        emo_ctx_enabled = emo_ctx_cfg.get('enable', False) and current_mood is not None
+        emo_max_dist = emo_ctx_cfg.get('max_distance', 1.414)
+        emo_boost = emo_ctx_cfg.get('boost_factor', 0.0) # Additive boost
+        emo_penalty = emo_ctx_cfg.get('penalty_factor', 0.0) # Subtractive penalty
 
-        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (SalInf: {activation_influence:.2f}, GuarSal>=: {guaranteed_saliency_threshold}, FocusBoost: {context_focus_boost}, RecentConcepts: {len(recent_concept_uuids_set)})")
+        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (SalInf: {activation_influence:.2f}, GuarSal>=: {guaranteed_saliency_threshold}, FocusBoost: {context_focus_boost}, RecentConcepts: {len(recent_concept_uuids_set)}, EmoCtx: {emo_ctx_enabled})")
         if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
 
         activation_levels = defaultdict(float)
@@ -850,7 +856,39 @@ class GraphMemoryClient:
                     saliency_boost = 1.0 + (source_saliency * activation_influence) if saliency_enabled else 1.0
                     # --- Apply neighbor's memory strength ---
                     neighbor_strength = neighbor_data.get('memory_strength', 1.0)
-                    act_pass = source_act * dyn_str * prop_base * type_factor * saliency_boost * neighbor_strength
+                    base_act_pass = source_act * dyn_str * prop_base * type_factor * saliency_boost * neighbor_strength
+
+                    # --- Apply Emotional Context Bias ---
+                    emo_adjustment = 0.0
+                    if emo_ctx_enabled and base_act_pass > 1e-6: # Only calculate if base activation is non-negligible
+                        try:
+                            # Use defaults from config if node lacks emotion data
+                            default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                            default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                            neighbor_v = neighbor_data.get('emotion_valence', default_v)
+                            neighbor_a = neighbor_data.get('emotion_arousal', default_a)
+                            mood_v, mood_a = current_mood # Unpack current mood
+
+                            # Calculate Euclidean distance in V/A space
+                            dist_sq = (neighbor_v - mood_v)**2 + (neighbor_a - mood_a)**2
+                            emo_dist = math.sqrt(dist_sq)
+
+                            # Normalize distance (0=close, 1=far)
+                            norm_dist = min(1.0, emo_dist / emo_max_dist) if emo_max_dist > 0 else 0.0
+
+                            # Calculate adjustment: Boost for close (low norm_dist), penalize for far (high norm_dist)
+                            # Linear scaling: Adjustment ranges from +emo_boost (at dist=0) to -emo_penalty (at dist=max_dist)
+                            emo_adjustment = emo_boost * (1.0 - norm_dist) - emo_penalty * norm_dist
+                            # logger.debug(f"    EmoCtx: Mood=({mood_v:.2f},{mood_a:.2f}), Nbr=({neighbor_v:.2f},{neighbor_a:.2f}), Dist={emo_dist:.3f}, NormDist={norm_dist:.3f}, Adjust={emo_adjustment:.3f}")
+
+                        except Exception as e:
+                             logger.warning(f"Error calculating emotional context bias for {neighbor_uuid[:8]}: {e}")
+                             emo_adjustment = 0.0 # Default to no adjustment on error
+
+                    # Apply adjustment (additive/subtractive)
+                    act_pass = base_act_pass + emo_adjustment
+                    # Ensure activation doesn't go below zero due to penalty
+                    act_pass = max(0.0, act_pass)
 
                     if act_pass > 1e-6:
                         newly_activated[neighbor_uuid] += act_pass
@@ -1963,10 +2001,11 @@ class GraphMemoryClient:
                     if initial_uuids:
                         logger.info("Retrieving memory chain...")
                         # Use the 'recent_concept_uuids' set calculated earlier
-                        logger.info(f"Passing {len(recent_concept_uuids)} recent concept UUIDs to retrieval.")
+                        logger.info(f"Passing {len(recent_concept_uuids)} recent concept UUIDs and current mood {current_mood} to retrieval.")
                         memory_chain_data = self.retrieve_memory_chain(
-                            initial_uuids,
-                            recent_concept_uuids=list(recent_concept_uuids) # Pass the list
+                            initial_node_uuids=initial_uuids,
+                            recent_concept_uuids=list(recent_concept_uuids), # Pass the list
+                            current_mood=current_mood # Pass the calculated mood
                         )
                         logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
                     else:
@@ -2019,7 +2058,25 @@ class GraphMemoryClient:
                     except Exception as concept_find_e:
                          logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
             logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
-            # This set 'recent_concept_uuids' will be used in the text-only path below.
+
+            # --- Calculate Current Mood (Average of last user/AI turn) ---
+            current_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
+            mood_nodes_found = 0
+            total_valence = 0.0
+            total_arousal = 0.0
+            for node_uuid in [user_node_uuid, ai_node_uuid]:
+                if node_uuid and node_uuid in self.graph:
+                    node_data = self.graph.nodes[node_uuid]
+                    # Use defaults from config if node lacks emotion data somehow
+                    default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                    default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                    total_valence += node_data.get('emotion_valence', default_v)
+                    total_arousal += node_data.get('emotion_arousal', default_a)
+                    mood_nodes_found += 1
+            if mood_nodes_found > 0:
+                current_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
+            logger.info(f"Calculated current mood (Avg V/A): {current_mood[0]:.2f} / {current_mood[1]:.2f}")
+            # This tuple 'current_mood' will be used in the text-only path below.
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)

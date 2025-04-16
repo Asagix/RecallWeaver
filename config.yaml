@@ -50,6 +50,12 @@ activation:
     similarity_threshold: 0.25 # Max FAISS L2 distance for neighbors to interfere (Lower = more similar)
     penalty_factor: 0.90 # Multiplicative factor applied to activation of interfered nodes (e.g., 0.9 reduces activation by 10%)
     max_neighbors_check: 5 # How many nearest neighbors to check for interference
+  # --- Emotional Context Bias ---
+  emotional_context:
+    enable: true
+    max_distance: 1.414 # Approx max Euclidean distance in V/A space (-1..1, 0..1 -> sqrt(2^2+1^2) is too high, use sqrt(1^2+1^2))
+    boost_factor: 0.1 # Max *additive* boost for emotionally close nodes (applied to act_pass)
+    penalty_factor: 0.05 # Max *subtractive* penalty for emotionally distant nodes (applied to act_pass)
 
 # --- Prompting & Context Configuration ---
 prompting:
