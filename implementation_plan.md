@@ -131,6 +131,14 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Add `_get_relative_time_desc` helper method to `GraphMemoryClient`.
     -   [x] Modify `_construct_prompt` to use the helper for formatting memory timestamps.
     -   [ ] Testing: Verify relative time descriptions appear correctly in prompts.
+-   [ ] **Autobiographical Self-Model (V1 - Prompt Injection):**
+    -   [x] Add `self.autobiographical_model` attribute to `GraphMemoryClient`.
+    -   [x] Add persistence for ASM to `_load_memory` and `_save_memory` (`asm.json`).
+    -   [x] Create `prompts/asm_generation_prompt.txt`.
+    -   [x] Implement `_generate_autobiographical_model` helper method (select key nodes, call LLM, parse JSON).
+    -   [x] Call `_generate_autobiographical_model` at the end of `run_consolidation`.
+    -   [x] Modify `_construct_prompt` to inject `asm_summary` into the prompt context, respecting token limits.
+    -   [ ] Testing: Verify ASM is generated, saved/loaded, and appears correctly in prompts.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

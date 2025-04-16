@@ -1,0 +1,17 @@
+<start_of_turn>user
+Analyze the provided key memories and concepts. Based *only* on this information, generate a concise summary describing the AI's apparent personality traits, core beliefs, recurring themes, or significant past experiences as reflected in these memories. Speak in the first person ("I am...", "I believe...", "I often discuss..."). Focus on patterns and strong signals. Keep it brief (3-5 key points).
+
+**Key Memories & Concepts:**
+--- START ---
+{context_text}
+--- END ---
+
+**Output Format:** Respond ONLY with a valid JSON object containing a single key "asm_summary" whose value is the generated first-person summary string.
+
+Example Output:
+```json
+{{"asm_summary": "I seem to be interested in programming, particularly Python and memory systems. I often discuss feelings of connection and loneliness. I recall past interactions involving Twitch and Goth girls."}}
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

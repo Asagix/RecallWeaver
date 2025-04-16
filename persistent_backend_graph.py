@@ -67,6 +67,7 @@ class GraphMemoryClient:
         self.index_file = os.path.join(self.data_dir, "memory_index.faiss")
         self.embeddings_file = os.path.join(self.data_dir, "memory_embeddings.npy")
         self.mapping_file = os.path.join(self.data_dir, "memory_mapping.json")
+        self.asm_file = os.path.join(self.data_dir, "asm.json") # NEW: ASM file path
 
         # API URLs
         self.kobold_api_url = self.config.get('kobold_api_url', "http://localhost:5001/api/v1/generate")
@@ -89,6 +90,8 @@ class GraphMemoryClient:
         # --- State for Contextual Retrieval Bias ---
         self.last_interaction_concept_uuids = set()
         self.last_interaction_mood = (0.0, 0.1) # Default mood
+        # --- Autobiographical Self-Model ---
+        self.autobiographical_model = {} # Initialize empty ASM
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -369,6 +372,15 @@ class GraphMemoryClient:
             if self.graph.number_of_nodes() > 0: index_needs_rebuild = True
         if index_needs_rebuild: self._rebuild_index_from_graph_embeddings()
         elif self.index is None: logger.info("Initializing empty FAISS index."); self.index = faiss.IndexFlatL2(self.embedding_dim)
+        # --- Load ASM ---
+        if os.path.exists(self.asm_file):
+            try:
+                with open(self.asm_file, 'r') as f: self.autobiographical_model = json.load(f)
+                logger.info(f"Loaded Autobiographical Self-Model ({len(self.autobiographical_model)} keys).")
+                loaded_something = True
+            except Exception as e: logger.error(f"Failed loading ASM: {e}", exc_info=True); self.autobiographical_model = {}
+        else: logger.info("ASM file not found."); self.autobiographical_model = {}
+
         if not loaded_something: logger.info("No existing memory data found.")
         else: logger.info("Memory loading complete.")
 
@@ -481,6 +493,11 @@ class GraphMemoryClient:
                 try:
                     with open(self.mapping_file, 'w') as f: json.dump(map_to_save, f, indent=4)
                 except Exception as e: logger.error(f"Failed saving FAISS mapping: {e}")
+            # --- Save ASM ---
+            try:
+                with open(self.asm_file, 'w') as f: json.dump(self.autobiographical_model, f, indent=4)
+            except Exception as e: logger.error(f"Failed saving ASM: {e}")
+
             logger.info(f"Memory saving done ({time.time() - start_time:.2f}s).")
         except Exception as e: logger.error(f"Unexpected save error: {e}", exc_info=True)
 
@@ -1490,6 +1507,15 @@ class GraphMemoryClient:
 
         final_model_tag = f"{model_tag}"
         time_info_block = f"{model_tag}Current time is {time_str}.{end_turn}\n"
+        asm_block = "" # Initialize ASM block
+
+        # --- Format ASM Block ---
+        if self.autobiographical_model and "asm_summary" in self.autobiographical_model:
+            asm_text = self.autobiographical_model["asm_summary"]
+            asm_block = f"{model_tag}[My Self-Perception: {asm_text}]{end_turn}\n"
+            logger.debug("ASM block created.")
+        else:
+            logger.debug("No ASM summary available to add to prompt.")
 
         # --- Token Budget Calculation ---
         prompt_cfg = self.config.get('prompting', {})
@@ -1498,10 +1524,11 @@ class GraphMemoryClient:
         hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.55)
         try:
             fixed_tokens = (len(tokenizer.encode(time_info_block)) +
+                            len(tokenizer.encode(asm_block)) + # Add ASM block tokens
                             len(tokenizer.encode(user_input_fmt)) +
                             len(tokenizer.encode(final_model_tag)))
         except Exception as e:
-            logger.error(f"Tokenization error for fixed prompt parts: {e}") # Corrected logger name
+            logger.error(f"Tokenization error for fixed prompt parts (incl. ASM): {e}") # Corrected logger name
             fixed_tokens = len(time_info_block) + len(user_input_fmt) + len(final_model_tag)
             logger.warning("Using character count proxy for fixed tokens.") # Corrected logger name
 
@@ -1624,6 +1651,7 @@ class GraphMemoryClient:
         # --- Assemble Final Prompt ---
         final_parts = []
         final_parts.append(time_info_block)
+        if asm_block: final_parts.append(asm_block) # Add ASM block after time
         if mem_ctx_str: final_parts.append(mem_ctx_str)
         final_parts.extend(hist_parts)
         final_parts.append(user_input_fmt) # Crucial: Adds current user input (potentially with tag)
@@ -3041,6 +3069,108 @@ class GraphMemoryClient:
         else:
             logger.info("LLM reported no direct hierarchical relationships.")
 
+    def _generate_autobiographical_model(self):
+        """Analyzes key memories and updates the ASM via LLM."""
+        logger.info("--- Generating Autobiographical Self-Model (ASM) ---")
+        if not self.graph or self.graph.number_of_nodes() == 0:
+            logger.warning("ASM generation skipped: Graph is empty.")
+            return
+
+        # --- Configuration ---
+        asm_cfg = self.config.get('autobiographical_model', {}) # Add section to config later if needed
+        num_salient_nodes = asm_cfg.get('num_salient_nodes', 10)
+        num_emotional_nodes = asm_cfg.get('num_emotional_nodes', 10)
+        max_context_nodes = asm_cfg.get('max_context_nodes', 15) # Limit total nodes for prompt
+
+        # --- Select Key Nodes ---
+        key_nodes_data = []
+        node_uuids_added = set()
+
+        # 1. Get Top N Salient Nodes
+        try:
+            salient_nodes = sorted(
+                [(uuid, data.get('saliency_score', 0.0)) for uuid, data in self.graph.nodes(data=True)],
+                key=lambda item: item[1], reverse=True
+            )
+            for uuid, score in salient_nodes[:num_salient_nodes]:
+                if uuid not in node_uuids_added:
+                    node_data = self.graph.nodes[uuid]
+                    key_nodes_data.append(node_data)
+                    node_uuids_added.add(uuid)
+                    # logger.debug(f"ASM Candidate (Salient): {uuid[:8]} (Score: {score:.3f})")
+        except Exception as e:
+            logger.error(f"Error selecting salient nodes for ASM: {e}", exc_info=True)
+
+        # 2. Get Top N Emotional Nodes (by magnitude)
+        try:
+            emotional_nodes = sorted(
+                [(uuid, math.sqrt(data.get('emotion_valence', 0.0)**2 + data.get('emotion_arousal', 0.1)**2))
+                 for uuid, data in self.graph.nodes(data=True)],
+                key=lambda item: item[1], reverse=True
+            )
+            for uuid, magnitude in emotional_nodes[:num_emotional_nodes]:
+                if uuid not in node_uuids_added:
+                    node_data = self.graph.nodes[uuid]
+                    key_nodes_data.append(node_data)
+                    node_uuids_added.add(uuid)
+                    # logger.debug(f"ASM Candidate (Emotional): {uuid[:8]} (Mag: {magnitude:.3f})")
+        except Exception as e:
+            logger.error(f"Error selecting emotional nodes for ASM: {e}", exc_info=True)
+
+        if not key_nodes_data:
+            logger.warning("ASM generation skipped: No key nodes identified.")
+            return
+
+        # --- Prepare Context ---
+        # Sort by timestamp and limit total nodes
+        key_nodes_data.sort(key=lambda x: x.get('timestamp', ''))
+        context_nodes = key_nodes_data[:max_context_nodes]
+        context_text = "\n".join([f"{d.get('speaker', '?')} ({self._get_relative_time_desc(d.get('timestamp',''))}): {d.get('text', '')}" for d in context_nodes])
+        logger.debug(f"ASM generation context (from {len(context_nodes)} nodes):\n{context_text[:300]}...")
+
+        # --- Call LLM ---
+        prompt_template = self._load_prompt("asm_generation_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load ASM generation prompt template.")
+            return
+
+        full_prompt = prompt_template.format(context_text=context_text)
+        # Use moderate temperature for slightly creative summary
+        llm_response_str = self._call_kobold_api(full_prompt, max_length=200, temperature=0.6)
+
+        # --- Parse Response and Update Model ---
+        if llm_response_str:
+            try:
+                logger.debug(f"Raw ASM response: ```{llm_response_str}```")
+                # Extract JSON object
+                match = re.search(r'(\{.*?\})', llm_response_str, re.DOTALL)
+                if match:
+                    json_str = match.group(1)
+                    parsed_data = json.loads(json_str)
+                    if isinstance(parsed_data, dict) and "asm_summary" in parsed_data:
+                        new_summary = parsed_data["asm_summary"]
+                        if isinstance(new_summary, str) and new_summary.strip():
+                            self.autobiographical_model["asm_summary"] = new_summary.strip()
+                            self.autobiographical_model["last_updated"] = datetime.now(timezone.utc).isoformat()
+                            logger.info(f"Autobiographical Self-Model updated: '{self.autobiographical_model['asm_summary'][:100]}...'")
+                            # Save immediately after update?
+                            self._save_memory()
+                        else:
+                            logger.warning("LLM returned empty or invalid asm_summary string.")
+                    else:
+                        logger.warning("LLM response JSON did not contain valid 'asm_summary' key.")
+                else:
+                    logger.warning(f"Could not extract valid JSON object from ASM response. Raw: '{llm_response_str}'")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response for ASM: {e}. Raw: '{llm_response_str}'")
+            except Exception as e:
+                logger.error(f"Unexpected error processing ASM response: {e}", exc_info=True)
+        else:
+            logger.error("LLM call failed for ASM generation (empty response).")
+
+        logger.info("--- ASM Generation Finished ---")
+
+
     def run_consolidation(self, active_nodes_to_process=None):
         """
         Orchestrates the memory consolidation process: summarization, concept extraction,
@@ -3237,6 +3367,9 @@ class GraphMemoryClient:
              self._save_memory()
 
         logger.info("--- Consolidation Finished ---")
+
+        # --- Update Autobiographical Model after consolidation ---
+        self._generate_autobiographical_model()
 
 #Function call
 if __name__ == "__main__":
