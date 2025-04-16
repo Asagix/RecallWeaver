@@ -28,3 +28,4 @@ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1
 
 # NLP for Emotion Analysis
 text2emotion
+emoji<2.0.0 # Pin emoji version for text2emotion compatibility
