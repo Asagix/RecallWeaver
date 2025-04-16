@@ -60,12 +60,13 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Add logic to parse LLM response and add nodes/edges.
     -   [x] Implement concept deduplication.
     -   [x] Implement pruning of summarized 'turn' nodes.
-    -   [x] **Refine LLM prompts** for summarization, concept extraction, and relation extraction.
-    -   [x] **Implement Hybrid Association Extraction (V1.1):**
+    -   [x] **Refine LLM prompts** for summarization, concept extraction, and relation extraction (Further refinement done for rich relations).
+    -   [x] **Implement Hybrid Association Extraction (V1.2 - Configurable Relations):**
         -   [x] Integrate NLP library (e.g., spaCy) to extract basic entities/dependency relations first. (spaCy loaded, basic structure in place)
         -   [x] Store basic spaCy dependency relations as `SPACY_REL` edges.
-        -   [x] *Optionally* (if `features.enable_rich_associations` is true) call LLM with text + extracted info, asking for specific *additional* typed relations (e.g., `CAUSES`) from a core set (`IS_A`, `PART_OF`, `CAUSES`, `HAS_PROPERTY`, `RELATED_TO`). (LLM call implemented)
+        -   [x] *Optionally* (if `features.enable_rich_associations` is true) call LLM with text + extracted info, asking for specific *additional* typed relations from a **configurable list** (`consolidation.target_relation_types`).
         -   [x] Implement **robust parsing** for LLM's structured (JSON) output for relationships. (Basic JSON list parsing implemented)
+        -   [x] Validate extracted relations against the configured list.
     -   [x] **Implement V1 Emotion Analysis:**
         -   [x] Integrate local sentiment/emotion library analysis during `run_consolidation`. (Using text2emotion)
         -   [x] Call `_analyze_and_update_emotion` helper to store results on relevant nodes.

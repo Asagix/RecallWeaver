@@ -2877,6 +2877,14 @@ class GraphMemoryClient:
         added_llm_edge_count = 0
         added_spacy_edge_count = 0
 
+        # --- Load Target Relation Types from Config ---
+        consolidation_cfg = self.config.get('consolidation', {})
+        target_relations = consolidation_cfg.get('target_relation_types',
+                                                 ["CAUSES", "PART_OF", "HAS_PROPERTY", "RELATED_TO", "IS_A"]) # Default list
+        if not target_relations:
+             logger.warning("No target_relation_types defined in config. Using default set.")
+             target_relations = ["CAUSES", "PART_OF", "HAS_PROPERTY", "RELATED_TO", "IS_A"]
+
         # --- spaCy Relation Extraction (if enabled and model loaded) ---
         if self.nlp and spacy_doc:
             logger.info("Extracting relations using spaCy dependencies...")
@@ -2936,7 +2944,7 @@ class GraphMemoryClient:
              return # Skip LLM part if disabled
 
         logger.info("Attempting Rich Relationship Extraction (LLM)...")
-        target_relations = ["CAUSES", "PART_OF", "HAS_PROPERTY", "RELATED_TO", "IS_A"]
+        # Use the target_relations list loaded from config
         target_relations_str = ", ".join([f"'{r}'" for r in target_relations])
         concept_list_str = "\n".join([f"- \"{c}\"" for c in concept_node_map.keys()])
 
@@ -2995,8 +3003,9 @@ class GraphMemoryClient:
                     rel_type = rel["relation"]
                     obj_text = rel["object"]
 
+                    # Validate against the loaded target_relations list
                     if rel_type not in target_relations:
-                        logger.warning(f"Skipping relation with invalid type '{rel_type}': {rel}")
+                        logger.warning(f"Skipping relation with invalid type '{rel_type}' (not in configured list): {rel}")
                         continue
 
                     subj_uuid = concept_node_map.get(subj_text)

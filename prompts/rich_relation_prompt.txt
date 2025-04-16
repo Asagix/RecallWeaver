@@ -1,8 +1,9 @@
 <start_of_turn>user
 Analyze the following conversation context and the extracted key concepts. Identify specific relationships *explicitly stated or strongly implied* in the context between pairs of these concepts.
 
-**Target Relationship Types:** {target_relations_str}
-(Use 'RELATED_TO' for general associations not covered by other types. Use 'IS_A' for type/instance relationships. Use 'HAS_PROPERTY' for attributes.)
+**Use ONLY the following Target Relationship Types:**
+{target_relations_str}
+(Use 'RELATED_TO' for general associations not covered by other types, if it's in the list. Use 'IS_A' for type/instance relationships, if it's in the list. Use 'HAS_PROPERTY' for attributes, if it's in the list. Adhere strictly to the provided list.)
 
 **Concepts (Use ONLY these exact strings for subject/object):**
 {concept_list_str}

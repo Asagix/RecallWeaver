@@ -74,6 +74,20 @@ consolidation:
   turn_count: 10 # How many turns to process when consolidation runs
   min_nodes: 5 # Minimum suitable nodes required to proceed
   concept_similarity_threshold: 0.3
+  # --- Relation Extraction ---
+  target_relation_types: # List of relation types the LLM should try to extract
+    - "CAUSES"
+    - "PART_OF"
+    - "HAS_PROPERTY"
+    - "RELATED_TO"
+    - "IS_A"
+    - "ENABLES"
+    - "PREVENTS"
+    - "CONTRADICTS"
+    - "SUPPORTS"
+    - "EXAMPLE_OF"
+    - "MEASURES"
+    - "LOCATION_OF"
 
 # --- Emotion Analysis ---
 emotion_analysis:
