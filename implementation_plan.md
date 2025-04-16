@@ -91,7 +91,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Backend: Enhance error handling within `execute_action` and file/calendar wrappers.
     -   [x] GUI: Integrate action analysis call into `Worker.add_input`.
     -   [x] GUI: Implement logic in `Worker` to handle `clarify` responses (store state, process next input as clarification) and queue/execute specific action tasks.
-    -   [ ] GUI: Implement UI elements/flow for clarification requests (e.g., clearer prompt, visual indicator) and potential confirmations.
+    -   [x] GUI: Implement UI elements/flow for clarification requests (clearer prompt, persistent status bar message, placeholder text, visual indicator light).
+    -   [ ] GUI: Implement UI flow for potential action confirmations (e.g., before overwriting a file).
 
 ## Phase 2: GUI (`gui_chat.py`)
 
@@ -103,7 +104,8 @@ This document tracks the implementation progress and outlines future enhancement
 -   [x] **Action/Tool Handling (GUI Layer):** (See Backend section for details)
     -   [x] Integrate action analysis call.
     -   [x] Add Worker logic for clarification/execution tasks (including handling user response to clarification).
-    -   [ ] Implement UI for clarification/confirmation (Improved prompt/indicator needed).
+    -   [x] Implement UI for clarification (Improved prompt/indicator implemented).
+    -   [ ] Implement UI for potential action confirmations.
 -   [ ] **(Future GUI Enhancements):**
     -   [ ] Add interface to view/manage 'archived' nodes.
     -   [ ] Add UI for user feedback on memory saliency.

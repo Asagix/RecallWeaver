@@ -1191,11 +1191,27 @@ class ChatWindow(QMainWindow):
 
     @pyqtSlot(str, list)
     def handle_clarification_request(self, original_action, missing_args):
-        # (Implementation remains the same - keeps input enabled via _finalize_display)
+        """Handles the signal that the backend needs more info for an action."""
         gui_logger.info(f"Clarification needed for action '{original_action}', missing: {missing_args}")
-        missing_str = ", ".join([f"'{arg}'" for arg in missing_args]); clarification_msg = (f"To perform the '{original_action}' action, I still need: {missing_str}.\n\nCould you please provide it?")
+        self.awaiting_clarification = True # Set the flag
+
+        missing_str = ", ".join([f"'{arg}'" for arg in missing_args])
+        clarification_msg = (
+            f"To perform the '{original_action}' action, I still need: **{missing_str}**.\n\n"
+            f"Please provide the missing information."
+        )
+        # Display the request message
         self.display_message("AI", clarification_msg, object_name_suffix="ConfirmationMessage")
-        self._finalize_display(status_msg="Awaiting clarification...", status_duration=0)
+
+        # Update UI state persistently
+        status_msg = f"Waiting for: {missing_str}"
+        self.statusBar().showMessage(status_msg, 0) # Persistent message
+        if hasattr(self, 'input_field'):
+            self.input_field.setPlaceholderText(f"Enter the missing info for '{original_action}'...")
+        # Ensure input is enabled (it should be if we got here, but double-check)
+        self.set_input_enabled(True)
+        self.update_status_light("loading") # Use yellow light to indicate waiting state
+        self.is_processing = False # No longer processing the initial request
 
 
     @pyqtSlot(str, str, list)
@@ -1262,28 +1278,54 @@ class ChatWindow(QMainWindow):
         # Always mark processing as finished when this is called
         self.is_processing = False
 
-        # Update status bar message
-        # Only show "Ready." if a personality is actually loaded.
+        # --- Determine UI State based on personality, processing, and clarification ---
+        should_be_enabled = bool(self.current_personality) and not self.is_processing
+        final_status_msg = status_msg
+        final_status_duration = status_duration
+        final_placeholder = "Type message, paste image, or /command..."
+        final_light_status = "not_ready" # Default to red if no personality
+
         if self.current_personality:
-             self.statusBar().showMessage(status_msg, status_duration)
-        # If no personality, keep the "Select..." message unless overridden
-        elif not status_msg or status_msg=="Ready.":
-             self.statusBar().showMessage("Please select a personality from the menu.")
-        else: # Show other messages like "Error occurred."
-             self.statusBar().showMessage(status_msg, status_duration)
+            if self.is_processing: # Should generally not happen if called correctly, but handle defensively
+                final_status_msg = "Processing..."
+                final_status_duration = 0
+                final_placeholder = "Processing..."
+                final_light_status = "loading" # Yellow while processing
+                should_be_enabled = False
+            elif self.awaiting_clarification:
+                # Find the missing args from the worker's pending state (if possible)
+                # This is a bit indirect, ideally the signal would carry this info again
+                missing_args_str = "missing info"
+                if self.worker and self.worker.pending_clarification:
+                    missing = self.worker.pending_clarification.get('missing_args', [])
+                    if missing: missing_args_str = ", ".join([f"'{arg}'" for arg in missing])
 
-
-        # Determine desired input state based ONLY on whether a personality is loaded
-        should_be_enabled = bool(self.current_personality)
-
-        # Set input enabled state
-        self.set_input_enabled(should_be_enabled)
-
-        # Update status light based on whether input should be enabled
-        if should_be_enabled:
-            self.update_status_light("ready") # Green light
+                final_status_msg = f"Waiting for: {missing_args_str}"
+                final_status_duration = 0 # Persistent
+                final_placeholder = f"Enter the missing info..."
+                final_light_status = "loading" # Yellow while waiting for clarification
+                should_be_enabled = True # Input should be enabled to provide clarification
+            else:
+                # Normal ready state
+                final_status_msg = status_msg # Use the message passed in (e.g., "Ready.", "Consolidation complete.")
+                final_status_duration = status_duration
+                final_placeholder = "Type message, paste image, or /command..."
+                final_light_status = "ready" # Green light
+                should_be_enabled = True
         else:
-            self.update_status_light("not_ready") # Red light
+            # No personality loaded state
+            final_status_msg = "Please select a personality from the menu."
+            final_status_duration = 0 # Persistent
+            final_placeholder = "Select a personality from the menu to start..."
+            final_light_status = "not_ready" # Red light
+            should_be_enabled = False
+
+        # --- Apply Final UI State ---
+        self.statusBar().showMessage(final_status_msg, final_status_duration)
+        self.set_input_enabled(should_be_enabled) # Handles placeholder text too
+        if hasattr(self, 'input_field'): # Update placeholder specifically if needed
+             self.input_field.setPlaceholderText(final_placeholder)
+        self.update_status_light(final_light_status)
 
 
     def _scroll_to_bottom(self):
