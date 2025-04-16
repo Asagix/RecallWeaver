@@ -2706,8 +2706,10 @@ class GraphMemoryClient:
                             if not self.graph.has_edge(node_uuid, concept_uuid):
                                 self.graph.add_edge(node_uuid, concept_uuid, type='MENTIONS_CONCEPT', base_strength=0.7,
                                                     last_traversed_ts=current_time)
+                                logger.debug(f"Added MENTIONS_CONCEPT edge: {node_uuid[:8]} -> {concept_uuid[:8]}")
                             else:  # Update timestamp if edge exists
                                 self.graph.edges[node_uuid, concept_uuid]['last_traversed_ts'] = current_time
+                                logger.debug(f"Updated MENTIONS_CONCEPT edge timestamp: {node_uuid[:8]} -> {concept_uuid[:8]}")
                         except Exception as e:
                             logger.error(
                                 f"Error adding/updating MENTIONS_CONCEPT edge from turn {node_uuid[:8]} to {concept_uuid[:8]}: {e}")
