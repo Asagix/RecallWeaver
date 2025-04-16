@@ -474,10 +474,10 @@ class GraphMemoryClient:
                 saliency_score=initial_saliency, # NEW: Calculated initial saliency
                 # --- Existing attributes ---
                 base_strength=float(base_strength),
-                activation_level=0.0,
-                last_accessed_ts=current_time
+                activation_level=0.0, # Initial activation, updated during retrieval
+                last_accessed_ts=current_time # Timestamp of last access/creation
             )
-            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes.")
+            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Status: {node_data.get('status')}, Saliency: {node_data.get('saliency_score')}).") # Use node_data after adding
         except Exception as e:
              logger.error(f"Failed adding node {node_uuid} to graph: {e}")
              return None
@@ -819,27 +819,30 @@ class GraphMemoryClient:
                     relevant_nodes.append(node_info)
 
         logger.info(f"Found {len(relevant_nodes)} active nodes above threshold ({activation_threshold}).")
-        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True)
+        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True) # Sort by activation, then timestamp
 
         if relevant_nodes: logger.info(f"Final nodes: [{', '.join([n['uuid'][:8] + '({:.3f})'.format(n['final_activation']) for n in relevant_nodes])}]")
         else: logger.info("No relevant nodes found above threshold.")
 
         # --- Corrected Debug Logging ---
-        logger.debug("--- Retrieved Node Texts (Top 5) ---")
+        logger.debug("--- Retrieved Node Details (Top 5) ---")
         for i, node in enumerate(relevant_nodes[:5]):
             # Safely get and format saliency score
             saliency_val = node.get('saliency_score', '?')
             saliency_str = f"{saliency_val:.2f}" if isinstance(saliency_val, (int, float)) else str(saliency_val)
-            # Format the log message
-            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
+            # Format the log message including status
+            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Status:{node.get('status','?')} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
         logger.debug("------------------------------------")
 
         return relevant_nodes
 
+
+    # --- Saliency & Forgetting ---
+
     def update_node_saliency(self, node_uuid: str, change_factor: float):
         """
-        Placeholder: Updates the saliency score of a node.
-        (Future implementation for V2 saliency updates based on feedback, etc.)
+        Placeholder: Updates the saliency score of a node based on external factors
+        (e.g., user feedback, explicit marking). Clamps score between 0.0 and 1.0.
         """
         if not self.config.get('features', {}).get('enable_saliency', False): return  # Check feature flag
 
@@ -853,6 +856,242 @@ class GraphMemoryClient:
                 f"Placeholder: Updated saliency for {node_uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f} (Factor: {change_factor})")
         else:
             logger.warning(f"update_node_saliency called for non-existent node: {node_uuid}")
+
+
+    # --- Forgetting Mechanism ---
+    def run_memory_maintenance(self):
+        """
+        Runs the nuanced forgetting process.
+        Identifies candidate nodes, calculates forgettability scores, and archives nodes
+        exceeding the threshold by setting their status to 'archived'.
+        Triggered periodically based on interaction count or other criteria.
+        """
+        if not self.config.get('features', {}).get('enable_forgetting', False):
+            logger.debug("Nuanced forgetting feature disabled. Skipping maintenance.")
+            return
+
+        logger.info("--- Running Memory Maintenance (Nuanced Forgetting) ---")
+        # 1. Get config: threshold, weights, min_age, min_activation, protected types
+        forget_cfg = self.config.get('forgetting', {})
+        score_threshold = forget_cfg.get('score_threshold', 0.7)
+        weights = forget_cfg.get('weights', {})
+        min_age_hr = forget_cfg.get('candidate_min_age_hours', 24)
+        min_activation_threshold = forget_cfg.get('candidate_min_activation', 0.05) # Renamed for clarity
+        protected_types = forget_cfg.get('protected_node_types', [])
+        logger.debug(
+            f"Forgetting Params: Threshold={score_threshold}, MinAgeHr={min_age_hr}, MinAct={min_activation_threshold}, Protected={protected_types}, Weights={weights}")
+
+        # 2. Identify Candidate Nodes:
+        #    - status == 'active'
+        #    - node_type NOT IN protected_types
+        #    - age > min_age_hr (based on last_accessed_ts)
+        #    - activation_level < min_activation (using stored 'activation_level')
+        candidate_uuids = []
+        current_time = time.time()
+        min_age_sec = min_age_hr * 3600
+        nodes_to_check = list(self.graph.nodes(data=True)) # Get a snapshot
+        logger.debug(f"Checking {len(nodes_to_check)} nodes for forgetting candidacy...")
+
+        for uuid, data in nodes_to_check:
+            # Filter 1: Status must be active
+            if data.get('status', 'active') != 'active':
+                # logger.debug(f"  Skip {uuid[:8]}: Status not active ({data.get('status')})")
+                continue
+            # Filter 2: Node type must not be protected
+            if data.get('node_type') in protected_types:
+                # logger.debug(f"  Skip {uuid[:8]}: Protected type ({data.get('node_type')})")
+                continue
+            # Filter 3: Age must be sufficient
+            last_accessed = data.get('last_accessed_ts', 0)
+            age_sec = current_time - last_accessed
+            if age_sec < min_age_sec:
+                # logger.debug(f"  Skip {uuid[:8]}: Too recent (Age: {age_sec/3600:.1f}h < {min_age_hr}h)")
+                continue
+            # Filter 4: Activation must be low enough
+            # Note: 'activation_level' reflects the *last calculated* activation during retrieval.
+            # It might not be perfectly up-to-date if retrieval hasn't run recently.
+            # An alternative could be to calculate decay *here* based on last_accessed_ts,
+            # but that might be computationally heavier. Using stored value for now.
+            current_activation = data.get('activation_level', 0.0)
+            if current_activation >= min_activation_threshold:
+                # logger.debug(f"  Skip {uuid[:8]}: Activation too high ({current_activation:.3f} >= {min_activation_threshold})")
+                continue
+
+            # Passed all filters
+            # logger.debug(f"  Candidate {uuid[:8]}: Status={data.get('status')}, Type={data.get('node_type')}, Age={age_sec/3600:.1f}h, Act={current_activation:.3f}")
+            candidate_uuids.append(uuid)
+
+        logger.info(f"Found {len(candidate_uuids)} candidate nodes for potential forgetting.")
+        if not candidate_uuids:
+            logger.info("--- Memory Maintenance Finished (No candidates) ---")
+            return
+
+        # 3. Calculate Forgettability Score for each candidate:
+        archived_count = 0
+        nodes_to_remove_from_index = [] # Track UUIDs to remove from FAISS
+        for uuid in candidate_uuids:
+            if uuid not in self.graph: continue # Node might have been deleted since snapshot
+            node_data = self.graph.nodes[uuid]
+            score = self._calculate_forgettability(uuid, node_data, current_time, weights)
+            logger.debug(f"  Node {uuid[:8]} ({node_data.get('node_type')}): Forgettability Score = {score:.3f}")
+
+            # 4. Archive if score exceeds threshold (Soft Delete):
+            if score >= score_threshold:
+                node_data['status'] = 'archived'
+                # Reset activation level for archived nodes? Optional.
+                # node_data['activation_level'] = 0.0
+                archived_count += 1
+                nodes_to_remove_from_index.append(uuid)
+                logger.info(f"  Archiving node {uuid[:8]} (Score: {score:.3f} >= {score_threshold})")
+            # else:
+            # logger.debug(f"  Keeping node {uuid[:8]} (Score: {score:.3f} < {score_threshold})")
+
+        # 5. Rebuild FAISS index if nodes were archived
+        if archived_count > 0:
+            logger.info(f"Archived {archived_count} nodes. Rebuilding FAISS index to remove them...")
+            # _rebuild_index_from_graph_embeddings inherently only includes 'active' nodes
+            self._rebuild_index_from_graph_embeddings()
+            self._save_memory() # Save changes after maintenance and index rebuild
+
+        logger.info(f"--- Memory Maintenance Finished ({archived_count} archived) ---")
+
+
+    def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
+                                  weights: dict) -> float:
+        """
+        Calculates a score indicating how likely a node is to be forgotten (0-1).
+        Higher score means more likely to be forgotten.
+        Uses normalized factors based on node attributes and configured weights.
+        """
+        # --- Get Raw Factors ---
+        # Recency: Time since last access (higher = more forgettable)
+        last_accessed = node_data.get('last_accessed_ts', 0)
+        recency_sec = max(0, current_time - last_accessed)
+
+        # Activation: Current activation level (lower = more forgettable)
+        activation = node_data.get('activation_level', 0.0) # Graph node's stored activation
+
+        # Node Type: Some types intrinsically more forgettable
+        node_type = node_data.get('node_type', 'default')
+
+        # Saliency: Higher saliency resists forgetting
+        saliency = node_data.get('saliency_score', 0.0)
+
+        # Emotion: Higher arousal/valence magnitude resists forgetting
+        valence = node_data.get('emotion_valence', 0.0)
+        arousal = node_data.get('emotion_arousal', 0.1)
+        # Use absolute values for magnitude calculation
+        emotion_magnitude = math.sqrt(abs(valence) ** 2 + abs(arousal) ** 2)
+
+        # Connectivity: Higher degree resists forgetting
+        degree = self.graph.degree(node_uuid) if node_uuid in self.graph else 0
+        # Consider in/out degree separately? For now, total degree.
+
+        # Access Count: Higher count resists forgetting
+        access_count = node_data.get('access_count', 0)
+
+        # --- Normalize Factors (Example - needs tuning via config weights) ---
+        # Normalize recency (e.g., using exponential decay or mapping to 0-1 over a time range)
+        # Simple linear scaling over 1 week (604800 seconds) - older = higher score
+        norm_recency = min(1.0, recency_sec / 604800.0)
+
+        # Normalize activation (already 0-1 theoretically, but use inverse)
+        # Low activation -> high score component
+        norm_inv_activation = 1.0 - min(1.0, max(0.0, activation))
+
+        # Normalize node type factor (example mapping - higher value = more forgettable)
+        type_map = {'turn': 1.0, 'summary': 0.4, 'concept': 0.1, 'default': 0.6}
+        norm_type_forgettability = type_map.get(node_type, 0.6)
+
+        # Normalize saliency (use inverse: low saliency -> high score component)
+        norm_inv_saliency = 1.0 - min(1.0, max(0.0, saliency))
+
+        # Normalize emotion (use inverse: low magnitude -> high score component)
+        # Normalize magnitude based on potential range (e.g., 0 to sqrt(1^2+1^2) approx 1.414)
+        norm_inv_emotion = 1.0 - min(1.0, max(0.0, emotion_magnitude / 1.414))
+
+        # Normalize connectivity (use inverse, map degree to 0-1 range, e.g., log scale or capped)
+        # Example: cap at 10 neighbors for normalization, inverse log scale might be better
+        norm_inv_connectivity = 1.0 - min(1.0, math.log1p(degree) / math.log1p(10)) # Log scale, capped effect
+
+        # Normalize access count (use inverse, map count to 0-1 range)
+        # Example: cap at 20 accesses for normalization, inverse log scale
+        norm_inv_access_count = 1.0 - min(1.0, math.log1p(access_count) / math.log1p(20))
+
+        # --- Calculate Weighted Score ---
+        # Factors increasing forgettability score (higher value = more forgettable)
+        score = 0.0
+        score += norm_recency * weights.get('recency_factor', 0.0)
+        score += norm_inv_activation * weights.get('activation_factor', 0.0)
+        score += norm_type_forgettability * weights.get('node_type_factor', 0.0)
+
+        # Factors decreasing forgettability score (resistance factors)
+        # These use inverse normalization, so apply positive weights from config
+        # (Config weights represent importance of the factor)
+        score += norm_inv_saliency * weights.get('saliency_factor', 0.0)
+        score += norm_inv_emotion * weights.get('emotion_factor', 0.0)
+        score += norm_inv_connectivity * weights.get('connectivity_factor', 0.0)
+        score += norm_inv_access_count * weights.get('access_count_factor', 0.0) # Added access count factor
+
+        # Clamp final score 0-1
+        final_score = max(0.0, min(1.0, score))
+
+        # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Score: {final_score:.3f}")
+
+        return final_score
+
+
+    def purge_archived_nodes(self, older_than_days: int = 30):
+        """
+        Placeholder: Permanently deletes nodes with status 'archived' that
+        are older than a specified threshold (based on timestamp).
+        """
+        if not self.config.get('features', {}).get('enable_forgetting', False): return
+
+        logger.warning(f"--- Purging Archived Nodes (Older than {older_than_days} days) ---")
+        # 1. Identify archived nodes older than threshold
+        # 2. Use delete_memory_entry (or a bulk delete if more efficient)
+        # 3. Rebuild index and save
+        purge_count = 0
+        current_time = time.time()
+        threshold_seconds = older_than_days * 24 * 3600
+        nodes_to_purge = []
+        nodes_snapshot = list(self.graph.nodes(data=True)) # Snapshot
+
+        for uuid, data in nodes_snapshot:
+            if data.get('status') == 'archived':
+                timestamp_str = data.get('timestamp')
+                node_age_sec = current_time # Default to max age if no timestamp
+                if timestamp_str:
+                    try:
+                        # Ensure timezone awareness for comparison
+                        dt_obj = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        if dt_obj.tzinfo is None: # If somehow still naive, assume UTC
+                             dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+                        node_age_sec = (datetime.now(timezone.utc) - dt_obj).total_seconds()
+                    except ValueError:
+                        logger.warning(f"Could not parse timestamp for archived node {uuid[:8]}: {timestamp_str}")
+
+                if node_age_sec >= threshold_seconds:
+                    nodes_to_purge.append(uuid)
+                    logger.debug(f"Marked archived node {uuid[:8]} for purging (Age: {node_age_sec / 3600:.1f} hrs)")
+
+        # Perform deletion
+        if nodes_to_purge:
+            logger.info(f"Attempting to permanently purge {len(nodes_to_purge)} archived nodes...")
+            for uuid in list(nodes_to_purge): # Iterate over copy
+                if self.delete_memory_entry(uuid): # delete_memory_entry handles graph, embed, index, map
+                    purge_count += 1
+                else:
+                    logger.error(f"Failed to purge archived node {uuid[:8]}. It might have been deleted already.")
+
+            logger.info(f"--- Purge Complete: {purge_count} nodes permanently deleted. ---")
+            # delete_memory_entry already rebuilds/saves if successful, but a final save might be good practice
+            # if multiple deletes happened without rebuilds in between (current delete does rebuild each time).
+            # self._save_memory() # Likely redundant with current delete_memory_entry
+        else:
+            logger.info("--- Purge Complete: No archived nodes met the age criteria. ---")
+
 
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
@@ -2435,12 +2674,15 @@ class GraphMemoryClient:
                 if uuid_to_prune in self.graph:
                     try:
                         # Mark as 'archived' instead of deleting? (Safer)
-                        # Let's stick to delete for now as per plan, but archiving is better.
-                        # --> Changing to ARCHIVE based on Nuanced Forgetting plan
-                        self.graph.nodes[uuid_to_prune]['status'] = 'archived'
+                        # Set status to 'archived'
+                        node_data = self.graph.nodes[uuid_to_prune]
+                        node_data['status'] = 'archived'
+                        # Optionally reset activation level
+                        # node_data['activation_level'] = 0.0
                         logger.debug(f"Archived summarized turn node: {uuid_to_prune[:8]}")
                         pruned_count += 1
-                        # Note: Need to rebuild FAISS index after archiving!
+                    except KeyError:
+                         logger.warning(f"Node {uuid_to_prune[:8]} not found during pruning (already deleted?).")
                     except Exception as e:
                         logger.error(f"Error archiving node {uuid_to_prune[:8]}: {e}")
             logger.info(f"Archived {pruned_count} summarized turn nodes.")

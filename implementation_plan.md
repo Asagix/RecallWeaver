@@ -17,18 +17,18 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement `_get_embedding` helper.
     -   [x] Implement `add_memory_node` (UUID, timestamp, embedding generation, add to graph, add to FAISS, update mappings).
     -   [x] Add temporal edge creation in `add_memory_node`.
--   [ ] **Data Model Enhancements (Phase 1):**
-    -   [ ] **Modify `add_memory_node`:** Initialize new node attributes: `status` ('active'), `access_count` (0), default `emotion_valence`/`arousal` (from config), initial `saliency_score` (calculated based on V1 formula - see Saliency section).
-    -   [ ] **Verify Save/Load:** Test `_save_memory` and `_load_memory` to ensure new attributes are persisted correctly.
-    -   [ ] **Update `config.yaml`:** Add `features` section with enable flags. Add `emotion_analysis` section with `default_valence`/`arousal`. Add placeholders in `forgetting.weights`.
--   [ ] **V1 Saliency Implementation (Phase 1):**
-    -   [ ] **Enable Flag:** Check `features.enable_saliency` in relevant code sections.
-    * [ ] **Modify `add_memory_node`:** Implement V1 initial `saliency_score` calculation (based on node type base score + default emotion arousal influence, clamped 0-1) as detailed in Data Model changes.
-    * [ ] **Modify `retrieve_memory_chain` (Access Count):** Increment `access_count` attribute for nodes in the final `relevant_nodes` list. Ensure `last_accessed_ts` is also updated.
-    * [ ] **Modify `retrieve_memory_chain` (Activation Influence):** Factor `saliency_score` into the `act_pass` calculation (e.g., `act_pass *= (1.0 + source_saliency * activation_influence)`) using configured `activation_influence` factor.
-    * [ ] **Modify `run_consolidation`:** Ensure new summary/concept nodes created via `add_memory_node` receive their initial saliency score automatically.
-    * [ ] **Add Placeholder Method:** Add stub `update_node_saliency(self, node_uuid, change_factor)` method to `GraphMemoryClient` for V2.
-    * [ ] **Update `config.yaml`:** Define `saliency` section with `initial_scores`, `emotion_influence_factor`, `activation_influence`.
+-   [x] **Data Model Enhancements (Phase 1):**
+    -   [x] **Modify `add_memory_node`:** Initialize new node attributes: `status` ('active'), `access_count` (0), default `emotion_valence`/`arousal` (from config), initial `saliency_score` (calculated based on V1 formula - see Saliency section).
+    -   [x] **Verify Save/Load:** Test `_save_memory` and `_load_memory` to ensure new attributes are persisted correctly.
+    -   [x] **Update `config.yaml`:** Add `features` section with enable flags. Add `emotion_analysis` section with `default_valence`/`arousal`. Add placeholders in `forgetting.weights`. (Config already updated in provided file)
+-   [x] **V1 Saliency Implementation (Phase 1):**
+    -   [x] **Enable Flag:** Check `features.enable_saliency` in relevant code sections.
+    * [x] **Modify `add_memory_node`:** Implement V1 initial `saliency_score` calculation (based on node type base score + default emotion arousal influence, clamped 0-1) as detailed in Data Model changes.
+    * [x] **Modify `retrieve_memory_chain` (Access Count):** Increment `access_count` attribute for nodes in the final `relevant_nodes` list. Ensure `last_accessed_ts` is also updated.
+    * [x] **Modify `retrieve_memory_chain` (Activation Influence):** Factor `saliency_score` into the `act_pass` calculation (e.g., `act_pass *= (1.0 + source_saliency * activation_influence)`) using configured `activation_influence` factor.
+    * [x] **Modify `run_consolidation`:** Ensure new summary/concept nodes created via `add_memory_node` receive their initial saliency score automatically.
+    * [x] **Add Placeholder Method:** Add stub `update_node_saliency(self, node_uuid, change_factor)` method to `GraphMemoryClient` for V2.
+    * [x] **Update `config.yaml`:** Define `saliency` section with `initial_scores`, `emotion_influence_factor`, `activation_influence`. (Config already updated)
     * [ ] **Testing (Saliency):** Unit test calculation logic. Integration test attribute persistence, `access_count` increment, activation influence, and consolidation assignment.
 -   [x] **LLM Interaction:**
     -   [x] Implement `_call_kobold_api` (Generate API).

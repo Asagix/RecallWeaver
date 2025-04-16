@@ -106,7 +106,7 @@ class Worker(QThread):
         self.mod_keywords = []
         self.consolidation_trigger_count = 0 # Interactions before auto-consolidation
         self.forgetting_trigger_count = 0 # Interactions before auto-forgetting
-        self.interaction_count = 0 # Tracks user/AI turns since last trigger
+        self.interaction_count = 0 # Tracks user/AI turns since last maintenance/consolidation trigger
         self.personality = personality_name
         self.config_path = config_path
 
@@ -245,10 +245,10 @@ class Worker(QThread):
                  gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
                  # Pass flag indicating automatic trigger? Might be useful later.
                  self.handle_consolidation_task(triggered_automatically=True)
-                 # Reset counter
+                 # Reset counter only if a task was actually triggered and queued
                  self.interaction_count = 0
 
-    # --- NEW Task Handler for Memory Maintenance ---
+
     def handle_memory_maintenance_task(self):
         """Handles the task for running the nuanced forgetting process."""
         self.signals.log_message.emit("[Auto] Running memory maintenance (forgetting)...")
@@ -341,7 +341,7 @@ class Worker(QThread):
             except Exception as e: error_msg = f"Error calling backend reset_memory: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
             if reset_ok:
                  self.current_conversation.clear()
-                 self.interaction_count = 0 # Reset interaction count on memory reset
+                 self.interaction_count = 0 # Also reset interaction count on manual memory reset
                  backend_logger.info("Memory reset successful.")
                  self.signals.memory_reset_complete.emit()
             else: self.signals.error.emit("Backend failed to reset memory.")

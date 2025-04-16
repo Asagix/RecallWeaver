@@ -20,7 +20,11 @@ The system uses a combination of:
 * **Multi-Personality Support:** Memory is stored in separate directories per personality, selectable via the GUI menu.
 * **Semantic Retrieval:**
     * Uses FAISS index for fast similarity search to find relevant starting points in memory based on user input.
-    * Employs an activation spreading algorithm (`retrieve_memory_chain`) traversing the graph based on edge types and decay parameters to retrieve a chain of relevant memories.
+    * Employs an activation spreading algorithm (`retrieve_memory_chain`) traversing the graph based on edge types, decay parameters, and **node saliency** to retrieve a chain of relevant memories.
+* **Node Saliency (V1):**
+    * Nodes are assigned an initial saliency score based on type and configuration.
+    * Saliency influences activation spreading during retrieval.
+    * Node access count is tracked.
 * **LLM Integration:**
     * Interfaces with KoboldCpp-compatible APIs (Generate and Chat Completions).
     * Constructs prompts dynamically, injecting relevant retrieved memories and conversation history within the LLM's token limit.
@@ -35,6 +39,10 @@ The system uses a combination of:
     * `delete` specific memory nodes (by UUID).
     * `edit` the text of memory nodes (by UUID).
     * `forget` memories related to a specific topic (via similarity search).
+* **Nuanced Forgetting (V1 - Soft Delete):**
+    * Periodically (based on interaction count), identifies less relevant nodes based on age, access count, activation level, saliency, type, etc.
+    * Calculates a "forgettability score".
+    * Nodes exceeding a threshold are marked as `archived` (soft delete) and excluded from normal retrieval.
 * **Basic File/Calendar Actions (Experimental):**
     * Includes backend logic (`file_manager.py`) and analysis prompts (`analyze_action_request`) to potentially handle requests for creating/appending files or adding/reading calendar events within a personality-specific workspace. (GUI integration is incomplete).
 * **Graphical User Interface (PyQt6):**
