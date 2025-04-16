@@ -1947,11 +1947,24 @@ class GraphMemoryClient:
             if action == "create_file":
                 filename, content = args.get("filename"), args.get("content")
                 if filename and content is not None:
-                    # Log exact values passed
-                    logger.debug(f"Calling file_manager.create_or_overwrite_file(config, personality='{self.personality}', filename='{filename}', content='{str(content)[:50]}...')")
-                    success = file_manager.create_or_overwrite_file(self.config, self.personality, filename, str(content)) # Ensure content is string
-                    message = f"File '{filename}' created/overwritten." if success else f"Failed create/overwrite '{filename}'."
-                else: message = "Missing filename or content for create_file."
+                    # --- Check if file exists BEFORE calling create/overwrite ---
+                    workspace_path = file_manager.get_workspace_path(self.config, self.personality)
+                    if workspace_path:
+                        file_path = os.path.join(workspace_path, filename)
+                        if os.path.exists(file_path):
+                            logger.warning(f"File '{filename}' exists. Requesting overwrite confirmation.")
+                            # Return dict to signal confirmation needed
+                            return {"action": "confirm_overwrite", "args": {"filename": filename, "content": content}}
+                        else:
+                            # File doesn't exist, proceed with creation
+                            logger.debug(f"File '{filename}' does not exist. Proceeding with creation.")
+                            success, message = file_manager.create_or_overwrite_file(self.config, self.personality, filename, str(content))
+                    else:
+                        message = f"Error: Could not access workspace for personality '{self.personality}'."
+                        success = False
+                else:
+                    message = "Error: Missing filename or content for create_file."
+                    success = False
             elif action == "append_file":
                 filename, content = args.get("filename"), args.get("content")
                 if filename and content:

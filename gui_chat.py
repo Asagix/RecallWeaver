@@ -88,6 +88,7 @@ class WorkerSignals(QObject):
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
     clarification_needed = pyqtSignal(str, list)
+    confirmation_needed = pyqtSignal(str, dict) # NEW: action_type, details_dict
     error = pyqtSignal(str)
     log_message = pyqtSignal(str)
 
@@ -162,6 +163,7 @@ class Worker(QThread):
                     elif task_type == 'reset': self.handle_reset_task()
                     elif task_type == 'consolidate': self.handle_consolidation_task()
                     elif task_type == 'execute_action': self.handle_execute_action_task(data)
+                    elif task_type == 'execute_action_confirmed': self.handle_confirmed_action_task(data) # NEW Handler
                     # --- Add handler for memory maintenance ---
                     elif task_type == 'memory_maintenance': self.handle_memory_maintenance_task()
                     else:
@@ -402,6 +404,53 @@ class Worker(QThread):
              error_msg = "Backend client not available for action execution."
              self.signals.error.emit(error_msg)
              backend_logger.error(error_msg)
+
+    def handle_confirmed_action_task(self, confirmed_action_data):
+        """Executes an action that the user has explicitly confirmed (e.g., overwrite)."""
+        action = confirmed_action_data.get('action')
+        args = confirmed_action_data.get('args', {})
+        gui_logger.info(f"Executing CONFIRMED action: {action} with args: {args}")
+
+        success = False
+        message = f"Failed to execute confirmed action '{action}'."
+        action_suffix = f"{action}_fail" # Start with fail suffix
+
+        try:
+            if action == "create_file":
+                filename, content = args.get("filename"), args.get("content")
+                if filename and content is not None:
+                    # Call file manager directly, bypassing the check in execute_action
+                    success, message = file_manager.create_or_overwrite_file(
+                        self.client.config, self.client.personality, filename, str(content)
+                    )
+                    action_suffix = f"{action}_{'success' if success else 'fail'}"
+                else:
+                    message = "Error: Missing filename or content for confirmed create_file."
+                    success = False
+            # Add other confirmed actions here if needed later
+            else:
+                message = f"Error: Unknown confirmed action type '{action}'."
+                success = False
+                action_suffix = "unknown_action_fail"
+
+        except Exception as e:
+            logger.error(f"Exception during execution of CONFIRMED action '{action}': {e}", exc_info=True)
+            message = f"An internal error occurred while trying to perform confirmed action '{action}'."
+            success = False
+            action_suffix = f"{action}_exception"
+
+        # Add result message to conversation history
+        result_timestamp = datetime.now(timezone.utc).isoformat()
+        self.current_conversation.append({"speaker": "System", "text": message, "timestamp": result_timestamp})
+
+        # Emit signal to GUI
+        user_input_placeholder = f"Confirmed Action: {action}"
+        target_info_placeholder = str(args)[:100]
+        self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix, target_info_placeholder)
+
+        # Clear pending state
+        self.pending_confirmation = None
+
 
     def add_input(self, text: str, attachment: dict | None = None):
         """Analyzes input/attachment and adds appropriate task to the queue."""
@@ -1028,6 +1077,7 @@ class ChatWindow(QMainWindow):
         self.worker.signals.memory_reset_complete.connect(self.on_memory_reset_complete)
         self.worker.signals.consolidation_complete.connect(self.on_consolidation_complete)
         self.worker.signals.clarification_needed.connect(self.handle_clarification_request)
+        self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request) # NEW Connection
         self.worker.signals.error.connect(self.display_error)
         self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
         self.worker.finished.connect(self.on_worker_finished)
@@ -1186,6 +1236,49 @@ class ChatWindow(QMainWindow):
         self.clear_chat_display()
         self.display_message("System", "Memory has been reset.", object_name_suffix="ConfirmationMessage")
         self._finalize_display(status_msg="Memory Reset Complete.", status_duration=5000)
+
+
+    @pyqtSlot(str, dict)
+    def handle_confirmation_request(self, action_type: str, details: dict):
+        """Handles the signal that user confirmation is needed for an action."""
+        gui_logger.info(f"Confirmation needed: Type={action_type}, Details={details}")
+        self.pending_confirmation = {'action': action_type, 'args': details} # Store details
+
+        confirm_msg = "Confirmation required."
+        title = "Confirm Action"
+        if action_type == "confirm_overwrite":
+            filename = details.get("filename", "?")
+            title = "Confirm Overwrite"
+            confirm_msg = f"File '{filename}' already exists.\n\nDo you want to overwrite it?"
+
+        reply = QMessageBox.question(self, title, confirm_msg,
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No) # Default to No
+
+        if reply == QMessageBox.StandardButton.Yes:
+            gui_logger.info("User confirmed action.")
+            if self.worker and self.pending_confirmation:
+                # Queue the confirmed action task
+                # We need the original action type ('create_file') and args
+                confirmed_action_data = {
+                    'action': 'create_file', # The action to execute
+                    'args': self.pending_confirmation['args']
+                }
+                self.worker.input_queue.append(('execute_action_confirmed', confirmed_action_data))
+                self.statusBar().showMessage("Executing confirmed action...")
+                self.is_processing = True # Mark as processing again
+                self.set_input_enabled(False)
+            else:
+                gui_logger.error("Cannot execute confirmed action: Worker or pending data missing.")
+                self.display_error("Could not execute confirmed action.")
+                self._finalize_display() # Reset UI state
+        else:
+            gui_logger.info("User cancelled action.")
+            self.display_message("System", f"Action cancelled by user.", object_name_suffix="ConfirmationMessage")
+            self._finalize_display(status_msg="Action cancelled.", status_duration=3000)
+
+        # Clear pending state regardless of choice
+        self.pending_confirmation = None
 
 
     @pyqtSlot(str, list)

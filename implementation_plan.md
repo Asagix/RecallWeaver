@@ -92,7 +92,12 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] GUI: Integrate action analysis call into `Worker.add_input`.
     -   [x] GUI: Implement logic in `Worker` to handle `clarify` responses (store state, process next input as clarification) and queue/execute specific action tasks.
     -   [x] GUI: Implement UI elements/flow for clarification requests (clearer prompt, persistent status bar message, placeholder text, visual indicator light).
-    -   [ ] GUI: Implement UI flow for potential action confirmations (e.g., before overwriting a file).
+    -   [x] GUI: Implement UI flow for action confirmations (overwrite file):
+        -   [x] Backend: `execute_action` checks file existence for `create_file`.
+        -   [x] Backend: Returns `confirm_overwrite` action if file exists.
+        -   [x] GUI: Worker detects `confirm_overwrite`, stores state, emits `confirmation_needed`.
+        -   [x] GUI: ChatWindow handles signal, shows `QMessageBox`, queues `execute_action_confirmed` on Yes.
+        -   [x] GUI: Worker handles `execute_action_confirmed`, calls file manager directly.
 -   [ ] **Context Dependency (Focus via Recent Concepts):**
     -   [x] Modify `process_interaction` to identify concept nodes mentioned in the last user/AI turn.
     -   [x] Modify `retrieve_memory_chain` to accept recent concept UUIDs.
@@ -128,7 +133,7 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Integrate action analysis call.
     -   [x] Add Worker logic for clarification/execution tasks (including handling user response to clarification).
     -   [x] Implement UI for clarification (Improved prompt/indicator implemented).
-    -   [ ] Implement UI for potential action confirmations.
+    -   [x] Implement UI for action confirmations (Overwrite file).
 -   [ ] **(Future GUI Enhancements):**
     -   [ ] Add interface to view/manage 'archived' nodes.
     -   [ ] Add UI for user feedback on memory saliency.
