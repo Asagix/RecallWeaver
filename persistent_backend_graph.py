@@ -3257,13 +3257,24 @@ class GraphMemoryClient:
         if llm_response_str:
             try:
                 logger.debug(f"Raw Causal Chain response: ```{llm_response_str}```")
-                # Extract JSON list
-                match = re.search(r'(\[.*?\])', llm_response_str, re.DOTALL)
-                if match:
-                    json_str = match.group(1)
-                    parsed_list = json.loads(json_str)
+                # --- Improved JSON Extraction ---
+                cleaned_response = llm_response_str.strip()
+                # Remove potential markdown fences first
+                if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+                if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+                if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+                # Find the first '[' and the last ']'
+                start_bracket = cleaned_response.find('[')
+                end_bracket = cleaned_response.rfind(']')
+
+                if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+                    json_str = cleaned_response[start_bracket:end_bracket + 1]
+                    logger.debug(f"Extracted potential JSON list string: {json_str}")
+                    parsed_list = json.loads(json_str) # Attempt to parse the extracted string
+
                     if isinstance(parsed_list, list):
-                        # Validate inner lists
+                        # Validate inner lists (Keep existing validation)
                         valid_chains = []
                         for chain in parsed_list:
                             # Validate format: list of strings, length >= 2
