@@ -131,6 +131,12 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Add `_get_relative_time_desc` helper method to `GraphMemoryClient`.
     -   [x] Modify `_construct_prompt` to use the helper for formatting memory timestamps.
     -   [ ] Testing: Verify relative time descriptions appear correctly in prompts.
+-   [ ] **Prospective Memory (V1 - Storing Intentions):**
+    -   [x] Add 'intention' node type saliency to `config.yaml`.
+    -   [x] Create `prompts/intention_analysis_prompt.txt`.
+    -   [x] Implement `_analyze_intention_request` method in `GraphMemoryClient`.
+    -   [x] Modify `process_interaction` to call analysis and add 'intention' node if detected.
+    -   [ ] Testing: Verify intentions are detected and stored correctly as nodes.
 -   [ ] **Autobiographical Self-Model (V1 - Prompt Injection):**
     -   [x] Add `self.autobiographical_model` attribute to `GraphMemoryClient`.
     -   [x] Add persistence for ASM to `_load_memory` and `_save_memory` (`asm.json`).

@@ -2036,6 +2036,60 @@ class GraphMemoryClient:
             logger.warning(f"LLM returned unexpected query classification '{classification}'. Defaulting to 'other'.")
             return "other"
 
+    def _analyze_intention_request(self, request_text: str) -> dict:
+        """Uses LLM to detect if user wants AI to remember something for later."""
+        logger.debug(f"Analyzing for intention request: '{request_text[:100]}...'")
+        prompt_template = self._load_prompt("intention_analysis_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load intention analysis prompt template.")
+            return {'action': 'error', 'reason': 'Intention analysis prompt template missing.'}
+
+        full_prompt = prompt_template.format(request_text=request_text)
+        # Use low temperature for focused analysis
+        llm_response_str = self._call_kobold_api(full_prompt, max_length=200, temperature=0.15)
+
+        if not llm_response_str:
+            logger.error("LLM call failed for intention analysis (empty response).")
+            return {'action': 'error', 'reason': 'LLM call failed for intention analysis'}
+
+        parsed_result = None
+        json_str = ""
+        try:
+            logger.debug(f"Raw intention analysis response: ```{llm_response_str}```")
+            match = re.search(r'(\{.*?\})', llm_response_str, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                parsed_result = json.loads(json_str)
+            else: # Fallback cleaning
+                cleaned_response = llm_response_str.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                start_brace = cleaned_response.find('{'); end_brace = cleaned_response.rfind('}')
+                if start_brace != -1 and end_brace != -1: json_str = cleaned_response[start_brace:end_brace+1]; parsed_result = json.loads(json_str)
+                else: raise ValueError("No JSON object found")
+
+            if not isinstance(parsed_result, dict): raise ValueError("Parsed JSON is not a dictionary.")
+            action = parsed_result.get("action")
+            if action == "store_intention":
+                content = parsed_result.get("content")
+                trigger = parsed_result.get("trigger")
+                if not content or not trigger or not isinstance(content, str) or not isinstance(trigger, str):
+                    raise ValueError("Missing or invalid 'content' or 'trigger' for store_intention.")
+                logger.info(f"Intention detected: Content='{content[:50]}...', Trigger='{trigger}'")
+                return parsed_result # Return the valid intention data
+            elif action == "none":
+                logger.debug("No intention detected.")
+                return {"action": "none"}
+            else:
+                logger.warning(f"LLM returned unexpected action '{action}' for intention analysis.")
+                return {"action": "none"} # Treat unexpected as none
+
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Intention Parse/Validation Error: {e}. Extracted: '{json_str}'. Raw: '{llm_response_str}'")
+            return {'action': 'error', 'reason': f'LLM response parse/validation failed: {e}', 'raw_response': llm_response_str}
+        except Exception as e:
+            logger.error(f"Unexpected error parsing intention response: {e}", exc_info=True)
+            return {'action': 'error', 'reason': f'Unexpected intention parsing error: {e}', 'raw_response': llm_response_str}
+
+
     # *** NEW: Action Dispatcher ***
     def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
         """Executes a validated action based on the action_data dictionary."""
@@ -2261,6 +2315,34 @@ class GraphMemoryClient:
                 current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
             logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias.")
             self.last_interaction_mood = current_turn_mood # Update state
+
+            # --- Check for Intention Request (if not handled as action/mod) ---
+            # This check happens *after* adding the user/AI nodes, using the original user_input
+            # We might want to move this earlier if intention analysis should prevent normal response generation.
+            # For V1, let's just store it alongside the normal interaction flow.
+            try:
+                intention_result = self._analyze_intention_request(user_input)
+                if intention_result.get("action") == "store_intention":
+                    intention_content = intention_result.get("content")
+                    intention_trigger = intention_result.get("trigger", "later")
+                    # Format node text to include both content and trigger
+                    intention_text = f"Remember: {intention_content} (Trigger: {intention_trigger})"
+                    # Add the intention node, linked temporally after the AI response
+                    intention_node_uuid = self.add_memory_node(
+                        text=intention_text,
+                        speaker="System", # Or 'AI'? System seems better for internal intention
+                        node_type='intention'
+                        # Timestamp will be set automatically
+                    )
+                    if intention_node_uuid:
+                        logger.info(f"Stored intention node {intention_node_uuid[:8]}")
+                        # Optionally, add a system message to the *next* response context?
+                        # For now, just store it. The user sees their request and the AI response.
+                    else:
+                        logger.error("Failed to add intention node to graph.")
+            except Exception as intent_e:
+                 logger.error(f"Error during intention analysis/storage: {intent_e}", exc_info=True)
+
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)

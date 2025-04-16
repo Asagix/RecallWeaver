@@ -148,6 +148,7 @@ saliency:
     turn: 0.4
     summary: 0.7
     concept: 0.8
+    intention: 0.75 # NEW: Saliency for intention nodes
     default: 0.5
   emotion_influence_factor: 0.2 # How much default arousal boosts initial saliency
   activation_influence: 0.1 # How much saliency boosts activation spreading

@@ -1,0 +1,43 @@
+<start_of_turn>user
+Analyze the user's request below. Determine if the user is asking the AI to remember something for the future (a prospective memory task).
+
+**Rules:**
+1.  Look for explicit commands like "remind me to...", "remember to tell me...", "don't forget...", "in the future, recall...".
+2.  Look for implicit intentions like "We should discuss X later.", "I want to talk about Y tomorrow.", "Next time we chat, ask me about Z."
+3.  If an intention is found, identify:
+    *   `content`: The core thing to be remembered or done.
+    *   `trigger`: Any specified time, date, event, or context for recalling the intention (e.g., "tomorrow", "next week", "when we discuss project X", "later"). If no specific trigger is mentioned, use "later".
+4.  If NO clear intention to remember something for the future is found, output `{{"action": "none"}}`.
+5.  Output ONLY a single, valid JSON object. No explanations.
+
+**Output Format (if intention found):**
+```json
+{{"action": "store_intention", "content": "The core thing to remember", "trigger": "The trigger context/time"}}
+```
+
+**Output Format (if NO intention found):**
+```json
+{{"action": "none"}}
+```
+
+**Examples:**
+User Request: Remind me to buy milk tomorrow morning.
+JSON Response: {{"action": "store_intention", "content": "buy milk", "trigger": "tomorrow morning"}}
+
+User Request: Let's talk about the deployment plan later.
+JSON Response: {{"action": "store_intention", "content": "talk about the deployment plan", "trigger": "later"}}
+
+User Request: Don't forget I need to send that email by 5pm.
+JSON Response: {{"action": "store_intention", "content": "send that email", "trigger": "by 5pm"}}
+
+User Request: What time is it?
+JSON Response: {{"action": "none"}}
+
+User Request: I think that's a good idea.
+JSON Response: {{"action": "none"}}
+
+**Analyze the following user request:**
+User Request: {request_text}
+
+**JSON Response:**<end_of_turn>
+<start_of_turn>model
