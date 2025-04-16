@@ -2002,45 +2002,11 @@ class GraphMemoryClient:
                     logger.info(f"Initial UUIDs: {initial_uuids}")
 
                     if initial_uuids:
-                        # --- Find concepts mentioned in the last two turns (BEFORE retrieval) ---
-                        # This needs the user_node_uuid and ai_node_uuid which should be available now
-                        recent_concept_uuids = set()
-                        nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs captured above
-                        for turn_uuid in nodes_to_check_for_concepts:
-                            if turn_uuid and turn_uuid in self.graph:
-                                try:
-                                    # Check outgoing edges for MENTIONS_CONCEPT
-                                    for successor_uuid in self.graph.successors(turn_uuid):
-                                        edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
-                                        if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
-                                            if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
-                                                recent_concept_uuids.add(successor_uuid)
-                                                logger.debug(f"Identified recent concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}'")
-                                except Exception as concept_find_e:
-                                     logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
-                        logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
-
-                        # --- Calculate Current Mood (Average of last user/AI turn) ---
-                        current_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
-                        mood_nodes_found = 0
-                        total_valence = 0.0
-                        total_arousal = 0.0
-                        for node_uuid in [user_node_uuid, ai_node_uuid]:
-                            if node_uuid and node_uuid in self.graph:
-                                node_data = self.graph.nodes[node_uuid]
-                                # Use defaults from config if node lacks emotion data somehow
-                                default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
-                                default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
-                                total_valence += node_data.get('emotion_valence', default_v)
-                                total_arousal += node_data.get('emotion_arousal', default_a)
-                                mood_nodes_found += 1
-                        if mood_nodes_found > 0:
-                            current_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
-                        logger.info(f"Calculated current mood (Avg V/A): {current_mood[0]:.2f} / {current_mood[1]:.2f}")
-
+                        # Concept finding and mood calculation moved to AFTER node creation
                         # --- Now call retrieval ---
                         logger.info("Retrieving memory chain...")
-                        logger.info(f"Passing {len(recent_concept_uuids)} recent concept UUIDs and current mood {current_mood} to retrieval.")
+                        # The recent_concept_uuids and current_mood variables are now defined above.
+                        logger.info(f"Passing {len(recent_concept_uuids)} recent concept UUIDs and current mood {current_mood} to retrieval.") # Log re-added
                         memory_chain_data = self.retrieve_memory_chain(
                             initial_node_uuids=initial_uuids,
                             recent_concept_uuids=list(recent_concept_uuids), # Pass the list
@@ -2081,7 +2047,41 @@ class GraphMemoryClient:
             logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
-            # Concept finding and mood calculation logic moved to before retrieval call
+            # --- Find concepts mentioned in the last two turns (AFTER adding both nodes) ---
+            recent_concept_uuids = set()
+            nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs captured above
+            for turn_uuid in nodes_to_check_for_concepts:
+                if turn_uuid and turn_uuid in self.graph:
+                    try:
+                        # Check outgoing edges for MENTIONS_CONCEPT
+                        for successor_uuid in self.graph.successors(turn_uuid):
+                            edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
+                            if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
+                                    recent_concept_uuids.add(successor_uuid)
+                                    logger.debug(f"Identified recent concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}'")
+                    except Exception as concept_find_e:
+                         logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
+            logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
+
+            # --- Calculate Current Mood (Average of last user/AI turn) ---
+            current_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
+            mood_nodes_found = 0
+            total_valence = 0.0
+            total_arousal = 0.0
+            for node_uuid in [user_node_uuid, ai_node_uuid]:
+                if node_uuid and node_uuid in self.graph:
+                    node_data = self.graph.nodes[node_uuid]
+                    # Use defaults from config if node lacks emotion data somehow
+                    default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                    default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                    total_valence += node_data.get('emotion_valence', default_v)
+                    total_arousal += node_data.get('emotion_arousal', default_a)
+                    mood_nodes_found += 1
+            if mood_nodes_found > 0:
+                current_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
+            logger.info(f"Calculated current mood (Avg V/A): {current_mood[0]:.2f} / {current_mood[1]:.2f}")
+            # This set 'recent_concept_uuids' and tuple 'current_mood' will be used below.
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)
