@@ -164,7 +164,8 @@ class Worker(QThread):
                     elif task_type == 'reset': self.handle_reset_task()
                     elif task_type == 'consolidate': self.handle_consolidation_task()
                     elif task_type == 'execute_action': self.handle_execute_action_task(data)
-                    elif task_type == 'execute_action_confirmed': self.handle_confirmed_action_task(data) # NEW Handler
+                    elif task_type == 'execute_action_confirmed': self.handle_confirmed_action_task(data)
+                    elif task_type == 'saliency_update': self.handle_saliency_update_task(data) # NEW Handler
                     # --- Add handler for memory maintenance ---
                     elif task_type == 'memory_maintenance': self.handle_memory_maintenance_task()
                     else:
@@ -474,6 +475,30 @@ class Worker(QThread):
         # Clear pending state
         self.pending_confirmation = None
 
+    def handle_saliency_update_task(self, data: dict):
+        """Handles the task to update node saliency via the backend."""
+        uuid = data.get('uuid')
+        direction = data.get('direction')
+        if not uuid or not direction:
+            gui_logger.error(f"Invalid data for saliency update task: {data}")
+            return
+
+        gui_logger.info(f"Worker handling saliency update: UUID={uuid}, Direction={direction}")
+        if self.client:
+            try:
+                # Call the backend method (no return value expected currently)
+                self.client.update_node_saliency(uuid, direction)
+                # Optionally emit a signal back to GUI? For now, just log.
+                self.signals.log_message.emit(f"Saliency update processed for {uuid[:8]}.")
+            except Exception as e:
+                error_msg = f"Error during saliency update for {uuid}: {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+        else:
+            error_msg = "Backend client not available for saliency update."
+            self.signals.error.emit(error_msg)
+            backend_logger.error(error_msg)
+
 
     def add_input(self, text: str, attachment: dict | None = None):
         """Analyzes input/attachment and adds appropriate task to the queue."""
@@ -616,6 +641,11 @@ class Worker(QThread):
         # (Implementation remains the same)
         gui_logger.info("GUI requested manual consolidation."); self.input_queue.append(('consolidate', None))
 
+    def request_saliency_update(self, uuid: str, direction: str):
+        """Adds a saliency update task to the queue."""
+        gui_logger.info(f"GUI requested saliency update for {uuid} ({direction}).")
+        self.input_queue.append(('saliency_update', {'uuid': uuid, 'direction': direction}))
+
     def stop(self):
         # (Implementation remains the same)
         self.is_running = False; gui_logger.info("Stop requested for worker.")
@@ -634,7 +664,34 @@ class Worker(QThread):
 # --- Collapsible Memory Widget ---
 # (Implementation remains the same as previous version)
 class CollapsibleMemoryWidget(QWidget):
-    def __init__(self, memories, parent=None): super().__init__(parent); self.memories = memories or []; self.toggle_button = QPushButton(); self.toggle_button.setObjectName("MemoryToggle"); self.content_area = QTextEdit(); self.content_area.setReadOnly(True); self.content_area.setVisible(False); self.content_area.setObjectName("MemoryContent"); layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0); layout.addWidget(self.toggle_button); layout.addWidget(self.content_area); self.toggle_button.setCheckable(True); self.toggle_button.setChecked(False); self.toggle_button.toggled.connect(self.toggle_content); self.update_button_text(); self.populate_content()
+    # NEW Signal
+    saliency_feedback_requested = pyqtSignal(str, str) # uuid, direction ('increase'/'decrease')
+
+    def __init__(self, memories, parent=None):
+        super().__init__(parent)
+        self.memories = memories or []
+        self.toggle_button = QPushButton()
+        self.toggle_button.setObjectName("MemoryToggle")
+        self.content_area = QTextEdit()
+        self.content_area.setReadOnly(True)
+        self.content_area.setVisible(False)
+        self.content_area.setObjectName("MemoryContent")
+        # Enable link clicking
+        self.content_area.setOpenExternalLinks(False) # We handle links internally
+        self.content_area.anchorClicked.connect(self.handle_link_click) # Connect signal
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.toggle_button)
+        layout.addWidget(self.content_area)
+
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)
+        self.toggle_button.toggled.connect(self.toggle_content)
+        self.update_button_text()
+        self.populate_content()
+
     def update_button_text(self): prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"; count = len(self.memories); self.toggle_button.setText(f"{prefix} Retrieved Memories ({count})")
     def toggle_content(self, checked): self.content_area.setVisible(checked); self.update_button_text(); self.adjustSize(); QTimer.singleShot(0, self._update_parent_layout)
     def _update_parent_layout(self):
@@ -652,8 +709,36 @@ class CollapsibleMemoryWidget(QWidget):
                 elif time_diff < timedelta(hours=1): time_desc = f"{int(time_diff.total_seconds() / 60)}m ago"
                 elif time_diff < timedelta(days=1): time_desc = f"{int(time_diff.total_seconds() / 3600)}h ago"
                 elif dt_obj: time_desc = dt_obj.strftime('%y-%m-%d')
-            html_content += (f"<div style='margin-bottom: 5px; border-left: 2px solid #555; padding-left: 5px;'><small><i><b>{speaker}</b> [{node_type}] ({time_desc}) {score_str} [{uuid_str}]</i></small><br/>{text_multiline}</div>")
+
+            # --- Add Saliency Links ---
+            saliency_links = ""
+            if uuid_str: # Only add links if we have a full UUID
+                 increase_link = f'<a href="saliency://increase/{mem.get("uuid", "")}" style="color: #8FBC8F; text-decoration: none;">[+S]</a>' # Use full UUID
+                 decrease_link = f'<a href="saliency://decrease/{mem.get("uuid", "")}" style="color: #F08080; text-decoration: none;">[-S]</a>' # Use full UUID
+                 saliency_links = f"&nbsp;{increase_link}&nbsp;{decrease_link}"
+
+            html_content += (
+                f"<div style='margin-bottom: 5px; border-left: 2px solid #555; padding-left: 5px;'>"
+                f"<small><i><b>{speaker}</b> [{node_type}] ({time_desc}) {score_str} [{uuid_str}]{saliency_links}</i></small>" # Add links here
+                f"<br/>{text_multiline}</div>"
+            )
         self.content_area.setHtml(html_content)
+
+    # --- NEW Link Handler ---
+    @pyqtSlot(QUrl)
+    def handle_link_click(self, url: QUrl):
+        """Handles clicks on custom saliency links."""
+        if url.scheme() == "saliency":
+            action = url.host() # 'increase' or 'decrease'
+            uuid = url.path().strip('/') # Get the UUID part
+            if action in ['increase', 'decrease'] and uuid:
+                gui_logger.info(f"Saliency feedback link clicked: Action={action}, UUID={uuid}")
+                self.saliency_feedback_requested.emit(uuid, action)
+            else:
+                gui_logger.warning(f"Invalid saliency link format: {url.toString()}")
+        else:
+            # Could potentially handle other schemes or pass to default handler here
+            gui_logger.debug(f"Ignoring non-saliency link click: {url.toString()}")
 
 
 # (Before class ChatWindow(QMainWindow): in gui_chat.py)
@@ -1337,9 +1422,20 @@ class ChatWindow(QMainWindow):
         self.display_message("AI", ai_response)
         if memories:
              gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
-             try: memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget); mem_container_layout = QHBoxLayout(); mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0); mem_container_layout.addWidget(memory_widget); self._add_widget_to_chat_layout(mem_container_layout)
-             except Exception as e: gui_logger.error(f"Failed to create memory widget: {e}", exc_info=True); self.display_error(f"Failed display memories: {e}")
-        else: gui_logger.debug("No memories received for this interaction.")
+             try:
+                  memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
+                  # --- Connect the new signal ---
+                  memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
+                  # --- Add widget to layout ---
+                  mem_container_layout = QHBoxLayout()
+                  mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
+                  mem_container_layout.addWidget(memory_widget)
+                  self._add_widget_to_chat_layout(mem_container_layout)
+             except Exception as e:
+                  gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
+                  self.display_error(f"Failed display memories: {e}")
+        else:
+             gui_logger.debug("No memories received for this interaction.")
         self._finalize_display()
 
 
@@ -1364,6 +1460,19 @@ class ChatWindow(QMainWindow):
          if indicator_text: indicator_label = QLabel(indicator_text); indicator_label.setWordWrap(True); indicator_label.setObjectName(object_name)
          if indicator_label: indicator_layout = QHBoxLayout(); indicator_layout.setContentsMargins(self.bubble_edge_margin + 10, 0, self.bubble_side_margin, 0); indicator_layout.addWidget(indicator_label, 0, Qt.AlignmentFlag.AlignLeft); indicator_layout.addStretch(1); self._add_widget_to_chat_layout(indicator_layout)
          self._finalize_display()
+
+
+    @pyqtSlot(str, str)
+    def handle_saliency_feedback(self, uuid: str, direction: str):
+        """Handles the signal from memory widget and requests worker update."""
+        gui_logger.info(f"GUI received saliency feedback: UUID={uuid}, Direction={direction}")
+        if self.worker and self.worker.isRunning():
+            self.worker.request_saliency_update(uuid, direction)
+            # Optionally provide brief status bar feedback
+            self.statusBar().showMessage(f"Updating saliency for {uuid[:8]} ({direction})...", 2000)
+        else:
+            gui_logger.error("Cannot handle saliency feedback: Worker not running.")
+            self.display_error("Cannot update saliency: Backend worker not active.")
 
 
     @pyqtSlot(str)

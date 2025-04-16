@@ -1194,17 +1194,48 @@ class GraphMemoryClient:
         """
         Placeholder: Updates the saliency score of a node based on external factors
         (e.g., user feedback, explicit marking). Clamps score between 0.0 and 1.0.
+        Uses `saliency.feedback_factor` from config for multiplicative adjustment.
+        `direction` should be 'increase' or 'decrease'.
         """
-        if not self.config.get('features', {}).get('enable_saliency', False): return  # Check feature flag
+        if not self.config.get('features', {}).get('enable_saliency', False):
+            logger.warning("Saliency feedback received but feature is disabled.")
+            return # Check feature flag
 
         if node_uuid in self.graph:
-            # Example: Simple additive or multiplicative update, clamped
-            current_saliency = self.graph.nodes[node_uuid].get('saliency_score', 0.0)
-            new_saliency = current_saliency * change_factor  # Or + change_factor
-            new_saliency = max(0.0, min(1.0, new_saliency))  # Clamp 0-1
-            self.graph.nodes[node_uuid]['saliency_score'] = new_saliency
-            logger.debug(
-                f"Placeholder: Updated saliency for {node_uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f} (Factor: {change_factor})")
+            try:
+                current_saliency = float(self.graph.nodes[node_uuid].get('saliency_score', 0.0))
+                feedback_factor = float(self.config.get('saliency', {}).get('feedback_factor', 0.15)) # Get factor from config, default 0.15
+
+                if feedback_factor <= 0:
+                     logger.warning("Saliency feedback factor must be positive. Using default 0.15.")
+                     feedback_factor = 0.15
+
+                adjustment_multiplier = 1.0 + feedback_factor # Multiplier for increase
+                if direction == 'increase':
+                    new_saliency = current_saliency * adjustment_multiplier
+                    logger.info(f"Increasing saliency for {node_uuid[:8]} (Factor: {adjustment_multiplier:.2f})")
+                elif direction == 'decrease':
+                    # Use inverse multiplier for decrease to ensure symmetry around 1.0
+                    decrease_multiplier = 1.0 / adjustment_multiplier
+                    new_saliency = current_saliency * decrease_multiplier
+                    logger.info(f"Decreasing saliency for {node_uuid[:8]} (Factor: {decrease_multiplier:.2f})")
+                else:
+                    logger.warning(f"Invalid direction '{direction}' for saliency update.")
+                    return # Do nothing if direction is invalid
+
+                new_saliency = max(0.0, min(1.0, new_saliency)) # Clamp 0-1
+
+                if new_saliency != current_saliency:
+                    self.graph.nodes[node_uuid]['saliency_score'] = new_saliency
+                    logger.info(f"Updated saliency for {node_uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f}")
+                    # Save memory after update? Could be frequent. Maybe defer saving?
+                    # Let's save for now to ensure persistence.
+                    self._save_memory()
+                else:
+                     logger.debug(f"Saliency for {node_uuid[:8]} unchanged (already at limit or no effective change).")
+
+            except Exception as e:
+                 logger.error(f"Error updating saliency for node {node_uuid[:8]}: {e}", exc_info=True)
         else:
             logger.warning(f"update_node_saliency called for non-existent node: {node_uuid}")
 
