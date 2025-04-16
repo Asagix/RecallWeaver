@@ -109,8 +109,13 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Pass `current_mood` to `retrieve_memory_chain`.
     -   [x] Modify activation spreading in `retrieve_memory_chain` to calculate emotional distance between `current_mood` and neighbor nodes.
     -   [x] Apply subtle activation boost/penalty based on emotional distance using configured factors.
-    -   [x] Add `activation.emotional_context` section to `config.yaml`.
+    -   [x] Add `activation.emotional_context` section to `config.yaml` (bias and reconsolidation params).
     -   [ ] Testing: Verify emotional context bias is applied correctly and subtly influences retrieval.
+-   [ ] **Emotional Reconsolidation:**
+    -   [x] Add `reconsolidation_enable`, `_threshold`, `_factor` to `activation.emotional_context` in `config.yaml`.
+    -   [x] Modify `retrieve_memory_chain` final selection passes to check emotional distance.
+    -   [x] Implement logic to adjust stored node emotion towards `current_mood` if distance exceeds threshold, using the factor.
+    -   [ ] Testing: Verify node emotions are subtly adjusted during recall when mood differs significantly.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

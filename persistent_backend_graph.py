@@ -1025,6 +1025,34 @@ class GraphMemoryClient:
                                 node_data['saliency_score'] = new_saliency
                                 logger.debug(f"Boosted saliency (threshold recall) for {uuid[:8]} to {new_saliency:.3f}")
 
+                    # --- Emotional Reconsolidation (Threshold Pass) ---
+                    if emo_ctx_enabled and emo_ctx_cfg.get('reconsolidation_enable', False):
+                        recon_threshold = emo_ctx_cfg.get('reconsolidation_threshold', 0.5)
+                        recon_factor = emo_ctx_cfg.get('reconsolidation_factor', 0.05)
+                        if recon_factor > 0:
+                            try:
+                                default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                                default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                                node_v = node_data.get('emotion_valence', default_v)
+                                node_a = node_data.get('emotion_arousal', default_a)
+                                mood_v, mood_a = current_mood
+                                dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
+                                emo_dist = math.sqrt(dist_sq)
+
+                                if emo_dist >= recon_threshold:
+                                    # Nudge node emotion towards current mood
+                                    new_v = node_v + (mood_v - node_v) * recon_factor
+                                    new_a = node_a + (mood_a - node_a) * recon_factor
+                                    # Clamp values
+                                    new_v = max(-1.0, min(1.0, new_v))
+                                    new_a = max(0.0, min(1.0, new_a))
+                                    # Update graph node directly
+                                    self.graph.nodes[uuid]['emotion_valence'] = new_v
+                                    self.graph.nodes[uuid]['emotion_arousal'] = new_a
+                                    logger.debug(f"  EmoRecon (Thresh): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
+                            except Exception as e:
+                                 logger.warning(f"Error during emotional reconsolidation for {uuid[:8]}: {e}")
+
         logger.info(f"Found {len(relevant_nodes_dict)} active nodes above activation threshold ({activation_threshold}).")
 
         # Pass 2: Check for high-saliency nodes missed by activation threshold
@@ -1058,6 +1086,34 @@ class GraphMemoryClient:
                                 if new_saliency > current_saliency:
                                     node_data['saliency_score'] = new_saliency
                                     logger.debug(f"Boosted saliency (guaranteed recall) for {uuid[:8]} to {new_saliency:.3f}")
+
+                        # --- Emotional Reconsolidation (Guarantee Pass) ---
+                        if emo_ctx_enabled and emo_ctx_cfg.get('reconsolidation_enable', False):
+                            recon_threshold = emo_ctx_cfg.get('reconsolidation_threshold', 0.5)
+                            recon_factor = emo_ctx_cfg.get('reconsolidation_factor', 0.05)
+                            if recon_factor > 0:
+                                try:
+                                    default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                                    default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                                    node_v = node_data.get('emotion_valence', default_v)
+                                    node_a = node_data.get('emotion_arousal', default_a)
+                                    mood_v, mood_a = current_mood
+                                    dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
+                                    emo_dist = math.sqrt(dist_sq)
+
+                                    if emo_dist >= recon_threshold:
+                                        # Nudge node emotion towards current mood
+                                        new_v = node_v + (mood_v - node_v) * recon_factor
+                                        new_a = node_a + (mood_a - node_a) * recon_factor
+                                        # Clamp values
+                                        new_v = max(-1.0, min(1.0, new_v))
+                                        new_a = max(0.0, min(1.0, new_a))
+                                        # Update graph node directly
+                                        self.graph.nodes[uuid]['emotion_valence'] = new_v
+                                        self.graph.nodes[uuid]['emotion_arousal'] = new_a
+                                        logger.debug(f"  EmoRecon (Guar): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
+                                except Exception as e:
+                                     logger.warning(f"Error during emotional reconsolidation for guaranteed node {uuid[:8]}: {e}")
 
 
         if guaranteed_added_count > 0:

@@ -56,6 +56,10 @@ activation:
     max_distance: 1.414 # Approx max Euclidean distance in V/A space (-1..1, 0..1 -> sqrt(2^2+1^2) is too high, use sqrt(1^2+1^2))
     boost_factor: 0.1 # Max *additive* boost for emotionally close nodes (applied to act_pass)
     penalty_factor: 0.05 # Max *subtractive* penalty for emotionally distant nodes (applied to act_pass)
+    # --- Emotional Reconsolidation on Recall ---
+    reconsolidation_enable: true
+    reconsolidation_threshold: 0.5 # Min V/A distance to trigger reconsolidation adjustment
+    reconsolidation_factor: 0.05 # How much to nudge node emotion towards current mood (0 to 1)
 
 # --- Prompting & Context Configuration ---
 prompting:
