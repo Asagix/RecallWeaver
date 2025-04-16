@@ -739,6 +739,7 @@ class ChatWindow(QMainWindow):
         self.worker = None # Worker thread instance
         self.attached_file_path = None # Store path of file to attach
         self.is_processing = False # Flag to prevent concurrent processing
+        self.awaiting_clarification = False # NEW: Flag for clarification state
 
         # --- Initial State ---
         self.set_input_enabled(False) # Start with input disabled
@@ -1127,6 +1128,12 @@ class ChatWindow(QMainWindow):
             gui_logger.debug("No image attachment payload detected.")
 
         if user_input_text or attachment_to_send: # Proceed if text OR attachment exists
+            # --- Clear clarification state when user sends input ---
+            if self.awaiting_clarification:
+                gui_logger.info("User provided input while clarification was pending. Clearing flag.")
+                self.awaiting_clarification = False
+                # Placeholder text will be reset by _finalize_display or next clarification
+
             if not self.is_processing:
                 # (Command handling logic remains the same)
                 if not attachment_to_send:
