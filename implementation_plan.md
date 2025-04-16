@@ -146,6 +146,12 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Call `_generate_autobiographical_model` at the end of `run_consolidation`.
     -   [x] Modify `_construct_prompt` to inject `asm_summary` into the prompt context, respecting token limits.
     -   [ ] Testing: Verify ASM is generated, saved/loaded, and appears correctly in prompts.
+-   [ ] **Causal Chain Extraction (V1):**
+    -   [x] Add `consolidation.enable_causal_chains` flag to `config.yaml`.
+    -   [x] Create `prompts/causal_chain_prompt.txt`.
+    -   [x] Implement `_consolidate_extract_causal_chains` helper method.
+    -   [x] Integrate call into `run_consolidation`.
+    -   [ ] Testing: Verify causal chains are extracted and `CAUSES` edges are added correctly.
 -   [ ] **Second-Order Relationship Inference (V1 - Generic):**
     -   [x] Add `consolidation.inference` section to `config.yaml` (enable, strength_factor).
     -   [x] Implement `_infer_second_order_relations` helper method (find paths A->B->C, add weak 'INFERRED_RELATED_TO' edge A->C).
