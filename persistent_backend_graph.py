@@ -694,14 +694,18 @@ class GraphMemoryClient:
             if q_embed is None or q_embed.shape != (self.embedding_dim,): return []
 
             q_embed_np = np.array([q_embed], dtype='float32')
-            # Search more initially if filtering later by type
-            search_k = k * 3 if node_type_filter else k
+            # Search more initially if filtering later by type or biasing by query_type
+            search_multiplier = 3 # Default multiplier
+            if query_type == 'episodic': search_multiplier = 5 # Search even more if biasing towards turns
+            elif query_type == 'semantic': search_multiplier = 4 # Search more if biasing towards concepts/summaries
+
+            search_k = k * search_multiplier
             actual_k = min(search_k, self.index.ntotal)
 
             if actual_k == 0: return []
             dists, idxs = self.index.search(q_embed_np, actual_k)
             results = []
-            logger.debug(f"FAISS Search Results (Top {actual_k}, filter='{node_type_filter}'):")
+            logger.debug(f"FAISS Search Results (Top {actual_k}, filter='{node_type_filter}', query_type='{query_type}'):")
 
             if len(idxs) > 0:
                 for i, faiss_id in enumerate(idxs[0]):
@@ -715,10 +719,29 @@ class GraphMemoryClient:
                             # node_status = node_data.get('status', 'active') # No longer needed
                             node_type = node_data.get('node_type')
 
-                            # --- Filter 1: Node Type ---
+                            # --- Filter 1: Explicit Node Type Filter ---
                             if node_type_filter and node_type != node_type_filter:
-                                logger.debug(f"    -> Filtered UUID: {node_uuid[:8]} (Type Mismatch: {node_type} != {node_type_filter})")
+                                logger.debug(f"    -> Filtered (Explicit): UUID={node_uuid[:8]} (Type {node_type} != {node_type_filter})")
                                 continue # Skip node type mismatch
+
+                            # --- Filter/Bias 2: Query Type ---
+                            # If episodic, strongly prefer 'turn' nodes
+                            if query_type == 'episodic' and node_type != 'turn':
+                                 # Option 1: Skip non-turn nodes entirely if enough turns found?
+                                 # Option 2: Penalize score heavily?
+                                 # Let's skip for now if we haven't reached k results yet.
+                                 if len(results) < k:
+                                      logger.debug(f"    -> Filtered (Episodic Bias): UUID={node_uuid[:8]} (Type {node_type} != 'turn')")
+                                      continue
+                                 # If we already have k results, allow others but maybe log?
+                                 # logger.debug(f"    -> Allowing non-turn node {node_uuid[:8]} for episodic query (already have {k} results)")
+
+                            # If semantic, strongly prefer 'summary' or 'concept' nodes
+                            elif query_type == 'semantic' and node_type not in ['summary', 'concept']:
+                                 if len(results) < k:
+                                      logger.debug(f"    -> Filtered (Semantic Bias): UUID={node_uuid[:8]} (Type {node_type} not summary/concept)")
+                                      continue
+                                 # logger.debug(f"    -> Allowing non-summary/concept node {node_uuid[:8]} for semantic query (already have {k} results)")
 
                             # --- Passed Filters ---
                             results.append((node_uuid, dist))
@@ -2067,9 +2090,13 @@ class GraphMemoryClient:
                 # Only retrieve memory if it's not explicitly an image placeholder input
                 # (This check might be redundant if multimodal handles all image cases now)
                 if not user_input.strip().startswith("[Image:"):
-                    logger.info("Searching initial nodes...")
+                    # --- Classify Query Type ---
+                    query_type = self._classify_query_type(user_input) # Classify before search
+
+                    logger.info(f"Searching initial nodes (Query Type: {query_type})...")
                     max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
-                    initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes)
+                    # Pass query_type to search function
+                    initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
                     initial_uuids = [uid for uid, score in initial_nodes]
                     logger.info(f"Initial UUIDs: {initial_uuids}")
 

@@ -121,6 +121,12 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Modify `retrieve_memory_chain` final selection passes to check emotional distance.
     -   [x] Implement logic to adjust stored node emotion towards `current_mood` if distance exceeds threshold, using the factor.
     -   [ ] Testing: Verify node emotions are subtly adjusted during recall when mood differs significantly.
+-   [ ] **Episodic/Semantic Retrieval Bias:**
+    -   [x] Add `prompts/query_type_prompt.txt`.
+    -   [x] Implement `_classify_query_type` method in `GraphMemoryClient`.
+    -   [x] Modify `process_interaction` to call classifier before search.
+    -   [x] Modify `_search_similar_nodes` to accept `query_type` and bias search results towards relevant node types ('turn' for episodic, 'summary'/'concept' for semantic).
+    -   [ ] Testing: Verify query classification and search biasing work as expected.
 
 ## Phase 2: GUI (`gui_chat.py`)
 
