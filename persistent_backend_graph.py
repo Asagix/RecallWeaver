@@ -2756,6 +2756,102 @@ class GraphMemoryClient:
             logger.info(f"Short-term drive state updated (Decay & LLM applied): {self.drive_state['short_term']}")
             # Saving happens in the calling function (e.g., run_consolidation or _save_memory)
 
+    def _update_long_term_drives(self):
+        """
+        Updates long-term drive levels based on LLM analysis of the ASM or other
+        long-term memory indicators. Called less frequently than short-term updates.
+        """
+        drive_cfg = self.config.get('subconscious_drives', {})
+        if not drive_cfg.get('enabled', False): return
+        if not self.autobiographical_model:
+            logger.warning("Skipping long-term drive update: Autobiographical Self-Model is empty.")
+            return
+
+        logger.info("Attempting LLM analysis for long-term drive state update...")
+        try:
+            # 1. Format Context (Using ASM)
+            # Create a readable text summary from the structured ASM
+            asm_parts = []
+            if self.autobiographical_model.get("summary_statement"): asm_parts.append(f"Overall Summary: {self.autobiographical_model['summary_statement']}")
+            if self.autobiographical_model.get("core_traits"): asm_parts.append(f"Core Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+            if self.autobiographical_model.get("recurring_themes"): asm_parts.append(f"Recurring Themes: {', '.join(self.autobiographical_model['recurring_themes'])}")
+            if self.autobiographical_model.get("values_beliefs"): asm_parts.append(f"Values/Beliefs: {', '.join(self.autobiographical_model['values_beliefs'])}")
+            if self.autobiographical_model.get("significant_events"): asm_parts.append(f"Significant Events: {'; '.join(self.autobiographical_model['significant_events'])}")
+            asm_summary_text = "\n".join(asm_parts)
+
+            if not asm_summary_text.strip():
+                logger.warning("ASM exists but generated empty summary text for long-term drive analysis.")
+                return
+
+            # 2. Load Prompt
+            prompt_template = self._load_prompt("long_term_drive_analysis_prompt.txt")
+            if not prompt_template:
+                logger.error("Failed to load long_term_drive_analysis_prompt.txt. Skipping update.")
+                return
+
+            # 3. Call LLM
+            full_prompt = prompt_template.format(asm_summary_text=asm_summary_text)
+            logger.debug(f"Sending long-term drive analysis prompt:\n{full_prompt[:300]}...")
+            # Use low temperature for analytical task
+            llm_response_str = self._call_kobold_api(full_prompt, max_length=200, temperature=0.2)
+
+            # 4. Parse Response
+            if llm_response_str and not llm_response_str.startswith("Error:"):
+                try:
+                    match = re.search(r'(\{.*?\})', llm_response_str, re.DOTALL)
+                    if match:
+                        json_str = match.group(0)
+                        long_term_assessment = json.loads(json_str)
+                        logger.debug(f"Parsed long-term drive assessment from LLM: {long_term_assessment}")
+
+                        # 5. Adjust long_term drive_state
+                        adjustment_factor = drive_cfg.get('long_term_adjustment_factor', 0.05)
+                        changed = False
+
+                        for drive_name, assessment in long_term_assessment.items():
+                            if drive_name in self.drive_state["long_term"]:
+                                current_long_term_level = self.drive_state["long_term"][drive_name]
+                                adjustment = 0.0
+
+                                if assessment == "positive":
+                                    # Nudge towards positive (e.g., +1 max)
+                                    adjustment = (1.0 - current_long_term_level) * adjustment_factor
+                                    logger.debug(f"  Long-term '{drive_name}' assessed positive. Adjustment: {adjustment:.3f}")
+                                elif assessment == "negative":
+                                    # Nudge towards negative (e.g., -1 min)
+                                    adjustment = (-1.0 - current_long_term_level) * adjustment_factor
+                                    logger.debug(f"  Long-term '{drive_name}' assessed negative. Adjustment: {adjustment:.3f}")
+                                # else: neutral, no adjustment
+
+                                if abs(adjustment) > 1e-4:
+                                    new_level = current_long_term_level + adjustment
+                                    # Clamp long-term levels (e.g., between -1 and 1)
+                                    new_level = max(-1.0, min(1.0, new_level))
+                                    self.drive_state["long_term"][drive_name] = new_level
+                                    changed = True
+                            else:
+                                logger.warning(f"LLM returned assessment for unknown drive '{drive_name}'.")
+
+                        if changed:
+                            logger.info(f"Long-term drive state updated: {self.drive_state['long_term']}")
+                            # Save immediately after long-term update? Yes, seems appropriate.
+                            self._save_drive_state()
+                            self._save_memory() # Also save graph/etc. which includes drive state file saving
+
+                    else:
+                        logger.error(f"Could not extract JSON from long-term drive analysis response. Raw: '{llm_response_str}'")
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON from long-term drive analysis response: {e}. Raw: '{llm_response_str}'")
+                except Exception as e:
+                    logger.error(f"Error processing long-term drive analysis LLM response: {e}", exc_info=True)
+            else:
+                logger.error(f"LLM call failed or returned error for long-term drive analysis: {llm_response_str}")
+
+        except Exception as e:
+            logger.error(f"Unexpected error during long-term drive state update: {e}", exc_info=True)
+
+
     # *** ADDED: Wrapper methods for file operations ***
     def create_workspace_file(self, filename: str, content: str) -> bool:
         """Wrapper to create/overwrite a file in the workspace."""
