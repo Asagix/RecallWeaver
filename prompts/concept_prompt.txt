@@ -1,12 +1,12 @@
 <start_of_turn>user
-Analyze the following conversation excerpt. Identify the main **key concepts, topics, or specific named entities** (people, places, organizations, projects, technical terms) mentioned. List a maximum of 5-7 of the *most important* ones.
+Analyze the following conversation excerpt. Identify the main **key concepts, specific named entities (people, places, organizations, projects), and important technical terms** mentioned. List a maximum of 5-7 of the *most significant and distinct* ones. Avoid generic terms unless they are central to the discussion.
 
-**Output Format:** Respond ONLY with a comma-separated list of these key concepts/entities. Do not add explanation or introductory text.
+**Output Format:** Respond ONLY with a comma-separated list of these key concepts/entities, enclosed in double quotes. Example: "Project Phoenix", "Database Migration", "Alice Smith", "API Endpoint". Do not add explanation or introductory text.
 
 Conversation Excerpt:
 --- START ---
 {context_text}
 --- END ---
 
-Comma-separated list:<end_of_turn>
+Comma-separated list (quoted):<end_of_turn>
 <start_of_turn>model

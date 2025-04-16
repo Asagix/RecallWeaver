@@ -60,10 +60,10 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Add logic to parse LLM response and add nodes/edges.
     -   [x] Implement concept deduplication.
     -   [x] Implement pruning of summarized 'turn' nodes.
-    -   [ ] **Refine LLM prompts** for summarization, concept extraction.
+    -   [x] **Refine LLM prompts** for summarization, concept extraction, and relation extraction.
     -   [x] **Implement Hybrid Association Extraction (V1.1):**
         -   [x] Integrate NLP library (e.g., spaCy) to extract basic entities/dependency relations first. (spaCy loaded, basic structure in place)
-        -   [ ] Store these basic relations. (Not explicitly storing spaCy deps yet)
+        -   [x] Store basic spaCy dependency relations as `SPACY_REL` edges.
         -   [x] *Optionally* (if `features.enable_rich_associations` is true) call LLM with text + extracted info, asking for specific *additional* typed relations (e.g., `CAUSES`) from a core set (`IS_A`, `PART_OF`, `CAUSES`, `HAS_PROPERTY`, `RELATED_TO`). (LLM call implemented)
         -   [x] Implement **robust parsing** for LLM's structured (JSON) output for relationships. (Basic JSON list parsing implemented)
     -   [x] **Implement V1 Emotion Analysis:**

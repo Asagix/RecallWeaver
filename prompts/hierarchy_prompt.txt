@@ -2,9 +2,17 @@
 Consider the following concepts extracted from a conversation:
 {concept_list_str}
 
-Identify any clear hierarchical relationships (e.g., 'Concept A' is a specific type/instance of 'Concept B', or 'Part C' is a component of 'Whole D').
-If relationships exist, list them one per line using ONLY the format: '"CHILD_CONCEPT" is_a "PARENT_CONCEPT"' or '"PART_CONCEPT" is_part_of "WHOLE_CONCEPT"'. Use the exact quoted concept text.
-If no clear hierarchical relationships exist *among these specific concepts*, output the single word "NONE".
+Identify any clear hierarchical relationships *explicitly stated or strongly implied* in the likely context.
+- Use `is_a` for type/instance relationships (e.g., "poodle" is_a "dog").
+- Use `is_part_of` for component relationships (e.g., "wheel" is_part_of "bicycle").
+
+Output ONLY the identified relationships, one per line, using the exact format:
+`"CHILD_OR_PART_CONCEPT" is_a "PARENT_CONCEPT"`
+OR
+`"CHILD_OR_PART_CONCEPT" is_part_of "WHOLE_CONCEPT"`
+
+Use the exact quoted concept text from the list above.
+If no clear hierarchical relationships exist *among these specific concepts* based on the likely context, output the single word "NONE".
 
 Hierarchical relationships:<end_of_turn>
 <start_of_turn>model

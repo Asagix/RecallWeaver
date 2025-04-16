@@ -1,10 +1,10 @@
 <start_of_turn>user
-Analyze the following conversation excerpt. Generate a concise, factual summary in the third person, focusing on key events, decisions, stated facts, or important topics discussed. Omit conversational filler.
+Analyze the following conversation excerpt. Generate a concise, factual summary (2-4 sentences) in the third person. Focus *only* on key events, decisions, stated facts, or important topics discussed. Omit conversational filler, greetings, and pleasantries.
 
 Conversation Excerpt:
 --- START ---
 {context_text}
 --- END ---
 
-Concise Summary:<end_of_turn>
+Concise Summary (2-4 sentences, third person, factual):<end_of_turn>
 <start_of_turn>model

@@ -2361,7 +2361,70 @@ class GraphMemoryClient:
         return llm_extracted_concepts
 
     def _consolidate_extract_rich_relations(self, context_text: str, concept_node_map: dict, spacy_doc: object | None):
-        """Helper to extract typed relationships between concepts using LLM."""
+        """Helper to extract typed relationships between concepts using LLM and/or spaCy."""
+        logger.info("Attempting Relationship Extraction...")
+        current_time = time.time()
+        added_llm_edge_count = 0
+        added_spacy_edge_count = 0
+
+        # --- spaCy Relation Extraction (if enabled and model loaded) ---
+        if self.nlp and spacy_doc:
+            logger.info("Extracting relations using spaCy dependencies...")
+            # Invert concept_node_map for quick UUID lookup by text
+            uuid_lookup = {uuid: text for text, uuid in concept_node_map.items()}
+
+            for token in spacy_doc:
+                # Look for Subject-Verb-Object patterns involving known concepts
+                if token.dep_ in ("nsubj", "nsubjpass") and token.head.pos_ == "VERB":
+                    subj_text = token.text
+                    verb_text = token.head.lemma_ # Use lemma for verb
+                    obj_text = None
+                    # Find direct object or prepositional object or attribute
+                    for child in token.head.children:
+                        if child.dep_ in ("dobj", "pobj", "attr", "oprd"):
+                            # Find the noun chunk the object belongs to, map to concept
+                            obj_chunk = next((chunk for chunk in spacy_doc.noun_chunks if child in chunk), None)
+                            obj_text = obj_chunk.text if obj_chunk else child.text
+                            break # Take the first likely object
+
+                    if subj_text and obj_text:
+                        # Check if subject and object text match known concepts
+                        subj_uuid = concept_node_map.get(subj_text)
+                        obj_uuid = concept_node_map.get(obj_text)
+
+                        # If direct match fails, check if token is *part* of a known concept text
+                        if not subj_uuid:
+                             subj_uuid = next((uuid for txt, uuid in concept_node_map.items() if subj_text in txt), None)
+                        if not obj_uuid:
+                             obj_uuid = next((uuid for txt, uuid in concept_node_map.items() if obj_text in txt), None)
+
+
+                        if subj_uuid and obj_uuid and subj_uuid != obj_uuid:
+                            # Check if nodes are active
+                            if (self.graph.nodes[subj_uuid].get("status", "active") == "active" and
+                                    self.graph.nodes[obj_uuid].get("status", "active") == "active"):
+                                try:
+                                    # Add edge if it doesn't exist or update timestamp
+                                    edge_type = f"SPACY_{verb_text.upper()}" # e.g., SPACY_USE, SPACY_BE
+                                    if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != edge_type:
+                                        base_strength = 0.5 # Lower base strength for spaCy relations?
+                                        self.graph.add_edge(subj_uuid, obj_uuid, type=edge_type, base_strength=base_strength, last_traversed_ts=current_time)
+                                        logger.info(f"Added spaCy Edge: {subj_uuid[:8]} --[{edge_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')")
+                                        added_spacy_edge_count += 1
+                                    else:
+                                        self.graph.edges[subj_uuid, obj_uuid]['last_traversed_ts'] = current_time
+                                except Exception as e:
+                                    logger.error(f"Error adding spaCy edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
+            logger.info(f"Added {added_spacy_edge_count} new spaCy-derived relationship edges.")
+        elif self.nlp is None:
+             logger.debug("spaCy model not loaded, skipping spaCy relation extraction.")
+
+
+        # --- LLM Rich Relation Extraction (if enabled) ---
+        if not self.config.get('features', {}).get('enable_rich_associations', False):
+             logger.info("LLM Rich Relationship Extraction disabled by config.")
+             return # Skip LLM part if disabled
+
         logger.info("Attempting Rich Relationship Extraction (LLM)...")
         target_relations = ["CAUSES", "PART_OF", "HAS_PROPERTY", "RELATED_TO", "IS_A"]
         target_relations_str = ", ".join([f"'{r}'" for r in target_relations])
@@ -2447,23 +2510,27 @@ class GraphMemoryClient:
                                     logger.info(
                                         f"Added Edge: {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')"
                                     )
-                                    added_edge_count += 1
+                                    added_llm_edge_count += 1
                                 else:
+                                    # Update timestamp even if edge exists, but maybe don't overwrite type?
+                                    # For now, update timestamp regardless.
                                     self.graph.edges[subj_uuid, obj_uuid]["last_traversed_ts"] = current_time
                                     logger.debug(
-                                        f"Edge {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} already exists. Updated timestamp."
+                                        f"LLM Edge {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} already exists. Updated timestamp."
                                     )
                             except Exception as e:
-                                logger.error(f"Error adding typed edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
+                                logger.error(f"Error adding LLM typed edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
                         else:
                             logger.warning(f"Skipping relation '{rel}' because one or both nodes are not active.")
-                    else:
+                    elif subj_uuid and obj_uuid: # Nodes exist but one might be inactive
+                         logger.warning(f"Skipping LLM relation '{rel}' because one or both nodes are not active.")
+                    else: # One or both concepts not found in map
                         logger.warning(
-                            f"Could not find nodes in map for relation: Subject='{subj_text}' ({subj_uuid}), Object='{obj_text}' ({obj_uuid})"
+                            f"Could not find nodes in map for LLM relation: Subject='{subj_text}' ({subj_uuid}), Object='{obj_text}' ({obj_uuid})"
                         )
                 else:
-                    logger.warning(f"Skipping invalid relation object in list: {rel}")
-            logger.info(f"Added {added_edge_count} new typed relationship edges.")
+                    logger.warning(f"Skipping invalid LLM relation object in list: {rel}")
+            logger.info(f"Added {added_llm_edge_count} new LLM-derived typed relationship edges.")
 
     def _load_prompt(self, filename: str) -> str:
         """Loads a prompt template from the prompts directory."""
