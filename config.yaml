@@ -81,6 +81,9 @@ forgetting:
     saliency_factor: 0.2     # Higher saliency = less forgettable (Placeholder)
     emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
     connectivity_factor: 0.1 # Higher degree = less forgettable (Placeholder)
+    access_count_factor: 0.0 # Higher access count = less forgettable (Placeholder, add weight if desired)
+  # --- Saliency Protection ---
+  saliency_protection_threshold: 0.9 # Nodes with saliency >= this are never archived
 
 # --- GUI Keywords --- # Moved from bottom for better grouping
 modification_keywords:
@@ -123,3 +126,4 @@ saliency:
     default: 0.5
   emotion_influence_factor: 0.2 # How much default arousal boosts initial saliency
   activation_influence: 0.1 # How much saliency boosts activation spreading
+  guaranteed_saliency_threshold: 0.85 # Nodes above this saliency are always included in retrieval if reached

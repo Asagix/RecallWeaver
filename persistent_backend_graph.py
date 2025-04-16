@@ -768,12 +768,13 @@ class GraphMemoryClient:
         prop_factors = act_cfg.get('propagation_factors', {})
         # (Load specific factors...)
         prop_temporal_fwd = prop_factors.get('TEMPORAL_fwd', 1.0); prop_temporal_bwd = prop_factors.get('TEMPORAL_bwd', 0.8); prop_summary_fwd = prop_factors.get('SUMMARY_OF_fwd', 1.1); prop_summary_bwd = prop_factors.get('SUMMARY_OF_bwd', 0.4); prop_concept_fwd = prop_factors.get('MENTIONS_CONCEPT_fwd', 1.0); prop_concept_bwd = prop_factors.get('MENTIONS_CONCEPT_bwd', 0.9); prop_assoc = prop_factors.get('ASSOCIATIVE', 0.8); prop_hier_fwd = prop_factors.get('HIERARCHICAL_fwd', 1.1); prop_hier_bwd = prop_factors.get('HIERARCHICAL_bwd', 0.5); prop_unknown = prop_factors.get('UNKNOWN', 0.5)
+        guaranteed_saliency_threshold = act_cfg.get('guaranteed_saliency_threshold', 0.85) # NEW Threshold
 
         saliency_enabled = features_cfg.get('enable_saliency', False)
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
         forgetting_enabled = features_cfg.get('enable_forgetting', False)
 
-        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (Saliency Influence: {activation_influence:.2f}, Filter Archived: {forgetting_enabled})")
+        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (Saliency Influence: {activation_influence:.2f}, Guarantee Sal >= {guaranteed_saliency_threshold}, Filter Archived: {forgetting_enabled})")
         if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
 
         activation_levels = defaultdict(float)
@@ -876,13 +877,16 @@ class GraphMemoryClient:
             if not active_nodes: break
 
         # --- Final Selection & Update ---
-        relevant_nodes = []
+        relevant_nodes_dict = {} # Use dict to avoid duplicates easily: uuid -> node_info
         processed_uuids_for_access_count = set()
+        guaranteed_added_count = 0
 
+        # Pass 1: Select nodes above activation threshold
         for uuid, final_activation in activation_levels.items():
             if final_activation >= activation_threshold:
                 node_data = self.graph.nodes.get(uuid)
                 if node_data and node_data.get('status', 'active') == 'active':
+                    # Increment access count only once per retrieval
                     if uuid not in processed_uuids_for_access_count:
                         node_data['access_count'] = node_data.get('access_count', 0) + 1
                         processed_uuids_for_access_count.add(uuid)
@@ -890,12 +894,40 @@ class GraphMemoryClient:
 
                     node_info = node_data.copy()
                     node_info['final_activation'] = final_activation
-                    relevant_nodes.append(node_info)
+                    node_info['guaranteed_inclusion'] = False # Mark as normally included
+                    relevant_nodes_dict[uuid] = node_info
 
-        logger.info(f"Found {len(relevant_nodes)} active nodes above threshold ({activation_threshold}).")
-        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True) # Sort by activation, then timestamp
+        logger.info(f"Found {len(relevant_nodes_dict)} active nodes above activation threshold ({activation_threshold}).")
 
-        if relevant_nodes: logger.info(f"Final nodes: [{', '.join([n['uuid'][:8] + '({:.3f})'.format(n['final_activation']) for n in relevant_nodes])}]")
+        # Pass 2: Check for high-saliency nodes missed by activation threshold
+        for uuid, final_activation in activation_levels.items():
+            if uuid not in relevant_nodes_dict: # Only check nodes not already included
+                node_data = self.graph.nodes.get(uuid)
+                if node_data and node_data.get('status', 'active') == 'active':
+                    current_saliency = node_data.get('saliency_score', 0.0)
+                    if current_saliency >= guaranteed_saliency_threshold:
+                        logger.info(f"Guaranteed inclusion for node {uuid[:8]} (Sal: {current_saliency:.3f} >= {guaranteed_saliency_threshold}, Act: {final_activation:.3f} < {activation_threshold})")
+                        # Increment access count if not already done
+                        if uuid not in processed_uuids_for_access_count:
+                            node_data['access_count'] = node_data.get('access_count', 0) + 1
+                            processed_uuids_for_access_count.add(uuid)
+                            logger.debug(f"Incremented access count for guaranteed node {uuid[:8]} to {node_data['access_count']}")
+
+                        node_info = node_data.copy()
+                        # Store the actual activation, even if below threshold
+                        node_info['final_activation'] = final_activation
+                        node_info['guaranteed_inclusion'] = True # Mark as guaranteed
+                        relevant_nodes_dict[uuid] = node_info
+                        guaranteed_added_count += 1
+
+        if guaranteed_added_count > 0:
+            logger.info(f"Added {guaranteed_added_count} additional nodes due to high saliency guarantee.")
+
+        # Convert dict back to list and sort
+        relevant_nodes = list(relevant_nodes_dict.values())
+        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True) # Sort primarily by activation
+
+        if relevant_nodes: logger.info(f"Final nodes ({len(relevant_nodes)} total): [{', '.join([n['uuid'][:8] + '({:.3f}{})'.format(n['final_activation'], '*' if n['guaranteed_inclusion'] else '') for n in relevant_nodes])}]")
         else: logger.info("No relevant nodes found above threshold.")
 
         # --- Corrected Debug Logging ---
@@ -952,8 +984,9 @@ class GraphMemoryClient:
         min_age_hr = forget_cfg.get('candidate_min_age_hours', 24)
         min_activation_threshold = forget_cfg.get('candidate_min_activation', 0.05) # Renamed for clarity
         protected_types = forget_cfg.get('protected_node_types', [])
+        saliency_protection_threshold = forget_cfg.get('saliency_protection_threshold', 0.9) # NEW Threshold
         logger.debug(
-            f"Forgetting Params: Threshold={score_threshold}, MinAgeHr={min_age_hr}, MinAct={min_activation_threshold}, Protected={protected_types}, Weights={weights}")
+            f"Forgetting Params: Threshold={score_threshold}, MinAgeHr={min_age_hr}, MinAct={min_activation_threshold}, ProtectedTypes={protected_types}, ProtectSal>={saliency_protection_threshold}, Weights={weights}")
 
         # 2. Identify Candidate Nodes:
         #    - status == 'active'
@@ -975,7 +1008,12 @@ class GraphMemoryClient:
             if data.get('node_type') in protected_types:
                 # logger.debug(f"  Skip {uuid[:8]}: Protected type ({data.get('node_type')})")
                 continue
-            # Filter 3: Age must be sufficient
+            # Filter 3: Saliency must be below protection threshold
+            current_saliency = data.get('saliency_score', 0.0)
+            if current_saliency >= saliency_protection_threshold:
+                logger.debug(f"  Skip {uuid[:8]}: Protected by high saliency ({current_saliency:.3f} >= {saliency_protection_threshold})")
+                continue
+            # Filter 4: Age must be sufficient
             last_accessed = data.get('last_accessed_ts', 0)
             age_sec = current_time - last_accessed
             if age_sec < min_age_sec:
