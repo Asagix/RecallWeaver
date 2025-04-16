@@ -14,11 +14,11 @@ Analyze the following conversation context and the extracted key concepts. Ident
 --- END ---
 
 **Output Format:** Respond ONLY with a valid JSON list containing objects. Each object represents one identified relationship and MUST have keys "subject", "relation", and "object".
-- The "subject" and "object" values MUST be exact strings from the Concepts list above.
-- The "relation" value MUST be one of the Target Relationship Types.
+- **CRITICAL:** Both the "subject" and "object" values MUST be exact strings taken *only* from the Concepts list provided above. Do not use any other terms.
+- The "relation" value MUST be one of the Target Relationship Types provided above.
 - Only include relationships clearly supported by the Conversation Context.
-- If no target relationships are found between the provided concepts based on the context, output an empty JSON list `[]`.
-- Do NOT invent relationships or use concepts not in the list.
+- If no target relationships are found *between the provided concepts* based on the context, output an empty JSON list `[]`.
+- Do NOT invent relationships.
 
 **Example Output (for different concepts/context):**
 ```json
