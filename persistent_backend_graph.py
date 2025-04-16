@@ -2534,14 +2534,19 @@ class GraphMemoryClient:
             else: self.index = faiss.IndexFlatL2(self.embedding_dim); logger.debug("FAISS index initialized.")
             logger.info("In-memory structures cleared.")
             files_to_delete = [self.graph_file, self.index_file, self.embeddings_file, self.mapping_file]
+            files_to_delete.append(self.asm_file) # Also delete ASM file
+            files_to_delete.append(self.drives_file) # Also delete drives file
             for file_path in files_to_delete:
                 if os.path.exists(file_path):
                     try: os.remove(file_path); logger.info(f"Deleted: {file_path}")
                     except OSError as e: logger.error(f"Error deleting {file_path}: {e}")
                 else: logger.debug(f"Not found, skip delete: {file_path}")
+            # Re-initialize drive state to defaults after deleting file
+            self._initialize_drive_state()
             logger.info("--- MEMORY RESET COMPLETE ---"); return True
         except Exception as e:
             logger.error(f"Error during memory reset: {e}", exc_info=True)
+            # Ensure drive state is also reset in case of error
             self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); self._initialize_drive_state(); logger.warning("Reset failed, re-initialized empty state.")
             return False
 
