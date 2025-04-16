@@ -1,0 +1,28 @@
+<start_of_turn>user
+Analyze the following conversation context and the extracted key concepts. Identify any sequences of cause-and-effect relationships (causal chains) *explicitly stated or strongly implied* in the context involving these concepts.
+
+**Concepts (Use ONLY these exact strings):**
+{concept_list_str}
+
+**Conversation Context:**
+--- START ---
+{context_text}
+--- END ---
+
+**Output Format:** Respond ONLY with a valid JSON list of lists. Each inner list represents a single causal chain, ordered from cause to effect (e.g., `[["Concept A", "Concept B", "Concept C"]]` means A causes B, which causes C).
+- Use the exact concept strings from the list provided above.
+- Only include concepts from the list in the chains.
+- Only include chains with 2 or more concepts.
+- If no causal chains are found, output an empty JSON list `[]`.
+- Do NOT invent relationships or use concepts not in the list.
+
+**Example Output (for different concepts/context):**
+```json
+[
+  ["High Server Load", "Slow Response Time", "User Complaints"],
+  ["Rain", "Wet Ground"]
+]
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

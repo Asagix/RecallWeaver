@@ -3190,6 +3190,98 @@ class GraphMemoryClient:
         else:
             logger.info("LLM reported no direct hierarchical relationships.")
 
+    def _consolidate_extract_causal_chains(self, context_text: str, concept_node_map: dict):
+        """Helper to extract causal chains (A causes B causes C) via LLM."""
+        if not self.config.get('consolidation', {}).get('enable_causal_chains', False):
+            logger.info("Causal chain extraction disabled by config.")
+            return 0 # Return 0 added edges
+
+        logger.info("Attempting Causal Chain Extraction (LLM)...")
+        concept_list_str = "\n".join([f"- \"{c}\"" for c in concept_node_map.keys()])
+        prompt_template = self._load_prompt("causal_chain_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load causal chain prompt template.")
+            return 0
+
+        causal_chain_prompt = prompt_template.format(
+            concept_list_str=concept_list_str,
+            context_text=context_text
+        )
+
+        logger.debug(f"Sending Causal Chain prompt:\n{causal_chain_prompt}")
+        llm_response_str = self._call_kobold_api(causal_chain_prompt, max_length=300, temperature=0.15)
+
+        extracted_chains = []
+        if llm_response_str:
+            try:
+                logger.debug(f"Raw Causal Chain response: ```{llm_response_str}```")
+                # Extract JSON list
+                match = re.search(r'(\[.*?\])', llm_response_str, re.DOTALL)
+                if match:
+                    json_str = match.group(1)
+                    parsed_list = json.loads(json_str)
+                    if isinstance(parsed_list, list):
+                        # Validate inner lists
+                        valid_chains = []
+                        for chain in parsed_list:
+                            if isinstance(chain, list) and len(chain) >= 2 and all(isinstance(item, str) for item in chain):
+                                # Check if all concepts in the chain are known
+                                if all(item in concept_node_map for item in chain):
+                                    valid_chains.append(chain)
+                                else:
+                                    logger.warning(f"Skipping chain with unknown concepts: {chain}")
+                            else:
+                                logger.warning(f"Skipping invalid chain format: {chain}")
+                        extracted_chains = valid_chains
+                        logger.info(f"Successfully parsed {len(extracted_chains)} valid causal chains from LLM.")
+                    else:
+                        logger.warning(f"LLM response was valid JSON but not a list. Raw: {llm_response_str}")
+                else:
+                    logger.warning(f"Could not extract valid JSON list '[]' from causal chain response. Raw: '{llm_response_str}'")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response for causal chains: {e}. Raw: '{llm_response_str}'")
+            except Exception as e:
+                logger.error(f"Unexpected error processing causal chains response: {e}", exc_info=True)
+
+        added_edge_count = 0
+        if extracted_chains:
+            current_time = time.time()
+            for chain in extracted_chains:
+                # Add CAUSES edges between consecutive elements in the chain
+                for i in range(len(chain) - 1):
+                    cause_text = chain[i]
+                    effect_text = chain[i+1]
+                    cause_uuid = concept_node_map.get(cause_text)
+                    effect_uuid = concept_node_map.get(effect_text)
+
+                    # Should always have UUIDs due to validation above, but check anyway
+                    if cause_uuid and effect_uuid and cause_uuid in self.graph and effect_uuid in self.graph:
+                        try:
+                            # Add edge if it doesn't exist, or update timestamp if it does
+                            edge_type = "CAUSES"
+                            if not self.graph.has_edge(cause_uuid, effect_uuid) or self.graph.edges[cause_uuid, effect_uuid].get("type") != edge_type:
+                                base_strength = 0.75 # Slightly higher strength for causal links?
+                                self.graph.add_edge(
+                                    cause_uuid, effect_uuid,
+                                    type=edge_type,
+                                    base_strength=base_strength,
+                                    last_traversed_ts=current_time
+                                )
+                                logger.info(f"Added Causal Edge: {cause_uuid[:8]} --[{edge_type}]--> {effect_uuid[:8]} ('{cause_text}' -> '{effect_text}')")
+                                added_edge_count += 1
+                            else:
+                                self.graph.edges[cause_uuid, effect_uuid]["last_traversed_ts"] = current_time
+                                logger.debug(f"Causal edge {cause_uuid[:8]}->{effect_uuid[:8]} exists. Updated timestamp.")
+                        except Exception as e:
+                            logger.error(f"Error adding causal edge {cause_uuid[:8]} -> {effect_uuid[:8]}: {e}")
+                    else:
+                        # This shouldn't happen if validation worked
+                        logger.error(f"Could not find nodes for validated causal link: '{cause_text}' -> '{effect_text}'")
+
+            logger.info(f"Added {added_edge_count} new CAUSES edges from causal chains.")
+        return added_edge_count
+
+
     def _generate_autobiographical_model(self):
         """Analyzes key memories and updates the ASM via LLM."""
         logger.info("--- Generating Autobiographical Self-Model (ASM) ---")
@@ -3513,9 +3605,13 @@ class GraphMemoryClient:
                     # Fallback to LLM-only methods if spaCy fails
                     self._consolidate_extract_v1_associative(concept_node_map)
                     self._consolidate_extract_hierarchy(concept_node_map)
+                    # Attempt causal chain extraction even if spaCy failed
+                    self._consolidate_extract_causal_chains(context_text, concept_node_map)
                 else:
                     # If spaCy succeeded, proceed with rich relation extraction
                     self._consolidate_extract_rich_relations(context_text, concept_node_map, spacy_doc)
+                    # Also attempt causal chain extraction if spaCy was used
+                    self._consolidate_extract_causal_chains(context_text, concept_node_map)
 
             else:  # Rich associations disabled or spaCy unavailable/failed earlier
                 if not self.nlp and rich_assoc_enabled:
@@ -3524,6 +3620,8 @@ class GraphMemoryClient:
                 logger.info("Running V1 Associative and Hierarchy extraction (LLM only).")
                 self._consolidate_extract_v1_associative(concept_node_map)
                 self._consolidate_extract_hierarchy(concept_node_map)
+                # Attempt causal chain extraction even if rich associations are off
+                self._consolidate_extract_causal_chains(context_text, concept_node_map)
         else:
             logger.info("Skipping relation extraction as no concepts were identified.")
 
