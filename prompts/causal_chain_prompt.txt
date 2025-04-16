@@ -10,11 +10,10 @@ Analyze the following conversation context and the extracted key concepts. Ident
 --- END ---
 
 **Output Format:** Respond ONLY with a valid JSON list of lists. Each inner list represents a single causal chain, ordered from cause to effect (e.g., `[["Concept A", "Concept B", "Concept C"]]` means A causes B, which causes C).
-- Use the exact concept strings from the list provided above.
-- Only include concepts from the list in the chains.
+- **CRITICAL:** Use **ONLY** the exact concept strings from the **Concepts** list provided above. Do NOT include any other terms, concepts, or variations.
 - Only include chains with 2 or more concepts.
-- If no causal chains are found, output an empty JSON list `[]`.
-- Do NOT invent relationships or use concepts not in the list.
+- If no causal chains involving ONLY the provided concepts are found, output an empty JSON list `[]`.
+- Do NOT invent relationships.
 
 **Example Output (for different concepts/context):**
 ```json

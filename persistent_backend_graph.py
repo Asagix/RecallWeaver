@@ -3266,12 +3266,14 @@ class GraphMemoryClient:
                         # Validate inner lists
                         valid_chains = []
                         for chain in parsed_list:
+                            # Validate format: list of strings, length >= 2
                             if isinstance(chain, list) and len(chain) >= 2 and all(isinstance(item, str) for item in chain):
-                                # Check if all concepts in the chain are known
+                                # CRITICAL VALIDATION: Check if ALL concepts in the chain exist in the provided map
                                 if all(item in concept_node_map for item in chain):
                                     valid_chains.append(chain)
                                 else:
-                                    logger.warning(f"Skipping chain with unknown concepts: {chain}")
+                                    unknown_concepts = [item for item in chain if item not in concept_node_map]
+                                    logger.warning(f"Skipping chain with unknown/unprovided concepts: {chain} (Unknown: {unknown_concepts})")
                             else:
                                 logger.warning(f"Skipping invalid chain format: {chain}")
                         extracted_chains = valid_chains
