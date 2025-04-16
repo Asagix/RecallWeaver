@@ -83,12 +83,12 @@ This document tracks the implementation progress and outlines future enhancement
     * [x] **Update `config.yaml`:** Define `forgetting` section with enable flag, trigger, thresholds, weights, candidate/protected types. Define `saliency_factor` and `emotion_resistance_factor` weights. (Config already updated)
     * [ ] **Testing (Forgetting):** Test candidate filtering, score calculation, archiving logic, and retrieval exclusion. Verify tuning knobs work.
     * [x] **(V2 Placeholder):** Define `purge_archived_nodes()` stub method.
--   [ ] **Action/Tool Handling (via Focused Intent Analysis):**
+-   [x] **Action/Tool Handling (via Focused Intent Analysis):**
     -   [x] Backend: Basic structure for `analyze_action_request` and `execute_action` exists.
     -   [x] Backend: Basic file/calendar wrapper methods exist.
-    -   [ ] Backend: Refine LLM prompt for `analyze_action_request`.
-    -   [ ] Backend: Implement robust JSON parsing & argument validation for `analyze_action_request`.
-    -   [ ] Backend: Enhance error handling within `execute_action` and file/calendar wrappers.
+    -   [x] Backend: Refine LLM prompt for `analyze_action_request`.
+    -   [x] Backend: Implement robust JSON parsing & argument validation for `analyze_action_request`.
+    -   [x] Backend: Enhance error handling within `execute_action` and file/calendar wrappers.
     -   [ ] GUI: Integrate action analysis call into `Worker.add_input`.
     -   [ ] GUI: Implement full logic in `Worker` to handle `clarify` responses and queue/execute specific action tasks.
     -   [ ] GUI: Implement UI elements/flow for clarification requests and potential confirmations.

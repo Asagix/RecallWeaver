@@ -2296,7 +2296,9 @@ class GraphMemoryClient:
 
         # --- Final Logging and Return ---
         log_level = logging.INFO if success else logging.ERROR
-        logger.log(log_level, f"Action '{action}' execution result: Success={success}, Msg='{message[:100]}...'")
+        # Log the full message if it's short, otherwise truncate
+        log_message_detail = message if len(message) < 150 else message[:150] + '...'
+        logger.log(log_level, f"Action '{action}' execution result: Success={success}, Suffix='{action_suffix}', Msg='{log_message_detail}'")
         return success, message, action_suffix
 
     def _consolidate_summarize(self, context_text: str, nodes_data: list, active_nodes_to_process: list) -> tuple[str | None, bool]:
