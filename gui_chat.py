@@ -125,9 +125,10 @@ class Worker(QThread):
             self.forgetting_trigger_count = int(forgetting_cfg.get('trigger_interaction_count', 0))
             gui_logger.info(f"Worker({self.personality}) Forgetting trigger count: {self.forgetting_trigger_count}")
 
-            # Consolidation trigger based on interaction count is removed as it's not in config
-            self.consolidation_trigger_count = 0 # Set to 0 explicitly
-            gui_logger.info(f"Worker({self.personality}) Consolidation trigger count (interaction-based): Disabled")
+            # Load consolidation trigger count
+            consolidation_cfg = config.get('consolidation', {})
+            self.consolidation_trigger_count = int(consolidation_cfg.get('trigger_interaction_count', 0)) # Default 0 (disabled)
+            gui_logger.info(f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
 
         except Exception as e:
             gui_logger.error(f"Error loading config for worker: {e}. Using fallbacks.", exc_info=True)
