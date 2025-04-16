@@ -2604,8 +2604,8 @@ class GraphMemoryClient:
                                     logger.debug(
                                         f"LLM Edge {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} already exists. Updated timestamp."
                                     )
-                            except Exception as e:
-                                logger.error(f"Error adding LLM typed edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
+                        except Exception as e:
+                            logger.error(f"Error adding LLM typed edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
                         # else: logger.warning(f"Skipping LLM relation '{rel}' because one or both nodes are not active.") # No longer needed
                     else: # One or both concepts not found in map or graph
                         logger.warning(
