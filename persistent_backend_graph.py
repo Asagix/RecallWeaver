@@ -1,5 +1,10 @@
 # persistent_backend_graph.py
+import math
 import os
+import subprocess
+import sys
+
+import spacy
 import json
 import logging
 import time
@@ -58,34 +63,105 @@ class GraphMemoryClient:
 
         # API URLs
         self.kobold_api_url = self.config.get('kobold_api_url', "http://localhost:5001/api/v1/generate")
-        base_kobold_url = self.kobold_api_url.rsplit('/api/', 1)[0]
-        self.kobold_chat_api_url = self.config.get('kobold_chat_api_url', f"{base_kobold_url}/v1/chat/completions")
+        base_kobold_url = self.kobold_api_url.rsplit('/api/', 1)[0] if '/api/' in self.kobold_api_url else self.kobold_api_url
+        self.kobold_chat_api_url = self.config.get('kobold_chat_api_url', f"{base_kobold_url}/v1/chat/completions") # Use updated logic
         logger.info(f"Using Kobold Generate API URL: {self.kobold_api_url}")
         logger.info(f"Using Kobold Chat Completions API URL: {self.kobold_chat_api_url}")
 
         # Initialize attributes
-        self.graph = nx.DiGraph(); self.index = None; self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.tokenizer = None
+        self.graph = nx.DiGraph()
+        self.index = None
+        self.embeddings = {}
+        self.faiss_id_to_uuid = {}
+        self.uuid_to_faiss_id = {}
+        self.last_added_node_uuid = None
+        self.tokenizer = None
         self.embedder = None # Initialize embedder attribute explicitly
         self.embedding_dim = 0 # Initialize embedding_dim
+        self.nlp = None # <<< Initialize spaCy model attribute
 
         os.makedirs(self.data_dir, exist_ok=True)
-        embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2'); tokenizer_name = self.config.get('tokenizer_name', 'google/gemma-7b-it')
+        embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
+        tokenizer_name = self.config.get('tokenizer_name', 'google/gemma-7b-it')
+        # Use a default spacy model name if not specified in config
+        spacy_model_name = self.config.get('spacy_model_name', 'en_core_web_sm') # Get model name from config (optional)
+
+        # --- Load spaCy Model ---
+        # Check feature flag before attempting to load
+        features_cfg = self.config.get('features', {})
+        rich_assoc_enabled = features_cfg.get('enable_rich_associations', False)
+        if rich_assoc_enabled: # Only load if feature is intended to be used
+            try:
+                logger.info(f"Checking/Loading spaCy model: {spacy_model_name}")
+
+                # Check if model is installed
+                if not spacy.util.is_package(spacy_model_name):
+                    logger.warning(f"spaCy model '{spacy_model_name}' not found. Attempting download...")
+                    # Construct the command using the current Python executable
+                    command = [sys.executable, "-m", "spacy", "download", spacy_model_name]
+                    try:
+                        # Run the command
+                        result = subprocess.run(command, check=True, capture_output=True, text=True)
+                        logger.info(f"Successfully downloaded spaCy model '{spacy_model_name}'.\nOutput:\n{result.stdout}")
+                        # Mark nlp as potentially loadable, not setting to None yet
+                        self.nlp = True # Use True as a temporary flag indicating download attempt/success
+                    except subprocess.CalledProcessError as e:
+                        logger.error(f"Failed to download spaCy model '{spacy_model_name}'. "
+                                     f"Return code: {e.returncode}\nError Output:\n{e.stderr}\nStdout:\n{e.stdout}")
+                        logger.error(f"Please try installing it manually: `python -m spacy download {spacy_model_name}`")
+                        self.nlp = False # Set to False to indicate download failure
+                    except FileNotFoundError:
+                         logger.error(f"Could not run spacy download command. Is '{sys.executable}' correct and spacy installed?")
+                         self.nlp = False
+                    except Exception as download_e:
+                         logger.error(f"An unexpected error occurred during spacy model download: {download_e}", exc_info=True)
+                         self.nlp = False
+                else:
+                    logger.info(f"spaCy model '{spacy_model_name}' already installed.")
+                    self.nlp = True # Mark as potentially loadable
+
+                # Attempt to load the model only if download didn't fail or was skipped
+                if self.nlp is True: # Check flag
+                    try:
+                        self.nlp = spacy.load(spacy_model_name)
+                        logger.info(f"spaCy model '{spacy_model_name}' loaded successfully.")
+                    except OSError as e:
+                        logger.error(f"Could not load spaCy model '{spacy_model_name}' even after download check/attempt. {e}")
+                        logger.error(f"Make sure it's installed correctly (`python -m spacy download {spacy_model_name}`). "
+                                     "Rich association features will be disabled.")
+                        self.nlp = None # Ensure it's None if loading fails
+                    except Exception as e: # Catch other loading errors
+                         logger.error(f"An unexpected error occurred loading the spaCy model '{spacy_model_name}': {e}", exc_info=True)
+                         self.nlp = None
+                else:
+                     # If self.nlp is False (download failed), set it to None
+                     logger.warning("Skipping spaCy model load due to download failure.")
+                     self.nlp = None
+
+            except ImportError:
+                 logger.error("spaCy library not found. Please install it (`pip install spacy`). Rich association features will be disabled.")
+                 self.nlp = None
+            except Exception as e:
+                 logger.error(f"An unexpected error occurred during spaCy setup: {e}", exc_info=True)
+                 self.nlp = None
+        else:
+             logger.info("Rich association extraction feature disabled. Skipping spaCy model load.")
+             self.nlp = None
+
 
         # Load Embedder
         try:
              logger.info(f"Loading embed model: {embedding_model_name}")
-             # --- Assign to self.embedder ---
              self.embedder = SentenceTransformer(embedding_model_name, trust_remote_code=True)
              self.embedding_dim = self.embedder.get_sentence_embedding_dimension()
              logger.info(f"Embed model loaded. Dim: {self.embedding_dim}")
-             # --- DEBUG Check right after assignment ---
              logger.debug(f"INIT Check 1: Has embedder? {hasattr(self, 'embedder')}, Type: {type(self.embedder)}, Dim: {self.embedding_dim}")
         except Exception as e:
              logger.error(f"Failed loading embed model: {e}", exc_info=True)
-             # Ensure embedder is None if loading fails
              self.embedder = None
              self.embedding_dim = 0
-             raise # Re-raise exception to prevent client initialization? Or handle more gracefully?
+             # Consider if this should be a fatal error preventing initialization
+             # raise # Or handle more gracefully
 
         # Load Tokenizer
         try:
@@ -95,17 +171,24 @@ class GraphMemoryClient:
         except Exception as e:
              logger.error(f"Failed loading tokenizer '{tokenizer_name}': {e}", exc_info=True)
              self.tokenizer = None # Ensure tokenizer is None if loading fails
-             # Decide if this is fatal - maybe raise? For now, allow continuation.
-             # raise
+             # Decide if this is fatal
 
         self._load_memory() # Loads data from self.data_dir
 
-        # Set last added node UUID (logic remains the same)
-        if self.graph.number_of_nodes() > 0:
-            # ... (existing logic to find last node) ...
-             pass
+        # Set last added node UUID
+        if not self.last_added_node_uuid and self.graph.number_of_nodes() > 0:
+             try:
+                  # Find the node with the latest timestamp among active nodes
+                  latest_node = self._find_latest_node_uuid()
+                  if latest_node:
+                       self.last_added_node_uuid = latest_node
+                       logger.info(f"Set last_added_node_uuid from loaded graph to: {self.last_added_node_uuid[:8]}")
+                  else:
+                      logger.warning("Could not determine last added node from loaded graph.")
+             except Exception as e:
+                  logger.error(f"Error finding latest node during init: {e}", exc_info=True)
 
-        # --- FINAL DEBUG check at end of __init__ ---
+
         logger.debug(f"INIT END: Has embedder? {hasattr(self, 'embedder')}")
         if hasattr(self, 'embedder') and self.embedder:
              logger.debug(f"INIT END: Embedder type: {type(self.embedder)}, Dim: {getattr(self, 'embedding_dim', 'Not Set')}")
@@ -113,6 +196,7 @@ class GraphMemoryClient:
              logger.error("INIT END: EMBEDDER ATTRIBUTE IS MISSING OR NONE!")
 
         logger.info(f"GraphMemoryClient initialized for personality '{self.personality}'.")
+
 
 
     # --- Config Loading Method ---
@@ -214,23 +298,92 @@ class GraphMemoryClient:
         else: logger.info("Memory loading complete.")
 
     def _rebuild_index_from_graph_embeddings(self):
-        """Rebuilds FAISS index based on current graph nodes/embeddings."""
-        # (Keep implementation from previous version)
-        logger.info(f"Rebuilding FAISS index from {self.graph.number_of_nodes()} graph nodes...")
-        if self.graph.number_of_nodes() == 0: logger.warning("Graph empty, init empty index."); self.index = faiss.IndexFlatL2(self.embedding_dim); self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; return
+        """Rebuilds FAISS index based on current graph nodes/embeddings, including ONLY 'active' nodes."""
+        logger.info(f"Rebuilding FAISS index from {self.graph.number_of_nodes()} graph nodes (filtering for 'active')...")
+        forgetting_enabled = self.config.get('features', {}).get('enable_forgetting', False)
+
+        if self.graph.number_of_nodes() == 0:
+            logger.warning("Graph empty, initializing empty index.")
+            self.index = faiss.IndexFlatL2(self.embedding_dim)
+            self.faiss_id_to_uuid = {}
+            self.uuid_to_faiss_id = {}
+            return
+
         try:
-            new_index = faiss.IndexFlatL2(self.embedding_dim); new_map = {}; new_inv_map = {}; emb_list = []; current_id = 0
-            nodes_in_graph = list(self.graph.nodes())
-            for node_uuid in nodes_in_graph:
+            # Use the current embedding dimension
+            if not hasattr(self, 'embedding_dim') or self.embedding_dim <= 0:
+                 logger.error("Cannot rebuild index: embedding_dim not set or invalid.")
+                 # Should we try to determine it again? For now, error out.
+                 raise ValueError("Embedding dimension unknown during index rebuild.")
+
+            new_index = faiss.IndexIDMap(faiss.IndexFlatL2(self.embedding_dim)) # Use IndexIDMap for easier removal later? No, stick to basic for now.
+            new_index = faiss.IndexFlatL2(self.embedding_dim)
+            new_map = {}
+            new_inv_map = {}
+            emb_list = []
+            uuid_list_for_index = [] # Keep track of UUIDs added to emb_list
+
+            nodes_in_graph = list(self.graph.nodes(data=True)) # Get data as well
+
+            active_node_count = 0
+            for node_uuid, node_data in nodes_in_graph:
+                # --- Filter by Status ---
+                if node_data.get('status', 'active') != 'active':
+                    # logger.debug(f"Skipping node {node_uuid[:8]} in rebuild (status: {node_data.get('status')}).")
+                    continue
+
+                active_node_count += 1
                 embedding = self.embeddings.get(node_uuid)
-                if embedding is not None and embedding.shape == (self.embedding_dim,):
-                    emb_list.append(embedding.astype('float32')); new_map[current_id] = node_uuid; new_inv_map[node_uuid] = current_id; current_id += 1
-                else: logger.warning(f"Skipping node {node_uuid[:8]} in rebuild (bad embed).")
-            if emb_list: new_index.add(np.vstack(emb_list)); logger.info(f"Added {new_index.ntotal} vectors to new index.")
-            else: logger.warning("No valid embeddings for rebuild.")
-            self.index = new_index; self.faiss_id_to_uuid = new_map; self.uuid_to_faiss_id = new_inv_map
-            logger.info("FAISS index rebuild based on graph complete.")
-        except Exception as e: logger.error(f"FAISS rebuild error: {e}", exc_info=True); self.index = faiss.IndexFlatL2(self.embedding_dim); self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}
+
+                # --- Filter by Valid Embedding ---
+                if embedding is not None and isinstance(embedding, np.ndarray) and embedding.shape == (self.embedding_dim,):
+                    emb_list.append(embedding.astype('float32'))
+                    uuid_list_for_index.append(node_uuid) # Track UUID associated with this embedding
+                else:
+                    logger.warning(f"Skipping active node {node_uuid[:8]} in rebuild (invalid/missing embedding).")
+
+            # Add embeddings to the new index
+            if emb_list:
+                embeddings_np = np.vstack(emb_list)
+                new_index.add(embeddings_np)
+                logger.info(f"Added {new_index.ntotal} vectors (from {active_node_count} active nodes) to new FAISS index.")
+
+                # Rebuild the mappings ONLY for the nodes added to the index
+                current_faiss_id = 0
+                for node_uuid in uuid_list_for_index:
+                     new_map[current_faiss_id] = node_uuid
+                     new_inv_map[node_uuid] = current_faiss_id
+                     current_faiss_id += 1
+
+                if new_index.ntotal != len(uuid_list_for_index):
+                     logger.error(f"CRITICAL MISMATCH during rebuild: Index total ({new_index.ntotal}) != Added UUID count ({len(uuid_list_for_index)})")
+                     # Fallback to empty?
+                     new_index = faiss.IndexFlatL2(self.embedding_dim)
+                     new_map = {}
+                     new_inv_map = {}
+
+            else:
+                logger.warning("No valid embeddings found for active nodes during rebuild. Index will be empty.")
+                # new_index is already an empty IndexFlatL2
+
+            # Update the client's attributes
+            self.index = new_index
+            self.faiss_id_to_uuid = new_map
+            self.uuid_to_faiss_id = new_inv_map
+
+            logger.info(f"FAISS index rebuild complete. Index Size: {self.index.ntotal}. Map Size: {len(self.faiss_id_to_uuid)}.")
+
+        except Exception as e:
+            logger.error(f"Error during FAISS index rebuild: {e}", exc_info=True)
+            # Fallback to an empty index on error
+            logger.warning("Falling back to empty FAISS index due to rebuild error.")
+            if hasattr(self, 'embedding_dim') and self.embedding_dim > 0:
+                self.index = faiss.IndexFlatL2(self.embedding_dim)
+            else:
+                 self.index = None # Cannot create if dim unknown
+                 logger.error("Cannot fallback to empty index: embedding_dim unknown.")
+            self.faiss_id_to_uuid = {}
+            self.uuid_to_faiss_id = {}
 
     def _save_memory(self):
         """Saves all memory components to disk."""
@@ -266,8 +419,7 @@ class GraphMemoryClient:
     # (Keep add_memory_node, _rollback_add, delete_memory_entry, _find_latest_node_uuid, edit_memory_entry, forget_topic)
     # ... (methods unchanged) ...
     def add_memory_node(self, text: str, speaker: str, node_type: str = 'turn', timestamp: str = None, base_strength: float = 0.5) -> str | None:
-        """Adds a new memory node to the graph and index."""
-        # --- DEBUG Check at start of function ---
+        """Adds a new memory node with enhanced attributes to the graph and index."""
         logger.debug(f"ADD_MEMORY_NODE START: Has embedder? {hasattr(self, 'embedder')}")
 
         if not text: logger.warning("Skip adding empty node."); return None
@@ -277,25 +429,58 @@ class GraphMemoryClient:
         node_uuid = str(uuid.uuid4())
         timestamp = timestamp or datetime.now(timezone.utc).isoformat()
 
+        # --- Get config values safely ---
+        features_cfg = self.config.get('features', {})
+        saliency_enabled = features_cfg.get('enable_saliency', False)
+        emotion_cfg = self.config.get('emotion_analysis', {})
+        default_valence = emotion_cfg.get('default_valence', 0.0)
+        default_arousal = emotion_cfg.get('default_arousal', 0.1)
+        saliency_cfg = self.config.get('saliency', {})
+        initial_scores = saliency_cfg.get('initial_scores', {})
+        emotion_influence = saliency_cfg.get('emotion_influence_factor', 0.0)
+
+
+        # --- Calculate Initial Saliency ---
+        initial_saliency = 0.0 # Default if disabled or error
+        if saliency_enabled:
+            base_saliency = initial_scores.get(node_type, initial_scores.get('default', 0.5))
+            # Influence initial saliency by default arousal
+            initial_saliency = base_saliency + (default_arousal * emotion_influence)
+            initial_saliency = max(0.0, min(1.0, initial_saliency)) # Clamp between 0 and 1
+            logger.debug(f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} (Base: {base_saliency}, ArousalInf: {default_arousal * emotion_influence:.3f})")
+        else:
+             logger.debug(f"Saliency calculation disabled. Setting score to 0.0 for {node_uuid[:8]}.")
+
+
         # --- Get embedding ---
         embedding = self._get_embedding(text)
-        # --- Check if embedding failed ---
         if embedding is None:
              logger.error(f"Failed to get embedding for node {node_uuid}. Node not added.")
-             return None # Stop if embedding failed
+             return None
 
-        # --- Add to graph ---
+        # --- Add to graph with NEW attributes ---
         try:
             self.graph.add_node(
                 node_uuid,
-                uuid=node_uuid, text=text, speaker=speaker, timestamp=timestamp,
-                node_type=node_type, base_strength=float(base_strength),
-                activation_level=0.0, last_accessed_ts=current_time
+                uuid=node_uuid,
+                text=text,
+                speaker=speaker,
+                timestamp=timestamp,
+                node_type=node_type,
+                status='active', # NEW: Initial status
+                access_count=0, # NEW: Initial access count
+                emotion_valence=default_valence, # NEW: Default emotion
+                emotion_arousal=default_arousal, # NEW: Default emotion
+                saliency_score=initial_saliency, # NEW: Calculated initial saliency
+                # --- Existing attributes ---
+                base_strength=float(base_strength),
+                activation_level=0.0,
+                last_accessed_ts=current_time
             )
-            logger.debug(f"Node {node_uuid[:8]} added to graph.")
+            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes.")
         except Exception as e:
              logger.error(f"Failed adding node {node_uuid} to graph: {e}")
-             return None # Stop if graph add fails
+             return None
 
         # --- Add embedding to dictionary ---
         self.embeddings[node_uuid] = embedding
@@ -303,35 +488,44 @@ class GraphMemoryClient:
         # --- Add to FAISS ---
         try:
             if self.index is None:
-                # Check embedding_dim existence before creating index
                 if hasattr(self, 'embedding_dim') and self.embedding_dim > 0:
                      logger.info(f"Initializing FAISS index with dimension {self.embedding_dim}")
                      self.index = faiss.IndexFlatL2(self.embedding_dim)
                 else:
                      logger.error("Cannot initialize FAISS index: embedding_dim not set.")
-                     self._rollback_add(node_uuid) # Rollback graph/embedding dict changes
+                     self._rollback_add(node_uuid)
                      return None
 
-            self.index.add(np.array([embedding], dtype='float32'))
-            new_faiss_id = self.index.ntotal - 1
-            self.faiss_id_to_uuid[new_faiss_id] = node_uuid
-            self.uuid_to_faiss_id[node_uuid] = new_faiss_id
-            logger.debug(f"Embedding {node_uuid[:8]} added to FAISS ID {new_faiss_id}.")
+            # Add only if status is 'active' (which it always is initially)
+            # This check becomes relevant if we re-index archived nodes later
+            if self.graph.nodes[node_uuid].get('status', 'active') == 'active':
+                self.index.add(np.array([embedding], dtype='float32'))
+                new_faiss_id = self.index.ntotal - 1
+                self.faiss_id_to_uuid[new_faiss_id] = node_uuid
+                self.uuid_to_faiss_id[node_uuid] = new_faiss_id
+                logger.debug(f"Embedding {node_uuid[:8]} added to FAISS ID {new_faiss_id}.")
+            else:
+                 logger.warning(f"Node {node_uuid[:8]} has status other than 'active', not adding to FAISS.")
+
         except Exception as e:
              logger.error(f"Failed adding embed {node_uuid} to FAISS: {e}")
-             self._rollback_add(node_uuid) # Rollback changes
+             self._rollback_add(node_uuid)
              return None
 
         # --- Link temporally ---
         if self.last_added_node_uuid and self.last_added_node_uuid in self.graph:
             try:
-                self.graph.add_edge(
-                    self.last_added_node_uuid, node_uuid,
-                    type='TEMPORAL', base_strength=0.8, last_traversed_ts=current_time
-                )
-                logger.debug(f"Added T-edge {self.last_added_node_uuid[:8]}->{node_uuid[:8]}.")
+                # Check if predecessor is active before adding edge
+                if self.graph.nodes[self.last_added_node_uuid].get('status', 'active') == 'active':
+                    self.graph.add_edge(
+                        self.last_added_node_uuid, node_uuid,
+                        type='TEMPORAL', base_strength=0.8, last_traversed_ts=current_time
+                    )
+                    logger.debug(f"Added T-edge {self.last_added_node_uuid[:8]}->{node_uuid[:8]}.")
+                else:
+                     logger.debug(f"Skipped T-edge from inactive node {self.last_added_node_uuid[:8]} to {node_uuid[:8]}.")
             except Exception as e:
-                 logger.error(f"Failed adding T-edge: {e}") # Log error but don't fail the whole add
+                 logger.error(f"Failed adding T-edge: {e}")
 
         self.last_added_node_uuid = node_uuid
         logger.info(f"Successfully added node {node_uuid}.")
@@ -420,92 +614,245 @@ class GraphMemoryClient:
         """Calculates exponential dynamic edge strength based on decay."""
         edge_decay_rate = self.config.get('activation', {}).get('edge_decay_rate', 0.01)
         base = edge_data.get('base_strength', 0.5); last_trav = edge_data.get('last_traversed_ts', current_time); time_delta = max(0, current_time - last_trav); decay_mult = (1.0 - edge_decay_rate) ** time_delta; dyn_str = base * decay_mult; return max(0.0, dyn_str)
+
     def _search_similar_nodes(self, query_text: str, k: int = None, node_type_filter: str = None) -> list[tuple[str, float]]:
-        """Searches FAISS for nodes similar to query_text, optionally filtering by type."""
-        if k is None: k = self.config.get('activation', {}).get('max_initial_nodes', 7)
+        """Searches FAISS for ACTIVE nodes similar to query_text, optionally filtering by type."""
+        # --- Config Access ---
+        act_cfg = self.config.get('activation', {})
+        features_cfg = self.config.get('features', {})
+        forgetting_enabled = features_cfg.get('enable_forgetting', False)
+        if k is None: k = act_cfg.get('max_initial_nodes', 7)
+
         if not query_text or self.index is None or self.index.ntotal == 0: return []
         try:
             q_embed = self._get_embedding(query_text)
             if q_embed is None or q_embed.shape != (self.embedding_dim,): return []
-            q_embed_np = np.array([q_embed], dtype='float32'); search_k = k * 2 if node_type_filter else k; actual_k = min(search_k, self.index.ntotal);
+
+            q_embed_np = np.array([q_embed], dtype='float32')
+            # Search more initially if filtering later
+            search_k = k * 3 if (node_type_filter or forgetting_enabled) else k
+            actual_k = min(search_k, self.index.ntotal)
+
             if actual_k == 0: return []
-            dists, idxs = self.index.search(q_embed_np, actual_k); results = []
-            logger.debug(f"FAISS Search Results (Top {actual_k}, filter='{node_type_filter}'):")
+            dists, idxs = self.index.search(q_embed_np, actual_k)
+            results = []
+            logger.debug(f"FAISS Search Results (Top {actual_k}, filter='{node_type_filter}', forgetting='{forgetting_enabled}'):")
+
             if len(idxs) > 0:
                 for i, faiss_id in enumerate(idxs[0]):
-                    fid_int = int(faiss_id); dist = float(dists[0][i]); logger.debug(f"  Rank {i+1}: ID={fid_int}, Dist={dist:.4f}")
+                    fid_int = int(faiss_id); dist = float(dists[0][i])
+                    logger.debug(f"  Rank {i+1}: ID={fid_int}, Dist={dist:.4f}")
+
                     if fid_int != -1:
-                        uuid = self.faiss_id_to_uuid.get(fid_int)
-                        if uuid and uuid in self.graph:
-                             if node_type_filter:
-                                 if self.graph.nodes[uuid].get('node_type') == node_type_filter: results.append((uuid, dist)); logger.debug(f"    -> Valid UUID: {uuid[:8]} (Type MATCH)")
-                                 else: logger.debug(f"    -> Valid UUID: {uuid[:8]} (Type MISMATCH)")
-                             else: results.append((uuid, dist)); logger.debug(f"    -> Valid UUID: {uuid[:8]} (No filter)")
-                        else: logger.debug(f"    -> UUID {uuid} not in graph/map.")
-                    if len(results) >= k: break
-            logger.info(f"Found {len(results)} similar nodes (type='{node_type_filter or 'any'}') for query '{query_text[:30]}...'")
-            results.sort(key=lambda item: item[1]); return results
+                        node_uuid = self.faiss_id_to_uuid.get(fid_int)
+                        if node_uuid and node_uuid in self.graph:
+                            node_data = self.graph.nodes[node_uuid]
+                            node_status = node_data.get('status', 'active')
+                            node_type = node_data.get('node_type')
+
+                            # --- Filter 1: Status (if forgetting enabled) ---
+                            if forgetting_enabled and node_status != 'active':
+                                logger.debug(f"    -> Filtered UUID: {node_uuid[:8]} (Status: {node_status})")
+                                continue # Skip archived node
+
+                            # --- Filter 2: Node Type ---
+                            if node_type_filter and node_type != node_type_filter:
+                                logger.debug(f"    -> Filtered UUID: {node_uuid[:8]} (Type Mismatch: {node_type} != {node_type_filter})")
+                                continue # Skip node type mismatch
+
+                            # --- Passed Filters ---
+                            results.append((node_uuid, dist))
+                            logger.debug(f"    -> Valid UUID: {node_uuid[:8]} (Status: {node_status}, Type: {node_type})")
+
+                        else: logger.debug(f"    -> UUID for FAISS ID {fid_int} not in graph/map.")
+                    else: logger.debug(f"    -> Invalid FAISS ID -1 encountered.")
+
+                    # Stop if we have enough results after filtering
+                    if len(results) >= k:
+                        logger.debug(f"    -> Reached target k={k} results. Stopping search.")
+                        break
+
+            # Sort final results by distance (FAISS might not guarantee order perfectly after filtering)
+            results.sort(key=lambda item: item[1])
+            logger.info(f"Found {len(results)} active & matching nodes (type='{node_type_filter or 'any'}') for query '{query_text[:30]}...'")
+            return results[:k] # Return only top k
+
         except Exception as e: logger.error(f"FAISS search error: {e}", exc_info=True); return []
+
     def retrieve_memory_chain(self, initial_node_uuids: list[str]) -> list[dict]:
-        """Retrieves relevant memories using activation spreading, considering edge types."""
-        # (Keep implementation from previous version)
-        act_cfg = self.config.get('activation', {}); initial_activation = act_cfg.get('initial', 1.0); spreading_depth = act_cfg.get('spreading_depth', 3); activation_threshold = act_cfg.get('threshold', 0.1); prop_base = act_cfg.get('propagation_factor_base', 0.65); prop_factors = act_cfg.get('propagation_factors', {}); prop_temporal_fwd = prop_factors.get('TEMPORAL_fwd', 1.0); prop_temporal_bwd = prop_factors.get('TEMPORAL_bwd', 0.8); prop_summary_fwd = prop_factors.get('SUMMARY_OF_fwd', 1.1); prop_summary_bwd = prop_factors.get('SUMMARY_OF_bwd', 0.4); prop_concept_fwd = prop_factors.get('MENTIONS_CONCEPT_fwd', 1.0); prop_concept_bwd = prop_factors.get('MENTIONS_CONCEPT_bwd', 0.9); prop_assoc = prop_factors.get('ASSOCIATIVE', 0.8); prop_hier_fwd = prop_factors.get('HIERARCHICAL_fwd', 1.1); prop_hier_bwd = prop_factors.get('HIERARCHICAL_bwd', 0.5); prop_unknown = prop_factors.get('UNKNOWN', 0.5)
-        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids}")
+        """Retrieves relevant memories using activation spreading, considering status, saliency, and edge types."""
+        # --- Config Access ---
+        act_cfg = self.config.get('activation', {})
+        features_cfg = self.config.get('features', {})
+        saliency_cfg = self.config.get('saliency', {})
+        forgetting_cfg = self.config.get('forgetting', {})
+
+        initial_activation = act_cfg.get('initial', 1.0)
+        spreading_depth = act_cfg.get('spreading_depth', 3)
+        activation_threshold = act_cfg.get('threshold', 0.1)
+        prop_base = act_cfg.get('propagation_factor_base', 0.65)
+        prop_factors = act_cfg.get('propagation_factors', {})
+        # (Load specific factors...)
+        prop_temporal_fwd = prop_factors.get('TEMPORAL_fwd', 1.0); prop_temporal_bwd = prop_factors.get('TEMPORAL_bwd', 0.8); prop_summary_fwd = prop_factors.get('SUMMARY_OF_fwd', 1.1); prop_summary_bwd = prop_factors.get('SUMMARY_OF_bwd', 0.4); prop_concept_fwd = prop_factors.get('MENTIONS_CONCEPT_fwd', 1.0); prop_concept_bwd = prop_factors.get('MENTIONS_CONCEPT_bwd', 0.9); prop_assoc = prop_factors.get('ASSOCIATIVE', 0.8); prop_hier_fwd = prop_factors.get('HIERARCHICAL_fwd', 1.1); prop_hier_bwd = prop_factors.get('HIERARCHICAL_bwd', 0.5); prop_unknown = prop_factors.get('UNKNOWN', 0.5)
+
+        saliency_enabled = features_cfg.get('enable_saliency', False)
+        activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
+        forgetting_enabled = features_cfg.get('enable_forgetting', False)
+
+        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (Saliency Influence: {activation_influence:.2f}, Filter Archived: {forgetting_enabled})")
         if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
-        activation_levels = defaultdict(float); current_time = time.time(); valid_initial = 0
+
+        activation_levels = defaultdict(float)
+        current_time = time.time()
+        valid_initial_nodes = set()
+
+        # --- Initialize Activation for ACTIVE initial nodes ---
         for uuid in initial_node_uuids:
-            if uuid in self.graph: activation_levels[uuid] = initial_activation; self.graph.nodes[uuid]['last_accessed_ts'] = current_time; valid_initial += 1;
-            else: logger.warning(f"Initial node {uuid} not in graph.")
-        if not activation_levels: logger.warning("No valid initial nodes."); return []
-        logger.debug(f"Valid initial nodes: {valid_initial}"); active_nodes = set(activation_levels.keys())
+            if uuid in self.graph:
+                node_data = self.graph.nodes[uuid]
+                if forgetting_enabled and node_data.get('status', 'active') != 'active':
+                    logger.debug(f"Skipping archived initial node: {uuid[:8]}")
+                    continue
+                activation_levels[uuid] = initial_activation
+                node_data['last_accessed_ts'] = current_time # Update access time
+                valid_initial_nodes.add(uuid)
+            else:
+                logger.warning(f"Initial node {uuid} not in graph.")
+
+        if not activation_levels: logger.warning("No valid, active initial nodes."); return []
+
+        logger.debug(f"Valid initial active nodes: {len(valid_initial_nodes)}")
+        active_nodes = set(activation_levels.keys()) # Nodes currently considered for spreading FROM
+
+        # --- Activation Spreading Loop ---
         for depth in range(spreading_depth):
-            logger.debug(f"--- Spreading Step {depth + 1} ---"); newly_activated = defaultdict(float)
-            nodes_to_proc = list(active_nodes); logger.debug(f" Processing {len(nodes_to_proc)} nodes.")
-            for source_uuid in nodes_to_proc:
-                source_act = activation_levels.get(source_uuid, 0);
-                if source_act < 1e-6: continue
+            logger.debug(f"--- Spreading Step {depth + 1} ---")
+            newly_activated = defaultdict(float) # Activation gained in this step
+            nodes_to_process = list(active_nodes) # Process nodes active at start of step
+            logger.debug(f" Processing {len(nodes_to_process)} nodes.")
+
+            for source_uuid in nodes_to_process:
+                source_data = self.graph.nodes.get(source_uuid)
+                if not source_data: continue
+                source_act = activation_levels.get(source_uuid, 0)
+                # Safely get saliency score, default to 0 if missing or not a number for calculation
+                raw_saliency = source_data.get('saliency_score', 0.0)
+                source_saliency = raw_saliency if isinstance(raw_saliency, (int, float)) else 0.0
+
+                if source_act < 1e-6: continue # Skip if effectively inactive
+
                 neighbors = set(self.graph.successors(source_uuid)) | set(self.graph.predecessors(source_uuid))
+
                 for neighbor_uuid in neighbors:
-                    if neighbor_uuid == source_uuid or neighbor_uuid not in self.graph: continue
+                    if neighbor_uuid == source_uuid: continue
+                    neighbor_data = self.graph.nodes.get(neighbor_uuid)
+                    if not neighbor_data: continue
+
+                    if forgetting_enabled and neighbor_data.get('status', 'active') != 'active':
+                        # logger.debug(f"  Skipping spread to archived neighbor: {source_uuid[:8]} -> {neighbor_uuid[:8]}") # Can be verbose
+                        continue
+
                     is_forward = self.graph.has_edge(source_uuid, neighbor_uuid)
                     edge_data = self.graph.get_edge_data(source_uuid, neighbor_uuid) if is_forward else self.graph.get_edge_data(neighbor_uuid, source_uuid)
                     if not edge_data: continue
-                    edge_type = edge_data.get('type', 'TEMPORAL'); type_factor = prop_unknown
+
+                    edge_type = edge_data.get('type', 'UNKNOWN')
+                    type_factor = prop_unknown
                     if edge_type == 'TEMPORAL': type_factor = prop_temporal_fwd if is_forward else prop_temporal_bwd
                     elif edge_type == 'SUMMARY_OF': type_factor = prop_summary_fwd if is_forward else prop_summary_bwd
                     elif edge_type == 'MENTIONS_CONCEPT': type_factor = prop_concept_fwd if is_forward else prop_concept_bwd
                     elif edge_type == 'ASSOCIATIVE': type_factor = prop_assoc
                     elif edge_type == 'HIERARCHICAL': type_factor = prop_hier_fwd if is_forward else prop_hier_bwd
-                    dyn_str = self._calculate_dynamic_edge_strength(edge_data, current_time); act_pass = source_act * dyn_str * prop_base * type_factor
+
+                    dyn_str = self._calculate_dynamic_edge_strength(edge_data, current_time)
+                    saliency_boost = 1.0 + (source_saliency * activation_influence) if saliency_enabled else 1.0
+                    act_pass = source_act * dyn_str * prop_base * type_factor * saliency_boost
+
                     if act_pass > 1e-6:
                         newly_activated[neighbor_uuid] += act_pass
+                        # logger.debug(f"  Spread: {source_uuid[:8]}(A:{source_act:.2f},S:{source_saliency:.2f}) -> {neighbor_uuid[:8]} ({edge_type},{'F' if is_forward else 'B'}), Str:{dyn_str:.2f}, Factor:{type_factor:.2f}, Boost:{saliency_boost:.2f} => Pass:{act_pass:.3f}")
+
                         edge_key = (source_uuid, neighbor_uuid) if is_forward else (neighbor_uuid, source_uuid)
                         if edge_key in self.graph.edges: self.graph.edges[edge_key]['last_traversed_ts'] = current_time
+
+            # --- Apply Decay and Combine Activation ---
             nodes_to_decay = list(activation_levels.keys())
-            for uuid in nodes_to_decay:
-                if uuid in self.graph: node_data = self.graph.nodes[uuid]; decay_mult = self._calculate_node_decay(node_data, current_time); activation_levels[uuid] *= decay_mult; self.graph.nodes[uuid]['last_accessed_ts'] = current_time
-                else:
-                    if uuid in activation_levels: del activation_levels[uuid]
             active_nodes.clear()
-            all_involved = set(activation_levels.keys()) | set(newly_activated.keys())
-            for uuid in all_involved:
-                 if uuid not in self.graph: continue
+            all_involved_nodes = set(nodes_to_decay) | set(newly_activated.keys())
+
+            for uuid in all_involved_nodes:
+                 node_data = self.graph.nodes.get(uuid)
+                 if not node_data: continue
+
+                 current_activation = activation_levels.get(uuid, 0.0)
+                 if current_activation > 0:
+                     decay_mult = self._calculate_node_decay(node_data, current_time)
+                     activation_levels[uuid] *= decay_mult
+                     # logger.debug(f"  Decay: {uuid[:8]} ({current_activation:.3f} * {decay_mult:.3f} -> {activation_levels[uuid]:.3f})")
+
                  activation_levels[uuid] += newly_activated.get(uuid, 0.0)
-                 if newly_activated.get(uuid, 0.0) > 1e-6 or uuid in nodes_to_decay: self.graph.nodes[uuid]['last_accessed_ts'] = current_time
-                 if activation_levels[uuid] > 1e-6: active_nodes.add(uuid)
-                 elif uuid in activation_levels: del activation_levels[uuid]
-            logger.debug(f" Step {depth+1} finished. Active: {len(active_nodes)}. Max Act: {max(activation_levels.values()) if activation_levels else 0:.3f}")
+                 node_data['last_accessed_ts'] = current_time
+
+                 if activation_levels[uuid] > 1e-6:
+                     active_nodes.add(uuid)
+                 elif uuid in activation_levels:
+                     del activation_levels[uuid]
+
+            logger.debug(f" Step {depth+1} finished. Active Nodes: {len(active_nodes)}. Max Activation: {max(activation_levels.values()) if activation_levels else 0:.3f}")
+            if not active_nodes: break
+
+        # --- Final Selection & Update ---
         relevant_nodes = []
-        for uuid, act in activation_levels.items():
-            if act >= activation_threshold and uuid in self.graph: node_data = self.graph.nodes[uuid].copy(); node_data['final_activation'] = act; relevant_nodes.append(node_data)
-        logger.info(f"Found {len(relevant_nodes)} nodes above threshold ({activation_threshold}).")
-        relevant_nodes.sort(key=lambda x: (x['final_activation'], x.get('timestamp', '')), reverse=True)
-        if relevant_nodes: logger.info(f"Final nodes: [{', '.join([n['uuid'][:8]+f'({n['final_activation']:.3f})' for n in relevant_nodes])}]")
-        else: logger.info("No relevant nodes found.")
+        processed_uuids_for_access_count = set()
+
+        for uuid, final_activation in activation_levels.items():
+            if final_activation >= activation_threshold:
+                node_data = self.graph.nodes.get(uuid)
+                if node_data and node_data.get('status', 'active') == 'active':
+                    if uuid not in processed_uuids_for_access_count:
+                        node_data['access_count'] = node_data.get('access_count', 0) + 1
+                        processed_uuids_for_access_count.add(uuid)
+                        logger.debug(f"Incremented access count for {uuid[:8]} to {node_data['access_count']}")
+
+                    node_info = node_data.copy()
+                    node_info['final_activation'] = final_activation
+                    relevant_nodes.append(node_info)
+
+        logger.info(f"Found {len(relevant_nodes)} active nodes above threshold ({activation_threshold}).")
+        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True)
+
+        if relevant_nodes: logger.info(f"Final nodes: [{', '.join([n['uuid'][:8] + '({:.3f})'.format(n['final_activation']) for n in relevant_nodes])}]")
+        else: logger.info("No relevant nodes found above threshold.")
+
+        # --- Corrected Debug Logging ---
         logger.debug("--- Retrieved Node Texts (Top 5) ---")
-        for i, node in enumerate(relevant_nodes[:5]): logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Text: '{node.get('text', 'N/A')[:80]}...'")
+        for i, node in enumerate(relevant_nodes[:5]):
+            # Safely get and format saliency score
+            saliency_val = node.get('saliency_score', '?')
+            saliency_str = f"{saliency_val:.2f}" if isinstance(saliency_val, (int, float)) else str(saliency_val)
+            # Format the log message
+            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
         logger.debug("------------------------------------")
+
         return relevant_nodes
+
+    def update_node_saliency(self, node_uuid: str, change_factor: float):
+        """
+        Placeholder: Updates the saliency score of a node.
+        (Future implementation for V2 saliency updates based on feedback, etc.)
+        """
+        if not self.config.get('features', {}).get('enable_saliency', False): return  # Check feature flag
+
+        if node_uuid in self.graph:
+            # Example: Simple additive or multiplicative update, clamped
+            current_saliency = self.graph.nodes[node_uuid].get('saliency_score', 0.0)
+            new_saliency = current_saliency * change_factor  # Or + change_factor
+            new_saliency = max(0.0, min(1.0, new_saliency))  # Clamp 0-1
+            self.graph.nodes[node_uuid]['saliency_score'] = new_saliency
+            logger.debug(
+                f"Placeholder: Updated saliency for {node_uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f} (Factor: {change_factor})")
+        else:
+            logger.warning(f"update_node_saliency called for non-existent node: {node_uuid}")
 
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
@@ -703,50 +1050,96 @@ class GraphMemoryClient:
         return final_prompt
 
 
-    def _call_kobold_api(self, prompt: str, max_length: int = 512, temperature: float = 0.7, top_p: float = 0.9) -> str:
-        """Sends prompt to KoboldCpp API, returns generated text."""
-        # Use the correct logger name: 'logger'
-        logger.debug(f"_call_kobold_api received prompt ('{prompt[:80]}...'). Length: {len(prompt)}") # Corrected logger name
+    def _call_kobold_api(self, prompt: str, max_length: int = 512, temperature: float = 1.0, top_p: float = 0.95, top_k: int = 64, min_p: float = 0.0) -> str:
+        """
+        Sends prompt to KoboldCpp API, returns generated text.
+        Uses updated default parameters and includes top_k, min_p.
+        """
+        logger.debug(f"_call_kobold_api received prompt ('{prompt[:80]}...'). Length: {len(prompt)}")
 
         # Calculate max_context_length
-        try: prompt_tokens = len(self.tokenizer.encode(prompt)) if self.tokenizer else len(prompt) // 3
-        except Exception as e: logger.warning(f"Tokenizer error: {e}. Estimating prompt tokens."); prompt_tokens = len(prompt) // 3 # Corrected logger name
+        try:
+            # Estimate tokens using the tokenizer if available
+            prompt_tokens = len(self.tokenizer.encode(prompt)) if self.tokenizer else len(prompt) // 3
+        except Exception as e:
+            logger.warning(f"Tokenizer error calculating prompt tokens: {e}. Estimating based on length.")
+            prompt_tokens = len(prompt) // 3 # Fallback estimation
+
+        # Get model's max context from config, default if not set
         model_max_ctx = self.config.get('prompting',{}).get('max_context_tokens', 4096)
+
+        # Calculate desired total tokens and clamp to model max context
+        # Add a small buffer (e.g., 50) for safety/overhead
         desired_total_tokens = prompt_tokens + max_length + 50
         max_ctx_len = min(model_max_ctx, desired_total_tokens)
-        logger.debug(f"Prompt tokens: ~{prompt_tokens}. Max new: {max_length}. Max context length for API call: {max_ctx_len}") # Corrected logger name
+        logger.debug(f"Prompt tokens: ~{prompt_tokens}. Max new: {max_length}. Max context length for API call: {max_ctx_len}")
 
         api_url = self.kobold_api_url
-        if not api_url: logger.error("Kobold API URL is not configured."); return "Error: Kobold API URL not configured." # Corrected logger name
+        if not api_url:
+            logger.error("Kobold API URL is not configured.")
+            return "Error: Kobold API URL not configured."
 
+        # --- Construct Payload with New Defaults and Parameters ---
         payload = {
-            'prompt': prompt, # Should contain [Image:...] tag if sent
-            'max_context_length': max_ctx_len,
-            'max_length': max_length,
+            'prompt': prompt,
+            'max_context_length': max_ctx_len, # Ensure context doesn't exceed model limits
+            'max_length': max_length, # Max tokens to generate
             'temperature': temperature,
             'top_p': top_p,
-            'stop_sequence': ["<end_of_turn>", "<start_of_turn>user\n", "User:", "\nUser:"],
-            'use_memory': False, 'use_story': False, 'use_authors_note': False, 'use_world_info': False,
+            'top_k': top_k, # Added top_k
+            'min_p': min_p, # Added min_p
+            # Common Kobold parameters (adjust if needed for your backend)
+            'rep_pen': 1.08, # Example repetition penalty, adjust as needed
+            'rep_pen_range': 2048,
+            'stop_sequence': ["<end_of_turn>", "<start_of_turn>user\n", "User:", "\nUser:", "\nUSER:"], # Added \nUSER:
+            # Ensure these flags are set as desired (usually false for raw completion)
+            'use_memory': False,
+            'use_story': False,
+            'use_authors_note': False,
+            'use_world_info': False,
         }
+
+        # Log payload (masking potentially long prompt)
         log_payload = payload.copy()
         log_payload['prompt'] = log_payload['prompt'][:100] + ("..." if len(log_payload['prompt']) > 100 else "")
-        logger.debug(f"Payload sent to Kobold API ({api_url}): {log_payload}") # Corrected logger name
+        logger.debug(f"Payload sent to Kobold API ({api_url}): {log_payload}")
 
         try:
-            response = requests.post(api_url, json=payload, timeout=180) # Increased timeout slightly
-            response.raise_for_status()
+            response = requests.post(api_url, json=payload, timeout=180) # 3-minute timeout
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+
             result = response.json()
+            # Extract generated text (structure might vary slightly between Kobold versions)
             gen_txt = result.get('results', [{}])[0].get('text', '').strip()
-            for seq in payload['stop_sequence']:
-                if gen_txt.endswith(seq): gen_txt = gen_txt[:-len(seq)].rstrip()
-            if not gen_txt: logger.warning("Kobold API returned empty text.") # Corrected logger name
-            else: logger.debug(f"Kobold API raw response text: '{gen_txt[:100]}...'") # Corrected logger name
-            return gen_txt
+
+            # Remove stop sequences from the end of the generation
+            # Iterate carefully to avoid removing parts of valid sequences
+            cleaned_txt = gen_txt
+            for seq in sorted(payload['stop_sequence'], key=len, reverse=True): # Check longer sequences first
+                 if cleaned_txt.endswith(seq):
+                      cleaned_txt = cleaned_txt[:-len(seq)].rstrip()
+                      break # Stop after removing the first found sequence
+
+            if not cleaned_txt:
+                 logger.warning("Kobold API returned empty text after stripping stop sequences.")
+            else:
+                 logger.debug(f"Kobold API cleaned response text: '{cleaned_txt[:100]}...'")
+
+            return cleaned_txt
+
+        except requests.exceptions.Timeout:
+            logger.error(f"Kobold API call timed out after 180 seconds ({api_url}).")
+            return f"Error: Kobold API call timed out."
         except requests.exceptions.RequestException as e:
-            logger.error(f"Kobold API connection/request error: {e}", exc_info=True) # Corrected logger name
-            return f"Error: Could not connect to Kobold API at {api_url}."
+            logger.error(f"Kobold API connection/request error: {e}", exc_info=True)
+            # Provide more specific error if possible (e.g., connection error vs. HTTP error)
+            status_code = getattr(e.response, 'status_code', 'N/A')
+            return f"Error: Could not connect or communicate with Kobold API at {api_url}. Status: {status_code}. Details: {e}"
+        except json.JSONDecodeError as e:
+             logger.error(f"Failed to decode JSON response from Kobold API: {e}. Response text: '{response.text[:500]}...'")
+             return "Error: Failed to decode JSON response from Kobold API."
         except Exception as e:
-            logger.error(f"Kobold API call unexpected error: {e}", exc_info=True) # Corrected logger name
+            logger.error(f"Kobold API call unexpected error: {e}", exc_info=True)
             return f"Error: Unexpected issue during Kobold API call."
 
     # --- Memory Modification & Action Analysis ---
@@ -756,150 +1149,212 @@ class GraphMemoryClient:
         """
         Uses LLM to detect non-memory action intents (e.g., file, calendar)
         and extract arguments. Returns structured action data or {"action": "none"}.
+        (V4 Prompt: Same prompt, improved extraction and increased max_length)
         """
         logger.info(f"Analyzing for action request: '{request_text[:100]}...'")
-        # Define tools and their required arguments
         tools = {
             "create_file": ["filename", "content"],
             "append_file": ["filename", "content"],
             "add_calendar_event": ["date", "time", "description"],
-            "read_calendar": []  # Date is optional
+            "read_calendar": []
         }
-        # *** REFINED Prompt Instructions ***
         tool_descriptions = """AVAILABLE ACTIONS:
-- create_file: Creates/overwrites a file with given content. Requires: 'filename', 'content'.
-- append_file: Appends content to a file. Requires: 'filename', 'content'.
-- add_calendar_event: Adds an event to the calendar. Requires: 'date' (YYYY-MM-DD or relative like 'tomorrow'), 'time' (HH:MM or description like 'afternoon'), 'description'.
-- read_calendar: Reads events for a date. Optional: 'date' (YYYY-MM-DD or relative like 'today', defaults to today)."""
+        - create_file: Creates or completely overwrites a file with the given text content. Requires: 'filename', 'content'.
+        - append_file: Adds text content to the end of an existing file (or creates it if it doesn't exist). Requires: 'filename', 'content'.
+        - add_calendar_event: Adds an event to the calendar log. Requires: 'date' (e.g., YYYY-MM-DD, 'today', 'tomorrow'), 'time' (e.g., HH:MM, 'morning', '9am'), 'description' (the event text).
+        - read_calendar: Reads calendar events for a specific date. Optional: 'date' (defaults to 'today' if not provided)."""
 
-        system_prompt = f"""SYSTEM: You can perform specific actions related to file management and calendar scheduling. Analyze the user's request below.
-Determine if the user is asking to perform one of the AVAILABLE ACTIONS. Pay close attention to the required arguments.
-{tool_descriptions}
+        prompt_template = self._load_prompt("action_analysis_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load action analysis prompt template. Cannot analyze action.")
+            return {'action': 'error', 'reason': 'Action analysis prompt template missing.'}
 
-**IMPORTANT:** Only identify an action if the user's intent CLEARLY matches an AVAILABLE ACTION. Do NOT map requests like "delete item from list" or "remove todo" to file actions like 'append_file'. If the request is about modifying memory (delete, edit, forget memory entries/nodes/topics), output {{"action": "none"}}. If the request doesn't match an AVAILABLE ACTION or memory modification, output {{"action": "none"}}.
+        full_prompt = prompt_template.format(
+            tool_descriptions=tool_descriptions,
+            request_text=request_text
+        )
 
-- If the request matches an action AND provides ALL required arguments, respond ONLY with JSON: {{"action": "action_name", "args": {{"arg1": "value1", ...}}}}.
-- If the request matches an action but is MISSING required arguments, respond ONLY with JSON: {{"action": "clarify", "missing_args": ["arg1", ...], "original_action": "action_name"}}.
-- For all other requests (including memory modifications or unsupported actions), respond ONLY with JSON: {{"action": "none"}}.
+        logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
+        llm_response_str = self._call_kobold_api(full_prompt, max_length=512, temperature=0.1)
 
-Examples:
-User Request: save this as my_file.txt: The content.
-JSON Response: {{"action": "create_file", "args": {{"filename": "my_file.txt", "content": "The content."}}}}
+        # ... (Parsing and validation logic remains the same as the last corrected version) ...
+        if not llm_response_str:
+            logger.error("LLM call failed for action analysis (empty response).")
+            return {'action': 'error', 'reason': 'LLM call failed for action analysis'}
 
-User Request: add Dr. Smith Appt 2025-05-10 9am to calendar
-JSON Response: {{"action": "add_calendar_event", "args": {{"date": "2025-05-10", "time": "9am", "description": "Dr. Smith Appt"}}}}
-
-User Request: append status report to project_log.txt
-JSON Response: {{"action": "clarify", "missing_args": ["content"], "original_action": "append_file"}}
-
-User Request: what's happening today?
-JSON Response: {{"action": "read_calendar", "args": {{}}}} # Assumes default to today
-
-User Request: delete the previous memory node
-JSON Response: {{"action": "none"}}
-
-User Request: remove the first item from my shopping list file
-JSON Response: {{"action": "none"}}
-
-Analyze:"""
-        full_prompt = f"{system_prompt}\nUser Request: {request_text}\nJSON Response:"
-
-        logger.debug(f"Sending action analysis prompt:\n{full_prompt}")
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=250, temperature=0.1)
-
-        if not llm_response_str: return {'action': 'error', 'reason': 'LLM call failed for action analysis'}
+        parsed_result = None
         try:
-            logger.debug(f"Raw action analysis response: {llm_response_str}")
-            # Try to extract JSON even if there's trailing text
-            match = re.search(r'\{.*\}', llm_response_str, re.DOTALL)
-            if match:
-                json_str = match.group(0)
+            logger.debug(f"Raw action analysis response: ```{llm_response_str}```")
+            cleaned_response = llm_response_str.strip()
+            if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+            if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+            if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+            start_brace = cleaned_response.find('{')
+            end_brace = cleaned_response.rfind('}')
+
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                json_str = cleaned_response[start_brace:end_brace + 1]
+                logger.debug(f"Extracted JSON string after cleaning: {json_str}")
+                parsed_result = json.loads(json_str)
             else:
-                json_str = llm_response_str.strip()  # Fallback if no {} found
+                logger.error(
+                    f"Could not find valid JSON object in cleaned response. Cleaned: '{cleaned_response}', Raw: '{llm_response_str}'")
+                return {'action': 'error', 'reason': 'Could not extract valid JSON object from LLM response.',
+                        'raw_response': llm_response_str}
 
-            parsed = json.loads(json_str)
-            logger.info(f"LLM Parsed Action: {parsed}")
-
-            action = parsed.get("action")
-            if not action: raise ValueError("Missing 'action' key")
-            if action not in ["none", "clarify", "error", "create_file", "append_file", "add_calendar_event",
-                              "read_calendar"]:
-                logger.warning(f"LLM returned unknown action '{action}'. Treating as 'none'.")
+            logger.info(f"LLM Parsed Action: {parsed_result}")
+            action = parsed_result.get("action")
+            if not action or not isinstance(action, str):
+                raise ValueError("Missing or invalid 'action' key in JSON response.")
+            valid_actions = ["none", "clarify", "error"] + list(tools.keys())
+            if action not in valid_actions:
+                logger.warning(
+                    f"LLM returned unknown action '{action}'. Treating as 'none'. Raw: {llm_response_str}")
                 return {"action": "none"}
             if action == "none": return {"action": "none"}
+            if action == "error": return parsed_result
             if action == "clarify":
-                if "missing_args" not in parsed or "original_action" not in parsed: raise ValueError(
-                    "Clarify missing keys")
-                return parsed
-            if action == "error": return parsed
-
-            # Validate required args
-            args = parsed.get("args", {})
+                if not isinstance(parsed_result.get("missing_args"), list) or \
+                        not isinstance(parsed_result.get("original_action"), str):
+                    raise ValueError(
+                        "Clarify action missing required 'missing_args' (list) or 'original_action' (string).")
+                if parsed_result["original_action"] not in tools:
+                    raise ValueError(
+                        f"Clarify action refers to an invalid original_action '{parsed_result['original_action']}'.")
+                return parsed_result
+            args = parsed_result.get("args", {})
+            if not isinstance(args, dict):
+                raise ValueError(f"Invalid 'args' format for action '{action}'. Expected a dictionary.")
             required_args = tools.get(action, [])
-            missing = [arg for arg in required_args if arg not in args or not args[arg]]
-            if action == "read_calendar" and "date" in missing: missing.remove("date")
-
+            missing = []
+            for req_arg in required_args:
+                if req_arg not in args or args[req_arg] is None or (
+                        isinstance(args[req_arg], str) and not args[req_arg].strip()):
+                    missing.append(req_arg)
+            if action == "read_calendar" and "date" in missing:
+                missing.remove("date")
             if missing:
-                logger.warning(f"Action '{action}' missing args: {missing}. Requesting clarification.")
+                logger.warning(
+                    f"Action '{action}' identified, but missing required args: {missing}. Requesting clarification.")
                 return {"action": "clarify", "missing_args": missing, "original_action": action}
-
-            # Sanitize filename
             if "filename" in args:
-                args["filename"] = os.path.basename(str(args.get("filename", "default.txt")))
-                if not args["filename"] or args["filename"] in ['.', '..']: raise ValueError("Invalid filename")
+                original_filename = args.get("filename", "")
+                safe_filename = os.path.basename(str(original_filename))
+                if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
+                    logger.error(
+                        f"Invalid or unsafe filename extracted after sanitization: '{original_filename}' -> '{safe_filename}'")
+                    return {'action': 'error', 'reason': f"Invalid filename provided: '{original_filename}'",
+                            'raw_response': llm_response_str, 'parsed': parsed_result}
+                args["filename"] = safe_filename
+                logger.debug(f"Sanitized filename: '{original_filename}' -> '{safe_filename}'")
 
+            logger.info(f"Action analysis successful: Action='{action}', Args={args}")
             return {"action": action, "args": args}
 
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"LLM Action Parse/Validation Error: {e}. Raw: '{llm_response_str}'"); return {
-                'action': 'error', 'reason': f'LLM Parse/Validation Fail: {e}', 'raw_response': llm_response_str}
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"LLM Action Parse Error (JSONDecodeError): {e}. Cleaned String: '{json_str if 'json_str' in locals() else 'N/A'}'. Raw: '{llm_response_str}'")
+            return {'action': 'error', 'reason': f'LLM response JSON parsing failed: {e}',
+                    'raw_response': llm_response_str}
+        except ValueError as e:
+            logger.error(f"LLM Action Validation Error: {e}. Parsed JSON: {parsed_result}")
+            return {'action': 'error', 'reason': f'LLM response validation failed: {e}',
+                    'raw_response': llm_response_str, 'parsed': parsed_result}
         except Exception as e:
-            logger.error(f"Unexpected error parsing action response: {e}", exc_info=True); return {
-                'action': 'error', 'reason': f'Unexpected action parsing error: {e}',
-                'raw_response': llm_response_str}
-
-        # (Keep all other methods unchanged - __init__, _load_config, helpers, memory management, retrieval, prompting, execute_action, consolidation, reset, file wrappers etc.)
-        # ... REST OF THE GraphMemoryClient Class ...
+            logger.error(f"Unexpected error parsing/validating action response: {e}", exc_info=True)
+            return {'action': 'error', 'reason': f'Unexpected action parsing error: {e}',
+                    'raw_response': llm_response_str}
 
     # (Keep Example Usage Block unchanged)
-    if __name__ == "__main__":
+    #if __name__ == "__main__":
         # ...
-        logger.info("Basic test finished.")
+        #logger.info("Basic test finished.")
 
     def analyze_memory_modification_request(self, request: str) -> dict:
         """Analyzes user request for **memory modification only** (delete, edit, forget)."""
-        # (Keep implementation from previous version)
-        logger.info(f"Analyzing *memory modification* request: '{request[:100]}...'"); uuid_pattern=r'\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'; found_uuids=re.findall(uuid_pattern, request, re.IGNORECASE); target_uuid=found_uuids[0] if found_uuids else None; request_lower=request.lower(); detected_action=None
-        if any(kw in request_lower for kw in self.config.get('modification_keywords',[])):
-            if any(kw in request_lower for kw in ['delete', 'remove', 'forget']): detected_action = 'delete'
-            elif any(kw in request_lower for kw in ['edit', 'change', 'correct', 'update']): detected_action = 'edit'
+        logger.info(f"Analyzing *memory modification* request: '{request[:100]}...'")
+        uuid_pattern = r'\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'
+        found_uuids = re.findall(uuid_pattern, request, re.IGNORECASE)
+        target_uuid = found_uuids[0] if found_uuids else None
+        request_lower = request.lower()
+        detected_action = None
+
+        # Direct keyword/UUID extraction (simple cases)
+        mod_keywords_cfg = self.config.get('modification_keywords', [])
+        if any(kw in request_lower for kw in mod_keywords_cfg):
+            if any(kw in request_lower for kw in ['delete', 'remove', 'forget']):
+                detected_action = 'delete' # Treat forget as delete if UUID present
+            elif any(kw in request_lower for kw in ['edit', 'change', 'correct', 'update']):
+                detected_action = 'edit'
+
         if detected_action and target_uuid:
-             logger.info(f"Direct extract: Action={detected_action}, UUID={target_uuid}"); result={'action': detected_action, 'target_uuid': target_uuid}
-             if detected_action == 'edit':
-                  parts = request.split(target_uuid); new_text=parts[1].strip() if len(parts)>1 and parts[1].strip() else None
-                  if new_text:
-                      for prefix in ["to ", "say ", "is "]:
-                          if new_text.lower().startswith(prefix): new_text = new_text[len(prefix):].strip()
-                      result['new_text']=new_text; logger.info(f"Extracted new text: {new_text[:50]}...")
-                  else: logger.warning("Edit UUID found, but no new text extracted."); result['new_text'] = None
-             return result
+            logger.info(f"Direct extract: Action={detected_action}, UUID={target_uuid}")
+            result = {'action': detected_action, 'target_uuid': target_uuid}
+            if detected_action == 'edit':
+                # Try to extract text following the UUID
+                parts = request.split(target_uuid)
+                new_text = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+                if new_text:
+                    # Simple prefix removal
+                    for prefix in ["to ", "say ", "is ", ":", "-"]:
+                        if new_text.lower().startswith(prefix):
+                            new_text = new_text[len(prefix):].strip()
+                    result['new_text'] = new_text
+                    logger.info(f"Extracted new text: {new_text[:50]}...")
+                else:
+                    logger.warning("Edit UUID found, but no new text extracted.")
+                    result['new_text'] = None # Explicitly set to None
+            return result # Return early if direct extraction successful
+
+        # Fallback to LLM analysis
         logger.info("Falling back to LLM analysis for memory mod request.")
-        system_prompt="""SYSTEM: Analyze user request for memory modification ('delete', 'edit', 'forget'). Respond ONLY with JSON.
-- 'delete'/'forget': use "target_uuid" if UUID present, else use "target" description. For 'forget', identify "topic".
-- 'edit': Identify "target_uuid" or "target" AND "new_text".
-- Not a command: {"action": "none"}.
-Example Request: edit 123e4567-e89b-12d3-a456-426614174000 to say "new"
-Example JSON: {"action": "edit", "target_uuid": "123e4567-e89b-12d3-a456-426614174000", "new_text": "new"}
-Analyze:"""
-        full_prompt=f"{system_prompt}\nUser Request: {request}\nJSON Response:"
+        prompt_template = self._load_prompt("memory_mod_prompt.txt")
+        if not prompt_template:
+             logger.error("Failed to load memory modification prompt template. Cannot analyze request.")
+             return {'action': 'error', 'reason': 'Memory modification prompt template missing.'}
+
+        full_prompt = prompt_template.format(request_text=request)
+
         llm_response_str = self._call_kobold_api(full_prompt, max_length=150, temperature=0.2)
-        if not llm_response_str: return {'action': 'error', 'reason': 'LLM call failed'}
+        if not llm_response_str:
+            return {'action': 'error', 'reason': 'LLM call failed'}
+
         try:
-            llm_response_str = llm_response_str.strip().replace("```json", "").replace("```", "").strip(); parsed_response = json.loads(llm_response_str); logger.info(f"LLM Parsed Mod: {parsed_response}")
-            if 'action' not in parsed_response or parsed_response['action'] not in ['delete','edit','forget','none','error']: raise ValueError("Missing/Invalid action")
-            if target_uuid and 'target_uuid' not in parsed_response and parsed_response['action'] in ['delete', 'edit']: logger.info(f"Adding regex UUID {target_uuid} to LLM result."); parsed_response['target_uuid'] = target_uuid; parsed_response.pop('target', None)
+            # Clean potential markdown fences before parsing
+            cleaned_response = llm_response_str.strip()
+            if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+            if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+            if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+            # Find first '{' and last '}'
+            start_brace = cleaned_response.find('{')
+            end_brace = cleaned_response.rfind('}')
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                json_str = cleaned_response[start_brace:end_brace + 1]
+                parsed_response = json.loads(json_str)
+            else:
+                 raise ValueError("No valid JSON object found in LLM response.")
+
+            logger.info(f"LLM Parsed Mod: {parsed_response}")
+
+            # Basic validation
+            if 'action' not in parsed_response or parsed_response['action'] not in ['delete','edit','forget','none','error']:
+                raise ValueError("Missing/Invalid action in LLM response")
+
+            # If regex found a UUID but LLM didn't, add it back for delete/edit
+            if target_uuid and 'target_uuid' not in parsed_response and parsed_response['action'] in ['delete', 'edit']:
+                logger.info(f"Adding regex UUID {target_uuid} to LLM result.")
+                parsed_response['target_uuid'] = target_uuid
+                parsed_response.pop('target', None) # Remove text target if UUID is present
+
             return parsed_response
-        except Exception as e: logger.error(f"LLM Mod Parse Error: {e}. Raw: '{llm_response_str}'"); return {'action': 'error', 'reason': f'LLM Parse Fail: {e}', 'raw_response': llm_response_str}
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"LLM Mod Parse/Validation Error: {e}. Raw: '{llm_response_str}'")
+            return {'action': 'error', 'reason': f'LLM Parse/Validation Fail: {e}', 'raw_response': llm_response_str}
+        except Exception as e:
+             logger.error(f"Unexpected error parsing memory mod response: {e}", exc_info=True)
+             return {'action': 'error', 'reason': f'Unexpected error: {e}', 'raw_response': llm_response_str}
 
     # *** NEW: Action Dispatcher ***
     def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
@@ -963,47 +1418,117 @@ Analyze:"""
 
     def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> tuple[str, list]:
         """Processes user input (text and optional image attachment), calls appropriate LLM API, updates memory."""
-        # --- DEBUG Check at start of function ---
         logger.debug(f"PROCESS_INTERACTION START: Has embedder? {hasattr(self, 'embedder')}")
         if not hasattr(self, 'embedder') or self.embedder is None:
              logger.error("PROCESS_INTERACTION ERROR: Cannot proceed without embedder!")
              return "Error: Backend embedder not initialized correctly.", []
 
-        # (Rest of the process_interaction logic remains the same as previous version)
         logger.info(f"Processing interaction: Input='{user_input[:50]}...' Has Attachment: {bool(attachment_data)}")
         if attachment_data: logger.debug(f"Attachment details: type={attachment_data.get('type')}, filename={attachment_data.get('filename')}")
-        ai_response = "Error: Processing failed."; memory_chain_data = []
+
+        # Initialize variables that might not be assigned in all paths
+        ai_response = "Error: Processing failed." # Default error message
+        parsed_response = "Error: Processing failed." # Default for return
+        memory_chain_data = []
+        graph_user_input = user_input # Start with original input for graph
+
         try:
+            # --- Handle Multimodal Input ---
             if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('data_url'):
-                logger.info("Image attachment detected. Using Chat Completions API."); logger.info("Skipping memory retrieval for image prompt."); memory_chain_data = []
-                messages = []; history_limit = 5; relevant_history = conversation_history[-history_limit:]
+                logger.info("Image attachment detected. Using Chat Completions API.")
+                logger.info("Skipping standard memory retrieval for image prompt.")
+                memory_chain_data = [] # No memory chain for multimodal yet
+
+                # Prepare messages for Chat API
+                messages = []
+                history_limit = 5 # Limit history for multimodal context
+                relevant_history = conversation_history[-history_limit:]
                 for turn in relevant_history:
-                    role = "user" if turn.get("speaker") == "User" else "assistant"; text_content = re.sub(r'\s*\[Image:\s*.*?\s*\]\s*', '', turn.get("text","")).strip()
+                    role = "user" if turn.get("speaker") == "User" else "assistant"
+                    # Remove potential image placeholders from history text
+                    text_content = re.sub(r'\s*\[Image:\s*.*?\s*\]\s*', '', turn.get("text","")).strip()
                     if text_content: messages.append({"role": role, "content": text_content})
-                user_content = [];
+
+                # Construct current user message (text + image)
+                user_content = []
                 if user_input: user_content.append({"type": "text", "text": user_input})
-                user_content.append({"type": "image_url", "image_url": {"url": attachment_data['data_url']}}); messages.append({"role": "user", "content": user_content})
-                max_gen_tokens = self.config.get('prompting', {}).get('max_generation_tokens', 512); ai_response = self._call_kobold_multimodal_api(messages=messages, max_tokens=max_gen_tokens)
-                graph_user_input = user_input;
-                if attachment_data.get('filename'): placeholder = f" [Image Attached: {attachment_data['filename']}]"; separator = " " if graph_user_input else ""; graph_user_input += separator + placeholder
+                user_content.append({"type": "image_url", "image_url": {"url": attachment_data['data_url']}})
+                messages.append({"role": "user", "content": user_content})
+
+                # Call Multimodal API
+                max_gen_tokens = self.config.get('prompting', {}).get('max_generation_tokens', 512)
+                ai_response = self._call_kobold_multimodal_api(messages=messages, max_tokens=max_gen_tokens)
+
+                # Prepare user input for graph storage (add placeholder)
+                if attachment_data.get('filename'):
+                    placeholder = f" [Image Attached: {attachment_data['filename']}]"
+                    separator = " " if graph_user_input else ""
+                    graph_user_input += separator + placeholder
+
+            # --- Handle Text-Only Input ---
             else:
-                logger.info("No valid image attachment. Using standard Generate API."); memory_chain_data = []
+                logger.info("No valid image attachment. Using standard Generate API.")
+                memory_chain_data = [] # Reset just in case
+
+                # Only retrieve memory if it's not explicitly an image placeholder input
+                # (This check might be redundant if multimodal handles all image cases now)
                 if not user_input.strip().startswith("[Image:"):
-                    logger.info("Searching initial nodes..."); max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7); initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes); initial_uuids = [uid for uid, score in initial_nodes]; logger.info(f"Initial UUIDs: {initial_uuids}")
-                    if initial_uuids: logger.info("Retrieving memory chain..."); memory_chain_data = self.retrieve_memory_chain(initial_uuids); logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
-                    else: logger.info("No relevant initial nodes found.")
-                else: logger.warning("Input started with [Image:] but wasn't handled as attachment? Proceeding without memory.")
-                logger.info("Constructing prompt string..."); max_tokens = self.config.get('prompting', {}).get('max_context_tokens', 4096); prompt = self._construct_prompt(user_input, conversation_history, memory_chain_data, self.tokenizer, max_tokens)
-                logger.info("Calling standard LLM Generate API..."); max_gen_tokens = self.config.get('prompting', {}).get('max_generation_tokens', 512); ai_response = self._call_kobold_api(prompt=prompt, max_length=max_gen_tokens)
-                graph_user_input = user_input
-            if not ai_response: logger.error("LLM returned empty response."); ai_response = "Error: Received empty response from language model."
-            parsed_response = ai_response.strip()
-            logger.info("Adding user input node to graph..."); logger.debug(f"Adding user node with text: '{graph_user_input[:100]}...'")
-            user_node_uuid = self.add_memory_node(graph_user_input, "User") # ERROR originates here if embedder missing
-            logger.info("Adding AI response node to graph..."); logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
-            ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Or here
-        except Exception as e: logger.error(f"Error during process_interaction: {e}", exc_info=True); ai_response = f"Error during processing: {e}"
+                    logger.info("Searching initial nodes...")
+                    max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
+                    initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes)
+                    initial_uuids = [uid for uid, score in initial_nodes]
+                    logger.info(f"Initial UUIDs: {initial_uuids}")
+
+                    if initial_uuids:
+                        logger.info("Retrieving memory chain...")
+                        # This is where the ValueError occurred
+                        memory_chain_data = self.retrieve_memory_chain(initial_uuids)
+                        logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
+                    else:
+                        logger.info("No relevant initial nodes found.")
+                else:
+                    logger.warning("Input started with [Image:] but wasn't handled as attachment? Proceeding without memory.")
+
+                # Construct and call standard API
+                logger.info("Constructing prompt string...")
+                max_tokens = self.config.get('prompting', {}).get('max_context_tokens', 4096)
+                prompt = self._construct_prompt(user_input, conversation_history, memory_chain_data, self.tokenizer, max_tokens)
+
+                logger.info("Calling standard LLM Generate API...")
+                max_gen_tokens = self.config.get('prompting', {}).get('max_generation_tokens', 512)
+                # Use the default parameters set in _call_kobold_api unless overridden
+                ai_response = self._call_kobold_api(prompt=prompt, max_length=max_gen_tokens)
+                # graph_user_input is already set
+
+            # --- Process Response and Update Graph ---
+            if not ai_response or ai_response.startswith("Error:"):
+                logger.error(f"LLM call failed or returned error: {ai_response}")
+                # Use the error message as the response to display
+                parsed_response = ai_response if ai_response else "Error: Received empty response from language model."
+            else:
+                parsed_response = ai_response.strip() # Use the successful response
+
+            # Add nodes to graph regardless of LLM success/failure, using appropriate text
+            logger.info("Adding user input node to graph...")
+            logger.debug(f"Adding user node with text: '{graph_user_input[:100]}...'")
+            user_node_uuid = self.add_memory_node(graph_user_input, "User")
+
+            logger.info("Adding AI/System response node to graph...")
+            # Use parsed_response (which could be success or error message)
+            logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
+            ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
+
+        except Exception as e:
+            # Catch errors during interaction processing (e.g., the ValueError)
+            logger.error(f"Error during process_interaction: {e}", exc_info=True)
+            # Assign error message to both ai_response and parsed_response
+            ai_response = f"Error during processing: {e}"
+            parsed_response = ai_response # Ensure parsed_response has a value
+            memory_chain_data = [] # Clear memory chain data on error
+
+        # Return the response to be displayed and the memory chain (even if empty)
         return parsed_response, memory_chain_data
+
 
     # --- Consolidation ---
     # (Keep _select_nodes_for_consolidation and run_consolidation from previous version)
@@ -1014,162 +1539,6 @@ Analyze:"""
         turn_nodes = [(u, d['timestamp']) for u, d in self.graph.nodes(data=True) if d.get('node_type') == 'turn' and d.get('timestamp')]
         turn_nodes.sort(key=lambda x: x[1], reverse=True)
         return [uuid for uuid, ts in turn_nodes[:count]]
-
-    def run_consolidation(self, min_nodes: int = None):
-        """Performs consolidation: summary, concepts, relations, hierarchy, pruning."""
-        # (Keep implementation from previous version)
-        if min_nodes is None: min_nodes = self.config.get('consolidation', {}).get('min_nodes', 5)
-        consolidation_turn_count = self.config.get('consolidation', {}).get('turn_count', 10)
-        concept_sim_threshold = self.config.get('consolidation', {}).get('concept_similarity_threshold', 0.3)
-        logger.info(f"--- Starting Consolidation (Process ~{consolidation_turn_count} Turns) ---")
-        node_uuids_to_process = self._select_nodes_for_consolidation(consolidation_turn_count)
-        if len(node_uuids_to_process) < min_nodes: logger.info(f"Not enough turns ({len(node_uuids_to_process)} < {min_nodes}). Skip."); return
-        logger.info(f"Selected {len(node_uuids_to_process)} nodes for consolidation: {node_uuids_to_process}")
-        context_text = ""; nodes_data = []
-        for uuid in reversed(node_uuids_to_process):
-            if uuid in self.graph: nodes_data.append(self.graph.nodes[uuid])
-        for node_data in nodes_data: context_text += f"{node_data.get('speaker', '?')}: {node_data.get('text', '')}\n"
-        context_text = context_text.strip()
-        if not context_text: logger.warning("Empty context. Skip consolidation."); return
-        # --- 1. Summarization ---
-        summary_prompt = f"<start_of_turn>user\nSummarize key points concisely in third person:\n--- START ---\n{context_text}\n--- END ---\nConcise Summary:<end_of_turn>\n<start_of_turn>model\n"
-        logger.info("Requesting summary..."); summary_text = self._call_kobold_api(summary_prompt, 150, 0.5)
-        summary_node_uuid = None; summary_created = False
-        if summary_text and len(summary_text) > 10:
-            logger.info(f"Generated Summary: '{summary_text[:100]}...'")
-            summary_ts = nodes_data[-1].get('timestamp') if nodes_data else datetime.now(timezone.utc).isoformat()
-            summary_node_uuid = self.add_memory_node(summary_text, "System", 'summary', summary_ts, 0.7)
-            if summary_node_uuid:
-                 summary_created = True; logger.info(f"Added summary node {summary_node_uuid[:8]}. Adding edges...")
-                 current_time = time.time()
-                 for orig_uuid in node_uuids_to_process:
-                     if orig_uuid in self.graph: self.graph.add_edge(summary_node_uuid, orig_uuid, type='SUMMARY_OF', base_strength=0.9, last_traversed_ts=current_time)
-            else: logger.error("Failed to add summary node.")
-        else: logger.warning(f"No valid summary ('{summary_text}').")
-        # --- 2. Concept Extraction & Deduplication ---
-        concept_prompt = f"<start_of_turn>user\nList key concepts, topics, or named entities (max 5-7). Output ONLY a comma-separated list:\n--- START ---\n{context_text}\n--- END ---\nComma-separated list:<end_of_turn>\n<start_of_turn>model\n"
-        logger.info("Requesting concepts..."); concepts_text = self._call_kobold_api(concept_prompt, 100, 0.3)
-        extracted_concepts = [c.strip() for c in concepts_text.split(',') if c.strip() and len(c.strip()) > 1] if concepts_text else []
-        concept_node_map = {}
-        if extracted_concepts:
-            logger.info(f"Extracted Concepts: {extracted_concepts}")
-            logger.info(f"Adding/linking concept nodes...")
-            current_time = time.time()
-            for concept in extracted_concepts:
-                if len(concept) > 80: logger.warning(f"Skip long concept: '{concept[:50]}...'"); continue
-                existing_concept_uuid = None
-                similar_concepts = self._search_similar_nodes(concept, k=1, node_type_filter='concept')
-                if similar_concepts and similar_concepts[0][1] <= concept_sim_threshold:
-                    existing_concept_uuid = similar_concepts[0][0]
-                    if existing_concept_uuid in self.graph: logger.info(f"Found existing similar concept '{self.graph.nodes[existing_concept_uuid].get('text','')}' ({existing_concept_uuid[:8]}) for '{concept}'. Linking.")
-                    else: logger.warning(f"Similar concept node {existing_concept_uuid} found but missing from graph. Creating new."); existing_concept_uuid = None
-                else: logger.debug(f"No sufficiently similar existing concept found for '{concept}'. Creating new."); existing_concept_uuid = None
-                if existing_concept_uuid is None:
-                    new_concept_uuid = self.add_memory_node(concept, "System", 'concept', base_strength=0.8)
-                    if new_concept_uuid: concept_node_map[concept] = new_concept_uuid; logger.debug(f"Added new concept node {new_concept_uuid[:8]} for '{concept}'.")
-                    else: logger.warning(f"Failed add concept node for '{concept}'."); continue
-                else: concept_node_map[concept] = existing_concept_uuid
-                current_concept_uuid = concept_node_map.get(concept)
-                if current_concept_uuid: # Link summary and original turns to concept (new or existing)
-                    if summary_node_uuid and summary_node_uuid in self.graph and not self.graph.has_edge(summary_node_uuid, current_concept_uuid):
-                        try: self.graph.add_edge(summary_node_uuid, current_concept_uuid, type='MENTIONS_CONCEPT', base_strength=0.7, last_traversed_ts=current_time); logger.debug(f"Edge Summary->Concept {current_concept_uuid[:8]}")
-                        except Exception as e: logger.error(f"Error adding summary->concept edge: {e}")
-                    for orig_uuid in node_uuids_to_process:
-                        if orig_uuid in self.graph and not self.graph.has_edge(orig_uuid, current_concept_uuid):
-                            try: self.graph.add_edge(orig_uuid, current_concept_uuid, type='MENTIONS_CONCEPT', base_strength=0.5, last_traversed_ts=current_time); logger.debug(f"Edge Turn {orig_uuid[:8]}->Concept {current_concept_uuid[:8]}")
-                            except Exception as e: logger.error(f"Error adding turn->concept edge: {e}")
-        else: logger.warning("LLM returned no concepts.")
-        # --- 3. Relationship Extraction ---
-        # (Keep implementation from previous version)
-        if len(concept_node_map) >= 2:
-            concept_list_str = "\n".join([f"- {c}" for c in concept_node_map.keys()])
-            relation_prompt = f"""<start_of_turn>user
-Given concepts:
-{concept_list_str}
-List related pairs using 'CONCEPT 1 -> CONCEPT 2' format, one per line. If none, output "NONE".
-Related pairs:<end_of_turn>
-<start_of_turn>model
-"""
-            logger.info("Requesting concept relationships..."); relations_text = self._call_kobold_api(relation_prompt, 100, 0.4)
-            if relations_text and relations_text.strip().upper() != "NONE":
-                logger.info(f"Found potential relationships:\n{relations_text}")
-                current_time = time.time(); lines = relations_text.strip().split('\n')
-                for line in lines:
-                    if '->' in line:
-                        parts = line.split('->');
-                        if len(parts) == 2:
-                            c1_txt, c2_txt = parts[0].strip().lstrip('- '), parts[1].strip()
-                            uuid1, uuid2 = concept_node_map.get(c1_txt), concept_node_map.get(c2_txt)
-                            if uuid1 and uuid2 and uuid1 in self.graph and uuid2 in self.graph:
-                                try:
-                                     if not self.graph.has_edge(uuid1, uuid2): self.graph.add_edge(uuid1, uuid2, type='ASSOCIATIVE', base_strength=0.6, last_traversed_ts=current_time); logger.info(f"Added ASSOC edge: {uuid1[:8]} -> {uuid2[:8]}")
-                                     else: logger.debug(f"Assoc edge {uuid1[:8]}->{uuid2[:8]} exists.")
-                                except Exception as e: logger.error(f"Error adding assoc edge: {e}")
-                            else: logger.warning(f"Could not find nodes for relation: '{c1_txt}' -> '{c2_txt}'")
-            else: logger.info("LLM reported no direct relationships.")
-        # --- 4. Hierarchy Extraction ---
-        # (Keep implementation from previous version)
-        if concept_node_map:
-            concept_list_str = "\n".join([f"- {c}" for c in concept_node_map.keys()])
-            hierarchy_prompt = f"""<start_of_turn>user
-Consider the following concepts:
-{concept_list_str}
-Are there any clear hierarchical relationships (e.g., 'Concept A' is a type of 'Concept B')?
-If yes, list them one per line using the format: 'CHILD_CONCEPT is_a PARENT_CONCEPT'.
-If no clear hierarchy exists among these specific concepts, output "NONE".
-Hierarchical relationships:<end_of_turn>
-<start_of_turn>model
-"""
-            logger.info("Requesting concept hierarchy..."); hierarchy_text = self._call_kobold_api(hierarchy_prompt, 100, 0.4)
-            if hierarchy_text and hierarchy_text.strip().upper() != "NONE":
-                logger.info(f"Found potential hierarchies:\n{hierarchy_text}")
-                current_time = time.time(); lines = hierarchy_text.strip().split('\n')
-                for line in lines:
-                    match = re.search(r"(.+)\s+(is_a|is a type of|is part of)\s+(.+)", line, re.IGNORECASE)
-                    if match:
-                        child_text, parent_text = match.group(1).strip().lstrip("- "), match.group(3).strip()
-                        child_uuid, parent_uuid = concept_node_map.get(child_text), concept_node_map.get(parent_text)
-                        if not parent_uuid and len(parent_text) < 80:
-                            logger.info(f"Identified new parent concept: '{parent_text}'. Checking existing...")
-                            similar_parents = self._search_similar_nodes(parent_text, k=1, node_type_filter='concept')
-                            if similar_parents and similar_parents[0][1] <= concept_sim_threshold: parent_uuid = similar_parents[0][0]; logger.info(f"Found existing node for parent: {parent_uuid[:8]}"); concept_node_map[parent_text] = parent_uuid
-                            else: logger.info(f"Adding new node for parent '{parent_text}'"); parent_uuid = self.add_memory_node(parent_text, "System", 'concept', base_strength=0.85);
-                            if parent_uuid and parent_text not in concept_node_map: concept_node_map[parent_text] = parent_uuid
-                        if child_uuid and parent_uuid and child_uuid in self.graph and parent_uuid in self.graph:
-                            try:
-                                if not self.graph.has_edge(parent_uuid, child_uuid): self.graph.add_edge(parent_uuid, child_uuid, type='HIERARCHICAL', base_strength=0.85, last_traversed_ts=current_time); logger.info(f"Added HIERARCHICAL edge: {parent_uuid[:8]} -> {child_uuid[:8]} ('{child_text}' is_a '{parent_text}')")
-                                else: logger.debug(f"Hierarchical edge {parent_uuid[:8]}->{child_uuid[:8]} exists.")
-                            except Exception as e: logger.error(f"Error adding hierarchical edge: {e}")
-                        else: logger.warning(f"Could not find nodes for hierarchy: '{child_text}' is_a '{parent_text}'")
-            else: logger.info("LLM reported no direct hierarchical relationships.")
-        # --- 5. Pruning (Refined) ---
-        # (Keep implementation from previous version)
-        if summary_created and summary_node_uuid:
-            logger.info(f"Pruning original turn nodes covered by summary {summary_node_uuid[:8]}...")
-            pruned_count, failed_prune_count, skipped_prune_count = 0, 0, 0
-            nodes_in_batch = set(node_uuids_to_process)
-            for original_uuid in node_uuids_to_process:
-                if original_uuid in self.graph:
-                    is_safe_to_prune = True; significant_neighbors = 0
-                    for neighbor in nx.all_neighbors(self.graph, original_uuid):
-                        if neighbor == summary_node_uuid: continue
-                        if neighbor in nodes_in_batch:
-                            edge_data_fwd = self.graph.get_edge_data(original_uuid, neighbor)
-                            edge_data_bwd = self.graph.get_edge_data(neighbor, original_uuid)
-                            if (edge_data_fwd and edge_data_fwd.get('type') == 'TEMPORAL') or \
-                               (edge_data_bwd and edge_data_bwd.get('type') == 'TEMPORAL'): continue
-                        significant_neighbors += 1; break
-                    if significant_neighbors > 0: is_safe_to_prune = False; skipped_prune_count += 1; logger.debug(f" Skipping prune {original_uuid[:8]}: {significant_neighbors} other structural neighbor(s).")
-                    if is_safe_to_prune:
-                         logger.debug(f" Attempting prune: {original_uuid[:8]}")
-                         if self.delete_memory_entry(original_uuid): pruned_count += 1
-                         else: failed_prune_count += 1
-                else: logger.debug(f"Node {original_uuid[:8]} already gone before prune.")
-            logger.info(f"Pruning done. Deleted: {pruned_count}, Skipped: {skipped_prune_count}, Failed: {failed_prune_count}.")
-        else: logger.info("Skipping pruning: no summary node created.")
-
-        logger.info("--- Consolidation Step Finished ---")
-        self._save_memory() # Save after consolidation & pruning
 
     # --- Reset Memory ---
     # (Keep implementation from previous version)
@@ -1288,20 +1657,897 @@ Hierarchical relationships:<end_of_turn>
             logger.error(f"Kobold Chat API call unexpected error: {e}", exc_info=True)
             return f"Error: Unexpected issue during Kobold Chat API call."
 
+        # --- Forgetting Mechanism Placeholders ---
+    def run_memory_maintenance(self):
+        """
+        Placeholder: Runs the nuanced forgetting process.
+        Identifies candidate nodes, calculates forgettability scores, and archives nodes
+        exceeding the threshold.
+        Triggered periodically based on interaction count or other criteria.
+        """
+        if not self.config.get('features', {}).get('enable_forgetting', False):
+            logger.debug("Nuanced forgetting feature disabled. Skipping maintenance.")
+            return
 
-# --- Example Usage Block ---
+        logger.info("--- Running Memory Maintenance (Nuanced Forgetting - Placeholder) ---")
+        # 1. Get config: threshold, weights, min_age, min_activation, protected types
+        forget_cfg = self.config.get('forgetting', {})
+        score_threshold = forget_cfg.get('score_threshold', 0.7)
+        weights = forget_cfg.get('weights', {})
+        min_age_hr = forget_cfg.get('candidate_min_age_hours', 24)
+        min_activation = forget_cfg.get('candidate_min_activation', 0.05)
+        protected_types = forget_cfg.get('protected_node_types', [])
+        logger.debug(
+            f"Forgetting Params: Threshold={score_threshold}, MinAgeHr={min_age_hr}, MinAct={min_activation}, Protected={protected_types}, Weights={weights}")
+
+        # 2. Identify Candidate Nodes:
+        #    - status == 'active'
+        #    - node_type NOT IN protected_types
+        #    - age > min_age_hr
+        #    - activation_level < min_activation (using 'activation_level' attribute)
+        candidate_uuids = []
+        current_time = time.time()
+        min_age_sec = min_age_hr * 3600
+        for uuid, data in self.graph.nodes(data=True):
+            if data.get('status', 'active') != 'active': continue
+            if data.get('node_type') in protected_types: continue
+            last_accessed = data.get('last_accessed_ts', 0)
+            age_sec = current_time - last_accessed
+            if age_sec < min_age_sec: continue
+            # Note: 'activation_level' might not be updated frequently unless retrieval runs often.
+            # Consider using decay calculation based on last_accessed_ts instead?
+            # For now, use stored 'activation_level' if available.
+            current_activation = data.get('activation_level', 0.0)  # This is the graph node's stored activation
+            if current_activation >= min_activation: continue
+
+            candidate_uuids.append(uuid)
+
+        logger.info(f"Found {len(candidate_uuids)} candidate nodes for potential forgetting.")
+        if not candidate_uuids: return
+
+        # 3. Calculate Forgettability Score for each candidate:
+        archived_count = 0
+        for uuid in candidate_uuids:
+            node_data = self.graph.nodes[uuid]
+            score = self._calculate_forgettability(uuid, node_data, current_time, weights)
+            logger.debug(f"  Node {uuid[:8]} ({node_data.get('node_type')}): Forgettability Score = {score:.3f}")
+
+            # 4. Archive if score exceeds threshold (Soft Delete):
+            if score >= score_threshold:
+                node_data['status'] = 'archived'
+                archived_count += 1
+                logger.info(f"  Archiving node {uuid[:8]} (Score: {score:.3f} >= {score_threshold})")
+                # Remove from FAISS index (requires rebuild or selective removal if supported)
+                # Deferring index modification until after loop or using rebuild.
+            # else:
+            # logger.debug(f"  Keeping node {uuid[:8]} (Score: {score:.3f} < {score_threshold})")
+
+        # 5. Rebuild FAISS index if nodes were archived
+        if archived_count > 0:
+            logger.info(f"Archived {archived_count} nodes. Rebuilding FAISS index to remove them...")
+            # Make sure rebuild respects status='active'
+            self._rebuild_index_from_graph_embeddings()  # Rebuild should only include 'active' nodes now
+            self._save_memory()  # Save changes after maintenance
+
+        logger.info(f"--- Memory Maintenance Finished ({archived_count} archived) ---")
+
+    def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
+                                  weights: dict) -> float:
+        """
+        Placeholder: Calculates a score indicating how likely a node is to be forgotten.
+        Score range should ideally be normalized (e.g., 0-1).
+        """
+        # --- Get Raw Factors ---
+        # Recency: Time since last access (higher = more forgettable)
+        last_accessed = node_data.get('last_accessed_ts', 0)
+        recency_sec = max(0, current_time - last_accessed)
+
+        # Activation: Current activation level (lower = more forgettable)
+        activation = node_data.get('activation_level', 0.0)  # Graph activation level
+
+        # Node Type: Some types intrinsically more forgettable
+        node_type = node_data.get('node_type', 'default')
+        # (Assign numeric value based on type - e.g., turn=1.0, summary=0.5, concept=0.2?)
+
+        # Saliency: Higher saliency resists forgetting
+        saliency = node_data.get('saliency_score', 0.0)
+
+        # Emotion: Higher arousal/valence magnitude resists forgetting
+        valence = node_data.get('emotion_valence', 0.0)
+        arousal = node_data.get('emotion_arousal', 0.1)
+        emotion_magnitude = math.sqrt(valence ** 2 + arousal ** 2)  # Simple magnitude
+
+        # Connectivity: Higher degree resists forgetting
+        degree = self.graph.degree(node_uuid) if node_uuid in self.graph else 0
+
+        # --- Normalize Factors (Example - needs tuning) ---
+        # Normalize recency (e.g., using exponential decay or mapping to 0-1 over a time range)
+        # Example: Normalize over a week (604800 seconds)
+        norm_recency = min(1.0, recency_sec / 604800.0)
+
+        # Normalize activation (already 0-1 theoretically, but use inverse)
+        norm_inv_activation = 1.0 - min(1.0, max(0.0, activation))  # Low activation -> high score component
+
+        # Normalize node type factor (example mapping)
+        type_map = {'turn': 1.0, 'summary': 0.4, 'concept': 0.1, 'default': 0.6}
+        norm_type = type_map.get(node_type, 0.6)
+
+        # Normalize saliency (use inverse: low saliency -> high score component)
+        norm_inv_saliency = 1.0 - min(1.0, max(0.0, saliency))
+
+        # Normalize emotion (use inverse: low magnitude -> high score component)
+        norm_inv_emotion = 1.0 - min(1.0, max(0.0, emotion_magnitude))
+
+        # Normalize connectivity (use inverse, map degree to 0-1 range, e.g., log scale or capped)
+        # Example: cap at 10 neighbors for normalization
+        norm_inv_connectivity = 1.0 - min(1.0, degree / 10.0)
+
+        # --- Calculate Weighted Score ---
+        score = 0.0
+        score += norm_recency * weights.get('recency_factor', 0.0)
+        score += norm_inv_activation * weights.get('activation_factor', 0.0)
+        score += norm_type * weights.get('node_type_factor', 0.0)
+        # Resistance factors (higher values decrease forgettability)
+        # We used inverse normalization above, so apply positive weights here.
+        score += norm_inv_saliency * abs(
+            weights.get('saliency_factor', 0.0))  # Use abs() in case config uses negative
+        score += norm_inv_emotion * abs(weights.get('emotion_factor', 0.0))
+        score += norm_inv_connectivity * abs(weights.get('connectivity_factor', 0.0))
+
+        # Clamp final score 0-1
+        final_score = max(0.0, min(1.0, score))
+
+        # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}) -> Score: {final_score:.3f}")
+
+        return final_score
+
+    def purge_archived_nodes(self, older_than_days: int = 30):
+        """
+        Placeholder: Permanently deletes nodes with status 'archived' that
+        are older than a specified threshold.
+        """
+        if not self.config.get('features', {}).get('enable_forgetting', False): return
+
+        logger.warning(f"--- Purging Archived Nodes (Older than {older_than_days} days) ---")
+        # 1. Identify archived nodes older than threshold
+        # 2. Use delete_memory_entry (or a bulk delete if more efficient)
+        # 3. Rebuild index and save
+        purge_count = 0
+        current_time = time.time()
+        threshold_seconds = older_than_days * 24 * 3600
+        nodes_to_purge = []
+
+        for uuid, data in self.graph.nodes(data=True):
+            if data.get('status') == 'archived':
+                timestamp_str = data.get('timestamp')
+                node_age = current_time  # Default to max age if no timestamp
+                if timestamp_str:
+                    try:
+                        dt_obj = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        node_age = current_time - dt_obj.timestamp()
+                    except ValueError:
+                        logger.warning(f"Could not parse timestamp for archived node {uuid[:8]}: {timestamp_str}")
+
+                if node_age >= threshold_seconds:
+                    nodes_to_purge.append(uuid)
+                    logger.debug(f"Marked archived node {uuid[:8]} for purging (Age: {node_age / 3600:.1f} hrs)")
+
+        # Perform deletion
+        if nodes_to_purge:
+            logger.info(f"Attempting to permanently purge {len(nodes_to_purge)} archived nodes...")
+            for uuid in list(nodes_to_purge):  # Iterate over copy
+                if self.delete_memory_entry(uuid):
+                    purge_count += 1
+                else:
+                    logger.error(f"Failed to purge archived node {uuid[:8]}.")
+
+            logger.info(f"--- Purge Complete: {purge_count} nodes permanently deleted. ---")
+            # delete_memory_entry already rebuilds/saves, so no extra save needed here.
+        else:
+            logger.info("--- Purge Complete: No archived nodes met the age criteria. ---")
+
+    def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
+        """
+        Executes a validated action based on the action_data dictionary.
+
+        Args:
+            action_data: Dictionary containing 'action' and 'args'.
+
+        Returns:
+             A tuple (success: bool, message: str, action_suffix: str).
+             'message' is user-facing status.
+             'action_suffix' is for internal GUI state/styling (e.g., 'create_file_success').
+        """
+        action = action_data.get("action", "unknown")
+        args = action_data.get("args", {})
+        logger.debug(f"Attempting to execute action '{action}' with args: {args}")
+
+        success = False
+        message = f"Action '{action}' could not be completed."  # Default failure message
+        action_suffix = f"{action}_fail"  # Default suffix
+
+        try:
+            # --- File Actions ---
+            if action == "create_file":
+                filename, content = args.get("filename"), args.get("content")
+                if filename and content is not None:  # Content can be empty string
+                    # Call file_manager function which now returns (bool, str)
+                    success, message = file_manager.create_or_overwrite_file(self.config, self.personality, filename,
+                                                                             str(content))
+                else:
+                    message = "Error: Missing filename or content for create_file."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
+            elif action == "append_file":
+                filename, content = args.get("filename"), args.get("content")
+                if filename and content is not None:  # Content can be empty string
+                    success, message = file_manager.append_to_file(self.config, self.personality, filename,
+                                                                   str(content))
+                else:
+                    message = "Error: Missing filename or content for append_file."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
+            # --- Calendar Actions ---
+            elif action == "add_calendar_event":
+                date, time_str, desc = args.get("date"), args.get("time"), args.get("description")
+                if date and time_str and desc:
+                    # TODO: Date/Time parsing/validation could happen here or in file_manager
+                    # For now, pass strings directly
+                    success, message = file_manager.add_calendar_event(self.config, self.personality, date, time_str,
+                                                                       desc)
+                else:
+                    message = "Error: Missing date, time, or description for add_calendar_event."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
+            elif action == "read_calendar":
+                date = args.get("date")  # Optional
+                # file_manager.read_calendar_events now returns (list[dict], str)
+                events, fm_message = file_manager.read_calendar_events(self.config, self.personality, date)
+                # For reading, success is true if the read operation itself didn't fail,
+                # even if no events were found. The message conveys the outcome.
+                success = True  # Assume read operation itself succeeded unless exception below
+                action_suffix = "read_calendar_success"  # Use success suffix
+                date_str = f" for {date}" if date else " (all dates)"
+
+                # Construct user-facing message based on results
+                if fm_message.startswith("IO error") or fm_message.startswith(
+                        "Permission denied") or fm_message.startswith("Unexpected error"):
+                    success = False  # Override success if file_manager reported read error
+                    action_suffix = "read_calendar_fail"
+                    message = f"Error reading calendar: {fm_message}"  # Pass file_manager error message
+                elif not events:
+                    # Message could be "not found" or "found 0 events" - use fm_message
+                    message = fm_message
+                else:
+                    event_lines = []
+                    for e in sorted(events,
+                                    key=lambda x: (x.get('event_date', ''), x.get('event_time', ''))):  # Sort events
+                        event_lines.append(
+                            f"- {e.get('event_time', '?')}: {e.get('description', '?')} ({e.get('event_date', '?')})")
+                    message = f"Found {len(events)} event(s){date_str}:\n" + "\n".join(event_lines)
+
+            # --- Unknown Action ---
+            else:
+                message = f"Error: The action '{action}' is not recognized or supported."
+                logger.error(message + f" Action data: {action_data}")
+                success = False
+                action_suffix = "unknown_action_fail"
+
+            # --- Update Suffix ---
+            # Ensure suffix reflects success/failure determined within this block
+            if action != "unknown_action_fail":  # Don't override specific unknown suffix
+                action_suffix = f"{action}_{'success' if success else 'fail'}"
+
+        except Exception as e:
+            # Catch any unexpected errors during the dispatch/execution logic itself
+            logger.error(f"Unexpected exception during execution of action '{action}': {e}", exc_info=True)
+            message = f"An internal error occurred while trying to perform action '{action}'. Please check logs."
+            success = False
+            action_suffix = f"{action}_exception"  # Specific suffix for exceptions here
+
+        # --- Final Logging and Return ---
+        log_level = logging.INFO if success else logging.ERROR
+        logger.log(log_level, f"Action '{action}' execution result: Success={success}, Msg='{message[:100]}...'")
+        return success, message, action_suffix
+
+    def _consolidate_summarize(self, context_text: str, nodes_data: list, active_nodes_to_process: list) -> tuple[str | None, bool]:
+        """Helper to generate and store the summary node."""
+        prompt_template = self._load_prompt("summary_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load summary prompt template. Skipping summarization.")
+            return None, False
+
+        summary_prompt = prompt_template.format(context_text=context_text)
+
+        logger.info("Requesting summary (from file prompt)...")
+        summary_text = self._call_kobold_api(summary_prompt, 150, 0.5)
+        summary_node_uuid = None
+        summary_created = False
+        if summary_text and len(summary_text) > 10:
+            logger.info(f"Generated Summary: '{summary_text[:100]}...'")
+            summary_ts = nodes_data[-1].get('timestamp') if nodes_data else datetime.now(timezone.utc).isoformat()
+            summary_node_uuid = self.add_memory_node(summary_text, "System", 'summary', summary_ts, 0.7)
+            if summary_node_uuid:
+                summary_created = True
+                logger.info(f"Added summary node {summary_node_uuid[:8]}. Adding 'SUMMARY_OF' edges...")
+                current_time = time.time()
+                for orig_uuid in active_nodes_to_process:
+                    if orig_uuid in self.graph:
+                        try:
+                            self.graph.add_edge(summary_node_uuid, orig_uuid, type='SUMMARY_OF', base_strength=0.9,
+                                                last_traversed_ts=current_time)
+                        except Exception as e:
+                            logger.error(
+                                f"Error adding SUMMARY_OF edge from {summary_node_uuid[:8]} to {orig_uuid[:8]}: {e}")
+            else:
+                logger.error("Failed to add summary node.")
+        else:
+            logger.warning(f"No valid summary generated ('{summary_text}').")
+        return summary_node_uuid, summary_created
+
+    def _consolidate_extract_concepts(self, context_text: str) -> list[str]:
+        """Helper to extract concepts via LLM."""
+        prompt_template = self._load_prompt("concept_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load concept prompt template. Skipping concept extraction.")
+            return []
+
+        concept_prompt = prompt_template.format(context_text=context_text)
+
+        logger.info("Requesting concepts (from file prompt)...")
+        concepts_text = self._call_kobold_api(concept_prompt, 100, 0.3)
+        llm_extracted_concepts = []
+        if concepts_text:
+            potential_concepts = concepts_text.split(',')
+            for concept in potential_concepts:
+                cleaned = concept.strip().strip('"').strip("'").strip()
+                if cleaned and len(cleaned) > 2 and len(cleaned) < 80:
+                    llm_extracted_concepts.append(cleaned)
+                elif cleaned:
+                    logger.debug(f"Filtered out potential LLM concept due to length/format: '{cleaned}'")
+        if not llm_extracted_concepts:
+             logger.warning("LLM returned no valid concepts after filtering.")
+        return llm_extracted_concepts
+
+    def _consolidate_extract_rich_relations(self, context_text: str, concept_node_map: dict, spacy_doc: object | None):
+        """Helper to extract typed relationships between concepts using LLM."""
+        logger.info("Attempting Rich Relationship Extraction (LLM)...")
+        target_relations = ["CAUSES", "PART_OF", "HAS_PROPERTY", "RELATED_TO", "IS_A"]
+        target_relations_str = ", ".join([f"'{r}'" for r in target_relations])
+        concept_list_str = "\n".join([f"- \"{c}\"" for c in concept_node_map.keys()])
+
+        prompt_template = self._load_prompt("rich_relation_prompt.txt")
+        if not prompt_template:
+             logger.error("Failed to load rich relation prompt template. Skipping rich relation extraction.")
+             return
+
+        # Format the prompt template with current data
+        rich_relation_prompt = prompt_template.format(
+            target_relations_str=target_relations_str,
+            concept_list_str=concept_list_str,
+            context_text=context_text
+        )
+
+        logger.debug(f"Sending Rich Relation prompt (from file):\n{rich_relation_prompt}")
+        llm_response_str = self._call_kobold_api(rich_relation_prompt, max_length=400, temperature=0.15)
+
+        # ... (Rest of the parsing and edge adding logic remains the same) ...
+        extracted_relations = []
+        if llm_response_str:
+            try:
+                logger.debug(f"Raw Rich Relation response: ```{llm_response_str}```")
+                cleaned_response = llm_response_str.strip()
+                if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+                if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+                if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+                start_bracket = cleaned_response.find('[')
+                end_bracket = cleaned_response.rfind(']')
+
+                if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+                    json_str = cleaned_response[start_bracket:end_bracket + 1]
+                    logger.debug(f"Extracted Rich Relation JSON string: {json_str}")
+                    parsed_list = json.loads(json_str)
+                    if isinstance(parsed_list, list):
+                        extracted_relations = parsed_list
+                        logger.info(f"Successfully parsed {len(extracted_relations)} relations from LLM.")
+                    else:
+                        logger.warning(f"LLM response was valid JSON but not a list. Raw: {llm_response_str}")
+                else:
+                    logger.warning(
+                        f"Could not find valid JSON list '[]' in cleaned response. Cleaned: '{cleaned_response}' Raw: '{llm_response_str}'"
+                    )
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response for rich relations: {e}. Raw: '{llm_response_str}'")
+            except Exception as e:
+                logger.error(f"Unexpected error processing rich relations response: {e}", exc_info=True)
+
+        added_edge_count = 0
+        if extracted_relations:
+            current_time = time.time()
+            for rel in extracted_relations:
+                if isinstance(rel, dict) and all(k in rel for k in ["subject", "relation", "object"]):
+                    subj_text = rel["subject"]
+                    rel_type = rel["relation"]
+                    obj_text = rel["object"]
+
+                    if rel_type not in target_relations:
+                        logger.warning(f"Skipping relation with invalid type '{rel_type}': {rel}")
+                        continue
+
+                    subj_uuid = concept_node_map.get(subj_text)
+                    obj_uuid = concept_node_map.get(obj_text)
+
+                    if subj_uuid and obj_uuid and subj_uuid in self.graph and obj_uuid in self.graph:
+                        if (
+                            self.graph.nodes[subj_uuid].get("status", "active") == "active"
+                            and self.graph.nodes[obj_uuid].get("status", "active") == "active"
+                        ):
+                            try:
+                                if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != rel_type:
+                                    base_strength = 0.7
+                                    self.graph.add_edge(
+                                        subj_uuid,
+                                        obj_uuid,
+                                        type=rel_type,
+                                        base_strength=base_strength,
+                                        last_traversed_ts=current_time,
+                                    )
+                                    logger.info(
+                                        f"Added Edge: {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')"
+                                    )
+                                    added_edge_count += 1
+                                else:
+                                    self.graph.edges[subj_uuid, obj_uuid]["last_traversed_ts"] = current_time
+                                    logger.debug(
+                                        f"Edge {subj_uuid[:8]} --[{rel_type}]--> {obj_uuid[:8]} already exists. Updated timestamp."
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error adding typed edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
+                        else:
+                            logger.warning(f"Skipping relation '{rel}' because one or both nodes are not active.")
+                    else:
+                        logger.warning(
+                            f"Could not find nodes in map for relation: Subject='{subj_text}' ({subj_uuid}), Object='{obj_text}' ({obj_uuid})"
+                        )
+                else:
+                    logger.warning(f"Skipping invalid relation object in list: {rel}")
+            logger.info(f"Added {added_edge_count} new typed relationship edges.")
+
+    def _load_prompt(self, filename: str) -> str:
+        """Loads a prompt template from the prompts directory."""
+        # Assumes a 'prompts' subdirectory relative to this script's location
+        # Or adjust path logic as needed (e.g., relative to config?)
+        # For simplicity, let's assume prompts are relative to the main script dir
+        # If base_memory_path is reliable, maybe put prompts there?
+        # Let's assume relative to the script for now.
+        script_dir = os.path.dirname(__file__)
+        prompt_path = os.path.join(script_dir, "prompts", filename)
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except FileNotFoundError:
+            logger.error(f"Prompt file not found: {prompt_path}")
+            return ""  # Return empty string or raise error? Empty string is safer.
+        except Exception as e:
+            logger.error(f"Error loading prompt file {prompt_path}: {e}", exc_info=True)
+            return ""
+
+    def _consolidate_extract_v1_associative(self, concept_node_map: dict):
+        """Helper to extract simple 'ASSOCIATIVE' relations via LLM."""
+        concept_list_str = "\n".join([f"- \"{c}\"" for c in concept_node_map.keys()])
+
+        prompt_template = self._load_prompt("v1_assoc_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load V1 associative prompt template. Skipping associative link extraction.")
+            return
+
+        relation_prompt = prompt_template.format(concept_list_str=concept_list_str)
+
+        logger.info("Requesting concept relationships (V1 - Associative, from file prompt)...")
+        relations_text = self._call_kobold_api(relation_prompt, 100, 0.4)
+        # ... (Rest of the parsing and edge adding logic remains the same) ...
+        if relations_text and relations_text.strip().upper() != "NONE":
+            logger.info(f"Found potential associative relationships:\n{relations_text}")
+            current_time = time.time()
+            lines = relations_text.strip().split('\n')
+            for line in lines:
+                match = re.match(r'^\s*-\s*"(.+?)"\s*->\s*"(.+?)"\s*$', line)
+                if match:
+                    c1_txt, c2_txt = match.group(1), match.group(2)
+                    uuid1, uuid2 = concept_node_map.get(c1_txt), concept_node_map.get(c2_txt)
+                    if (
+                            uuid1 and uuid2
+                            and uuid1 in self.graph
+                            and self.graph.nodes[uuid1].get('status', 'active') == 'active'
+                            and uuid2 in self.graph
+                            and self.graph.nodes[uuid2].get('status', 'active') == 'active'
+                    ):
+                        try:
+                            if not self.graph.has_edge(uuid1, uuid2):
+                                self.graph.add_edge(
+                                    uuid1, uuid2, type='ASSOCIATIVE', base_strength=0.6, last_traversed_ts=current_time
+                                )
+                                logger.info(f"Added ASSOC edge: {uuid1[:8]} ('{c1_txt}') -> {uuid2[:8]} ('{c2_txt}')")
+                            else:
+                                self.graph.edges[uuid1, uuid2]['last_traversed_ts'] = current_time
+                                logger.debug(f"Assoc edge {uuid1[:8]}->{uuid2[:8]} exists. Updated timestamp.")
+                        except Exception as e:
+                            logger.error(f"Error adding/updating assoc edge: {e}")
+                    else:
+                        logger.warning(
+                            f"Could not find active nodes for relation: '{c1_txt}' -> '{c2_txt}' (UUIDs: {uuid1}, {uuid2})"
+                        )
+                else:
+                    logger.debug(f"Line did not match V1 associative format: '{line}'")
+        else:
+            logger.info("LLM reported no direct associative relationships.")
+
+    def _consolidate_extract_hierarchy(self, concept_node_map: dict):
+        """Helper to extract hierarchical relationships via LLM."""
+        concept_list_str = "\n".join([f"- \"{c}\"" for c in concept_node_map.keys()])
+
+        prompt_template = self._load_prompt("hierarchy_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load hierarchy prompt template. Skipping hierarchy extraction.")
+            return
+
+        hierarchy_prompt = prompt_template.format(concept_list_str=concept_list_str)
+
+        logger.info("Requesting concept hierarchy (from file prompt)...")
+        hierarchy_text = self._call_kobold_api(hierarchy_prompt, 100, 0.4)
+        # ... (Rest of the parsing and edge adding logic remains the same, including the regex fix) ...
+        if hierarchy_text and hierarchy_text.strip().upper() != "NONE":
+            logger.info(f"Found potential hierarchies:\n{hierarchy_text}")
+            current_time = time.time()
+            lines = hierarchy_text.strip().split('\n')
+            for line in lines:
+                match = re.match(
+                    r'^\s*"(.+?)"\s+(is(?: |_)?a(?: |_type(?: |_of)?)?|is(?: |_)?part(?: |_of)?)\s+"(.+?)"\s*$',
+                    line, re.IGNORECASE)
+                if match:
+                    child_text = match.group(1)
+                    relation_type_str = match.group(2).lower()
+                    parent_text = match.group(3)
+                    child_uuid = concept_node_map.get(child_text)
+                    parent_uuid = concept_node_map.get(parent_text)
+
+                    if not parent_uuid and len(parent_text) < 80:
+                        logger.info(f"Identified potential new parent concept: '{parent_text}'. Checking existing...")
+                        concept_sim_threshold = self.config.get('consolidation', {}).get('concept_similarity_threshold',
+                                                                                         0.3)
+                        similar_parents = self._search_similar_nodes(parent_text, k=1, node_type_filter='concept')
+                        if similar_parents and similar_parents[0][1] <= concept_sim_threshold:
+                            parent_uuid = similar_parents[0][0]
+                            logger.info(f"Found existing active node for parent: {parent_uuid[:8]}")
+                            if parent_text not in concept_node_map:
+                                concept_node_map[parent_text] = parent_uuid
+                        else:
+                            logger.info(f"Adding new node for parent '{parent_text}'")
+                            parent_uuid = self.add_memory_node(parent_text, "System", 'concept', base_strength=0.85)
+                            if parent_uuid:
+                                if parent_text not in concept_node_map:
+                                    concept_node_map[parent_text] = parent_uuid
+                            else:
+                                logger.warning(
+                                    f"Failed to add new parent node '{parent_text}'. Skipping hierarchy link.")
+                                parent_uuid = None
+
+                    if (
+                            child_uuid and parent_uuid
+                            and child_uuid in self.graph
+                            and self.graph.nodes[child_uuid].get('status', 'active') == 'active'
+                            and parent_uuid in self.graph
+                            and self.graph.nodes[parent_uuid].get('status', 'active') == 'active'
+                    ):
+                        try:
+                            if not self.graph.has_edge(parent_uuid, child_uuid):
+                                self.graph.add_edge(parent_uuid, child_uuid, type='HIERARCHICAL', base_strength=0.85,
+                                                    last_traversed_ts=current_time)
+                                logger.info(
+                                    f"Added HIERARCHICAL edge: {parent_uuid[:8]} ('{parent_text}') -> {child_uuid[:8]} ('{child_text}')")
+                            else:
+                                self.graph.edges[parent_uuid, child_uuid]['last_traversed_ts'] = current_time
+                                logger.debug(
+                                    f"Hierarchical edge {parent_uuid[:8]}->{child_uuid[:8]} exists. Updated timestamp.")
+                        except Exception as e:
+                            logger.error(f"Error adding/updating hierarchical edge: {e}")
+                    elif child_uuid and parent_uuid:
+                        logger.warning(
+                            f"Could not link hierarchy because one or both nodes not active: Child='{child_text}' ({child_uuid}, Status={self.graph.nodes[child_uuid].get('status')}), Parent='{parent_text}' ({parent_uuid}, Status={self.graph.nodes[parent_uuid].get('status')})"
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not find nodes for hierarchy: Child='{child_text}' ({child_uuid}), Parent='{parent_text}' ({parent_uuid})")
+                else:
+                    logger.debug(f"Line did not match hierarchy format: '{line}'")
+        else:
+            logger.info("LLM reported no direct hierarchical relationships.")
+
+    def run_consolidation(self):
+        """
+        Orchestrates the memory consolidation process: summarization, concept extraction,
+        relation extraction, and pruning.
+        """
+        logger.info("--- Running Consolidation ---")
+        consolidation_cfg = self.config.get('consolidation', {})
+        min_nodes_for_consolidation = consolidation_cfg.get('min_nodes', 5)
+        turn_count_for_consolidation = consolidation_cfg.get('turn_count', 10)
+        prune_summarized = consolidation_cfg.get('prune_summarized_turns', True)
+        concept_sim_threshold = consolidation_cfg.get('concept_similarity_threshold', 0.3)
+        features_cfg = self.config.get('features', {})
+        rich_assoc_enabled = features_cfg.get('enable_rich_associations', False)
+        emotion_analysis_enabled = features_cfg.get('enable_emotion_analysis',
+                                                    False)  # Assuming you might add this later
+
+        # --- 1. Select Nodes ---
+        nodes_to_consolidate = self._select_nodes_for_consolidation(count=turn_count_for_consolidation)
+        # Filter out nodes that are already summarized or not 'active' turns
+        active_nodes_to_process = []
+        nodes_data = []
+        for uuid in nodes_to_consolidate:
+            if uuid in self.graph:
+                node_data = self.graph.nodes[uuid]
+                # Check if it's an 'active' 'turn' node and not already linked FROM a summary
+                is_summarized = any(
+                    True for pred, _, data in self.graph.in_edges(uuid, data=True) if data.get('type') == 'SUMMARY_OF')
+                if node_data.get('node_type') == 'turn' and node_data.get('status',
+                                                                          'active') == 'active' and not is_summarized:
+                    active_nodes_to_process.append(uuid)
+                    nodes_data.append(node_data)
+                else:
+                    logger.debug(
+                        f"Skipping node {uuid[:8]} for consolidation (Type: {node_data.get('node_type')}, Status: {node_data.get('status')}, Summarized: {is_summarized})")
+
+        if len(active_nodes_to_process) < min_nodes_for_consolidation:
+            logger.info(
+                f"Consolidation skipped: Only {len(active_nodes_to_process)} suitable nodes found (min: {min_nodes_for_consolidation}).")
+            return
+
+        logger.info(f"Consolidating {len(active_nodes_to_process)} nodes: {active_nodes_to_process}")
+
+        # --- 2. Prepare Context ---
+        nodes_data.sort(key=lambda x: x.get('timestamp', ''))  # Ensure chronological order for context
+        context_text = "\n".join([f"{d.get('speaker', '?')}: {d.get('text', '')}" for d in nodes_data])
+        logger.debug(f"Consolidation context text (first 200 chars):\n{context_text[:200]}...")
+
+        # --- 3. Summarization ---
+        summary_node_uuid, summary_created = self._consolidate_summarize(context_text, nodes_data,
+                                                                         active_nodes_to_process)
+
+        # --- 4. Concept Extraction (LLM) ---
+        llm_concepts = self._consolidate_extract_concepts(context_text)
+
+        # --- 5. Concept Deduplication & Node Management ---
+        concept_node_map = {}  # Map: concept_text -> concept_node_uuid
+        newly_added_concepts = []
+        processed_llm_concepts = set()  # Track concepts processed from LLM list
+
+        if llm_concepts:
+            logger.info(f"LLM Concepts to process: {llm_concepts}")
+            for concept_text in llm_concepts:
+                if concept_text in processed_llm_concepts: continue  # Avoid processing duplicates from LLM list itself
+                processed_llm_concepts.add(concept_text)
+                logger.debug(f"Processing LLM concept: '{concept_text}'")
+                # Search for existing similar 'concept' nodes that are 'active'
+                similar_concepts = self._search_similar_nodes(concept_text, k=1, node_type_filter='concept')
+
+                existing_uuid = None
+                if similar_concepts:
+                    best_match_uuid, best_match_score = similar_concepts[0]
+                    # Check if the existing node is active
+                    if best_match_uuid in self.graph and self.graph.nodes[best_match_uuid].get('status',
+                                                                                               'active') == 'active':
+                        if best_match_score <= concept_sim_threshold:
+                            existing_uuid = best_match_uuid
+                            logger.info(
+                                f"Concept '{concept_text}' matches existing active node {existing_uuid[:8]} (Score: {best_match_score:.3f})")
+                        else:
+                            logger.debug(
+                                f"Found similar concept {best_match_uuid[:8]}, but score ({best_match_score:.3f}) > threshold ({concept_sim_threshold}).")
+                    else:
+                        logger.debug(
+                            f"Found similar concept {best_match_uuid[:8]}, but it's not active (Status: {self.graph.nodes[best_match_uuid].get('status')}).")
+
+                if existing_uuid:
+                    concept_node_map[concept_text] = existing_uuid
+                    # Update access time of existing concept
+                    self.graph.nodes[existing_uuid]['last_accessed_ts'] = time.time()
+                    # Optionally boost activation/saliency? Not implemented here.
+                else:
+                    logger.info(f"Adding new concept node for: '{concept_text}'")
+                    new_concept_uuid = self.add_memory_node(concept_text, "System", 'concept', base_strength=0.85)
+                    if new_concept_uuid:
+                        concept_node_map[concept_text] = new_concept_uuid
+                        newly_added_concepts.append(new_concept_uuid)
+                    else:
+                        logger.error(f"Failed to add new concept node for '{concept_text}'")
+            logger.info(
+                f"Processed LLM concepts. Map size: {len(concept_node_map)}. New concepts added: {len(newly_added_concepts)}")
+        else:
+            logger.info("No concepts extracted by LLM.")
+
+        # --- 6. Link Concepts to Source Nodes ---
+        if concept_node_map:
+            current_time = time.time()
+            for concept_text, concept_uuid in concept_node_map.items():
+                if concept_uuid not in self.graph: continue  # Should not happen, but safety check
+                # Link concept to the summary node if created
+                if summary_node_uuid and summary_node_uuid in self.graph:
+                    try:
+                        if not self.graph.has_edge(summary_node_uuid, concept_uuid):
+                            self.graph.add_edge(summary_node_uuid, concept_uuid, type='MENTIONS_CONCEPT',
+                                                base_strength=0.7, last_traversed_ts=current_time)
+                    except Exception as e:
+                        logger.error(
+                            f"Error adding MENTIONS_CONCEPT edge from summary {summary_node_uuid[:8]} to {concept_uuid[:8]}: {e}")
+
+                # Link concept to original turn nodes where it might appear (less precise)
+                for node_uuid in active_nodes_to_process:
+                    if node_uuid in self.graph and concept_text.lower() in self.graph.nodes[node_uuid].get('text',
+                                                                                                           '').lower():
+                        try:
+                            if not self.graph.has_edge(node_uuid, concept_uuid):
+                                self.graph.add_edge(node_uuid, concept_uuid, type='MENTIONS_CONCEPT', base_strength=0.7,
+                                                    last_traversed_ts=current_time)
+                            else:  # Update timestamp if edge exists
+                                self.graph.edges[node_uuid, concept_uuid]['last_traversed_ts'] = current_time
+                        except Exception as e:
+                            logger.error(
+                                f"Error adding/updating MENTIONS_CONCEPT edge from turn {node_uuid[:8]} to {concept_uuid[:8]}: {e}")
+
+        # --- 7. Relation Extraction ---
+        # (Only run if we actually identified/created concepts)
+        if concept_node_map:
+            spacy_doc = None  # Initialize spacy_doc
+            if rich_assoc_enabled and self.nlp:
+                try:
+                    logger.info("Using spaCy for potential pre-processing of context...")
+                    spacy_doc = self.nlp(context_text)
+                    # Placeholder: Could extract entities/dependencies here if needed by rich relation prompt later
+                except Exception as spacy_err:
+                    logger.error(f"Error processing context with spaCy: {spacy_err}. Falling back.", exc_info=True)
+                    # Fallback to LLM-only methods if spaCy fails
+                    self._consolidate_extract_v1_associative(concept_node_map)
+                    self._consolidate_extract_hierarchy(concept_node_map)
+                else:
+                    # If spaCy succeeded, proceed with rich relation extraction
+                    self._consolidate_extract_rich_relations(context_text, concept_node_map, spacy_doc)
+
+            else:  # Rich associations disabled or spaCy unavailable/failed earlier
+                if not self.nlp and rich_assoc_enabled:
+                    logger.warning(
+                        "Rich associations enabled but spaCy model not loaded. Falling back to V1 relation extraction.")
+                logger.info("Running V1 Associative and Hierarchy extraction (LLM only).")
+                self._consolidate_extract_v1_associative(concept_node_map)
+                self._consolidate_extract_hierarchy(concept_node_map)
+        else:
+            logger.info("Skipping relation extraction as no concepts were identified.")
+
+        # --- 8. Pruning (Optional) ---
+        if prune_summarized and summary_created:
+            logger.info("Pruning original turn nodes that were summarized...")
+            pruned_count = 0
+            for uuid_to_prune in active_nodes_to_process:
+                if uuid_to_prune in self.graph:
+                    try:
+                        # Mark as 'archived' instead of deleting? (Safer)
+                        # Let's stick to delete for now as per plan, but archiving is better.
+                        # --> Changing to ARCHIVE based on Nuanced Forgetting plan
+                        self.graph.nodes[uuid_to_prune]['status'] = 'archived'
+                        logger.debug(f"Archived summarized turn node: {uuid_to_prune[:8]}")
+                        pruned_count += 1
+                        # Note: Need to rebuild FAISS index after archiving!
+                    except Exception as e:
+                        logger.error(f"Error archiving node {uuid_to_prune[:8]}: {e}")
+            logger.info(f"Archived {pruned_count} summarized turn nodes.")
+            if pruned_count > 0:
+                logger.info("Rebuilding FAISS index after pruning...")
+                self._rebuild_index_from_graph_embeddings()  # Rebuild index to remove archived nodes
+
+        self._save_memory()  # Save changes after consolidation
+        logger.info("--- Consolidation Finished ---")
+
+#Function call
 if __name__ == "__main__":
-    # (Keep implementation from previous version)
-    logger.info("Running basic test...")
-    client = GraphMemoryClient()
-    print("\n--- Initial State ---"); print(f"Nodes: {client.graph.number_of_nodes()}, Edges: {client.graph.number_of_edges()}, Embeds: {len(client.embeddings)}, FAISS: {client.index.ntotal if client.index else 'N/A'}"); print(f"Last node: {client.last_added_node_uuid}"); print("-" * 20)
-    uuid1, uuid2, uuid3 = None, None, None; min_consolidation_nodes = client.config.get('consolidation', {}).get('min_nodes', 5)
-    if client.graph.number_of_nodes() < 4: print("Adding nodes..."); ts1 = (datetime.now(timezone.utc)-timedelta(seconds=20)).isoformat(); uuid1=client.add_memory_node("The quick brown fox", "User", timestamp=ts1); ts2 = (datetime.now(timezone.utc)-timedelta(seconds=10)).isoformat(); uuid2=client.add_memory_node("jumped over the lazy dog", "AI", timestamp=ts2); uuid3=client.add_memory_node("Both are animals.", "User"); print(f" Added: {uuid1[:8]}, {uuid2[:8]}, {uuid3[:8]}"); client._save_memory()
-    else: uuids = sorted(list(client.graph.nodes()), key=lambda u: client.graph.nodes[u].get('timestamp','')); uuid1=uuids[-3] if len(uuids)>=3 else None; uuid2=uuids[-2] if len(uuids)>=2 else None; uuid3=uuids[-1] if len(uuids)>=1 else None; print(f"Using existing nodes: {uuid1}, {uuid2}, {uuid3}")
-    print("\n--- Testing Retrieval ---")
-    if client.graph.number_of_nodes() > 0: query = "animal sounds"; print(f"Query: '{query}'"); initial_nodes = client._search_similar_nodes(query); initial_uuids = [uid for uid,score in initial_nodes]; print(f" Initial nodes: {initial_uuids}"); chain = client.retrieve_memory_chain(initial_uuids); print(f" Retrieved chain ({len(chain)}):"); [print(f"  UUID: {node['uuid'][:8]}, Act: {node['final_activation']:.3f}, TS: {node.get('timestamp')}, Text: '{node['text'][:40]}...'") for node in chain[:10]]
-    else: print("Graph empty.")
-    print("\n--- Testing Consolidation ---")
-    if client.graph.number_of_nodes() >= min_consolidation_nodes: print("Running consolidation..."); client.run_consolidation(); print("--- State After Consolidation ---"); print(f"Nodes: {client.graph.number_of_nodes()}, Edges: {client.graph.number_of_edges()}"); client._save_memory()
-    else: print(f"Skipping consolidation (requires >= {min_consolidation_nodes} nodes).")
-    logger.info("Basic test finished.")
+    # Basic test execution when the script is run directly
+    logger.info("Running basic test of GraphMemoryClient...")
+
+    # Initialize the client (using default personality from config)
+    try:
+        client = GraphMemoryClient()
+        print("\n--- Initial State ---")
+        print(f"Personality: '{client.personality}'")
+        print(f"Nodes: {client.graph.number_of_nodes()}, Edges: {client.graph.number_of_edges()}")
+        print(f"Embeddings: {len(client.embeddings)}, FAISS Index Vectors: {client.index.ntotal if client.index else 'N/A'}")
+        print(f"Last added node: {client.last_added_node_uuid}")
+        print("-" * 20)
+
+        # --- Add a few nodes if memory is small ---
+        min_consolidation_nodes = client.config.get('consolidation', {}).get('min_nodes', 5)
+        if client.graph.number_of_nodes() < min_consolidation_nodes:
+            print(f"Adding initial nodes (less than {min_consolidation_nodes} found)...")
+            ts1 = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat()
+            uuid1 = client.add_memory_node("The quick brown fox", "User", timestamp=ts1)
+            ts2 = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+            uuid2 = client.add_memory_node("jumped over the lazy dog", "AI", timestamp=ts2)
+            uuid3 = client.add_memory_node("Both are animals.", "User")
+            print(f" Added nodes: {uuid1[:8] if uuid1 else 'Fail'}, {uuid2[:8] if uuid2 else 'Fail'}, {uuid3[:8] if uuid3 else 'Fail'}")
+            client._save_memory() # Save after adding
+        else:
+            print("Sufficient nodes exist, skipping initial node addition.")
+            # Get some existing node UUIDs for testing retrieval if needed
+            try:
+                 uuids = sorted(list(client.graph.nodes()), key=lambda u: client.graph.nodes[u].get('timestamp',''))
+                 uuid1=uuids[-3] if len(uuids)>=3 else None
+                 uuid2=uuids[-2] if len(uuids)>=2 else None
+                 uuid3=uuids[-1] if len(uuids)>=1 else None
+                 print(f"Using latest existing nodes for potential testing: {uuid1}, {uuid2}, {uuid3}")
+            except Exception as e:
+                 print(f"Could not get existing node UUIDs: {e}")
+
+
+        # --- Test Retrieval ---
+        print("\n--- Testing Retrieval ---")
+        if client.graph.number_of_nodes() > 0 and client.index and client.index.ntotal > 0:
+            query = "animal sounds" # Example query
+            print(f"Query: '{query}'")
+            initial_nodes = client._search_similar_nodes(query)
+            initial_uuids = [uid for uid, score in initial_nodes]
+            print(f" Initial nodes found by similarity search: {initial_uuids}")
+            if initial_uuids:
+                 chain = client.retrieve_memory_chain(initial_uuids)
+                 print(f" Retrieved memory chain ({len(chain)} nodes):")
+                 # Print details of retrieved nodes (limited)
+                 for node in chain[:10]: # Limit output
+                      print(f"  - UUID: {node['uuid'][:8]}, Act: {node.get('final_activation', 0.0):.3f}, Type: {node.get('node_type', '?')}, Text: '{node.get('text', '')[:40]}...'")
+            else:
+                 print(" No initial nodes found for retrieval.")
+        else:
+            print("Graph or FAISS index empty/unavailable, skipping retrieval test.")
+
+        # --- Test Consolidation ---
+        print("\n--- Testing Consolidation ---")
+        # Check if consolidation should run based on node count
+        if client.graph.number_of_nodes() >= min_consolidation_nodes:
+            print("Running consolidation (requires sufficient nodes)...")
+            try:
+                # Ensure rich associations are enabled in config for testing that path
+                # Or set client.config['features']['enable_rich_associations'] = True here for testing
+                client.run_consolidation() # Run the main consolidation logic
+                print("--- State After Consolidation ---")
+                print(f"Nodes: {client.graph.number_of_nodes()}, Edges: {client.graph.number_of_edges()}")
+                # Optionally save memory after consolidation test
+                client._save_memory()
+            except Exception as e:
+                print(f"Error during consolidation test: {e}")
+                logger.error("Error during consolidation test", exc_info=True)
+        else:
+            print(f"Skipping consolidation test (requires >= {min_consolidation_nodes} nodes).")
+
+        # --- Test Action Analysis (Example) ---
+        print("\n--- Testing Action Analysis ---")
+        test_action_request = "add meeting for tomorrow 10am project discussion to calendar"
+        print(f"Analyzing request: '{test_action_request}'")
+        action_result = client.analyze_action_request(test_action_request)
+        print(f" Analysis result: {action_result}")
+        if action_result.get("action") not in ["none", "clarify", "error"]:
+             print("  (Would normally execute this action now)")
+             # success, message, suffix = client.execute_action(action_result)
+             # print(f"  Execution result: Success={success}, Message='{message}'")
+
+        test_none_request = "that is interesting"
+        print(f"Analyzing request: '{test_none_request}'")
+        action_result_none = client.analyze_action_request(test_none_request)
+        print(f" Analysis result: {action_result_none}")
+
+
+        logger.info("Basic test finished.")
+        print("\nBasic test finished.")
+
+    except Exception as main_e:
+        print(f"\nAn error occurred during the main test execution: {main_e}")
+        logger.critical("Error during main test execution", exc_info=True)

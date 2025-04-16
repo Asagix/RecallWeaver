@@ -93,20 +93,24 @@ class WorkerSignals(QObject):
 
 # --- Worker Thread ---
 class Worker(QThread):
+    # --- WorkerSignals definition remains the same ---
+    # signals = WorkerSignals() # Assuming WorkerSignals is defined above
+
     def __init__(self, personality_name, config_path=DEFAULT_CONFIG_PATH):
         super().__init__()
         self.signals = WorkerSignals()
         self.client = None
         self.current_conversation = []
         self.is_running = True
-        self.input_queue = []
+        self.input_queue = [] # List to hold tasks: (task_type, data)
         self.mod_keywords = []
-        self.consolidation_trigger_count = 0 # Default to 0 (disabled) if not found
-        self.interaction_count = 0
+        self.consolidation_trigger_count = 0 # Interactions before auto-consolidation
+        self.forgetting_trigger_count = 0 # Interactions before auto-forgetting
+        self.interaction_count = 0 # Tracks user/AI turns since last trigger
         self.personality = personality_name
         self.config_path = config_path
 
-        # Load config for keywords and consolidation count
+        # Load config for keywords and trigger counts
         try:
             with open(config_path, 'r') as f: config = yaml.safe_load(f)
             loaded_keywords = config.get('modification_keywords', FALLBACK_MODIFICATION_KEYWORDS)
@@ -114,85 +118,95 @@ class Worker(QThread):
             gui_logger.info(f"Worker({self.personality}) loaded keywords: {self.mod_keywords}")
 
             consolidation_cfg = config.get('consolidation', {})
-            self.consolidation_trigger_count = consolidation_cfg.get('consolidation_trigger_count', 0) # Default 0
+            # Ensure trigger count is an integer, default to 0 (disabled)
+            self.consolidation_trigger_count = int(consolidation_cfg.get('consolidation_trigger_count', 0))
+
+            forgetting_cfg = config.get('forgetting', {})
+            # Ensure trigger count is an integer, default to 0 (disabled)
+            self.forgetting_trigger_count = int(forgetting_cfg.get('trigger_interaction_count', 0))
+
             gui_logger.info(f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
+            gui_logger.info(f"Worker({self.personality}) Forgetting trigger count: {self.forgetting_trigger_count}")
+
         except Exception as e:
             gui_logger.error(f"Error loading config for worker: {e}. Using fallbacks.", exc_info=True)
             self.mod_keywords = FALLBACK_MODIFICATION_KEYWORDS
             self.consolidation_trigger_count = 0
+            self.forgetting_trigger_count = 0
 
     def run(self):
         """Initializes backend and processes tasks from the queue."""
         initialized_successfully = False
         try:
             gui_logger.info(f"Worker run: Initializing backend for '{self.personality}'...")
+            # Ensure GraphMemoryClient exists and is imported
             self.client = GraphMemoryClient(config_path=self.config_path, personality_name=self.personality)
-            # If initialization succeeds:
             initialized_successfully = True
             self.signals.log_message.emit(f"Backend for '{self.personality}' initialized.")
-            # Emit success signal
             self.signals.backend_ready.emit(True, self.personality)
-
         except Exception as e:
-            # If initialization fails:
             error_msg = f"FATAL: Failed initialize backend for '{self.personality}': {e}"
-            self.signals.error.emit(error_msg) # Send error to GUI
+            self.signals.error.emit(error_msg)
             backend_logger.error(error_msg, exc_info=True)
-            # Emit failure signal
             self.signals.backend_ready.emit(False, self.personality)
-            self.is_running = False # Stop thread if backend fails
-            return # Exit run method
+            self.is_running = False
+            return
 
         # --- Main Processing Loop ---
         while self.is_running:
             if self.input_queue:
                 task_type, data = self.input_queue.pop(0)
                 try:
-                    # (Keep task handling logic: handle_chat_task, handle_modify_task, etc.)
-                    # ... (same as previous version) ...
+                    gui_logger.debug(f"Worker processing task: {task_type}")
                     if task_type == 'chat': self.handle_chat_task(data)
                     elif task_type == 'modify': self.handle_modify_task(data)
                     elif task_type == 'reset': self.handle_reset_task()
                     elif task_type == 'consolidate': self.handle_consolidation_task()
                     elif task_type == 'execute_action': self.handle_execute_action_task(data)
+                    # --- Add handler for memory maintenance ---
+                    elif task_type == 'memory_maintenance': self.handle_memory_maintenance_task()
+                    else:
+                         gui_logger.warning(f"Unknown task type received in worker queue: {task_type}")
 
                 except Exception as e:
+                    # Catch errors within specific task handlers if possible,
+                    # this is a fallback for unexpected errors in the loop itself.
                     error_msg = f"Unexpected error handling task '{task_type}': {e}"
                     self.signals.error.emit(error_msg)
                     backend_logger.error(error_msg, exc_info=True)
             else:
-                self.msleep(100)
+                # Prevent busy-waiting
+                self.msleep(100) # Sleep for 100 milliseconds if queue is empty
 
         # --- Cleanup when loop ends ---
         self.save_memory_on_stop()
         self.signals.log_message.emit(f"Worker processing stopped for '{self.personality}'.")
 
-    # --- Task Handler Methods (Keep implementations from previous versions) ---
     def handle_chat_task(self, data: dict):
-        """Handles chat tasks, potentially with attachments."""
+        """Handles chat tasks, potentially with attachments, and triggers maintenance."""
         user_input_text = data.get('text', '')
-        attachment = data.get('attachment') # Might be None
+        attachment = data.get('attachment')
 
-        # Log user turn in conversation history
         user_timestamp = datetime.now(timezone.utc).isoformat()
-        # Include basic attachment info in history text for context?
         history_text = user_input_text
         if attachment and attachment.get('type') == 'image':
              placeholder = f" [Image: {attachment.get('filename', 'Attached')}]"
              separator = " " if history_text else ""
              history_text += separator + placeholder
 
+        # Append user turn *before* processing potentially long LLM call
         self.current_conversation.append({"speaker": "User", "text": history_text, "timestamp": user_timestamp})
         self.signals.log_message.emit(f"Processing chat: {history_text[:30]}...")
 
         ai_response_text = "Error: Could not get response."
         memory_chain_data = []
+        interaction_successful = False # Flag to track if LLM call succeeded
+
         try:
-            # Call process_interaction with both text and attachment data
             ai_response_text, memory_chain_data = self.client.process_interaction(
-                user_input=user_input_text, # Pass original text
+                user_input=user_input_text,
                 conversation_history=self.current_conversation,
-                attachment_data=attachment # Pass the attachment dict (or None)
+                attachment_data=attachment
             )
 
             # Add AI response to worker's history
@@ -200,100 +214,211 @@ class Worker(QThread):
             self.current_conversation.append({"speaker": "AI", "text": ai_response_text,"timestamp": ai_timestamp})
 
             # Emit result signal
-            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data) # Send history_text back for context
-
-            self.interaction_count += 1
-            gui_logger.debug(f"Interaction count: {self.interaction_count}")
-            if self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
-                self.handle_consolidation_task(triggered_automatically=True)
+            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data)
+            interaction_successful = True # Mark as successful
 
         except Exception as e:
-            # Handle errors during processing
             error_msg = f"Error during chat processing: {e}"
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg, exc_info=True)
             error_timestamp = datetime.now(timezone.utc).isoformat()
-            self.current_conversation.append({"speaker": "Error","text": "Failed to process interaction.","timestamp": error_timestamp})
-            self.signals.response_ready.emit(history_text, f"Error: {e}", [])
+            self.current_conversation.append({"speaker": "Error","text": f"Failed to process interaction: {e}","timestamp": error_timestamp})
+            # Emit error response, potentially using the original history text for context
+            self.signals.response_ready.emit(history_text, f"Error generating response: {e}", [])
+            interaction_successful = False # Mark as failed
+
+        # --- Trigger Maintenance Tasks AFTER interaction attempt ---
+        if interaction_successful:
+             self.interaction_count += 1
+             gui_logger.debug(f"Interaction count for '{self.personality}': {self.interaction_count}")
+
+             # Check Forgetting Trigger
+             # Ensure trigger count is positive (enabled)
+             if self.forgetting_trigger_count > 0 and self.interaction_count >= self.forgetting_trigger_count:
+                 gui_logger.info(f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
+                 self.input_queue.append(('memory_maintenance', None)) # Add maintenance task
+                 # Reset counter immediately after queuing to avoid multiple triggers if queue processes slowly
+                 self.interaction_count = 0
+             # Check Consolidation Trigger (only if forgetting didn't reset counter)
+             # Ensure trigger count is positive (enabled)
+             elif self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
+                 gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
+                 # Pass flag indicating automatic trigger? Might be useful later.
+                 self.handle_consolidation_task(triggered_automatically=True)
+                 # Reset counter
+                 self.interaction_count = 0
+
+    # --- NEW Task Handler for Memory Maintenance ---
+    def handle_memory_maintenance_task(self):
+        """Handles the task for running the nuanced forgetting process."""
+        self.signals.log_message.emit("[Auto] Running memory maintenance (forgetting)...")
+        backend_logger.info(f"[Auto] Worker running memory maintenance for '{self.personality}'.")
+        if self.client:
+            try:
+                # Call the backend method responsible for forgetting/archiving
+                self.client.run_memory_maintenance()
+                # Optionally emit a signal if specific feedback is needed?
+                # self.signals.maintenance_complete.emit("Memory maintenance finished.")
+                self.signals.log_message.emit("[Auto] Memory maintenance finished.") # Simple log message for now
+            except Exception as e:
+                error_msg = f"Error during automatic memory maintenance: {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+        else:
+            error_msg = "Backend client not available for memory maintenance."
+            self.signals.error.emit(error_msg)
+            backend_logger.error(error_msg)
+
 
     def handle_modify_task(self, user_input):
-        # (Implementation remains the same - uses self.client)
+        # (Implementation remains the same - no interaction counter increment)
         user_timestamp = datetime.now(timezone.utc).isoformat()
-        self.current_conversation.append({"speaker": "User", "text": user_input, "timestamp": user_timestamp})
+        # self.current_conversation.append({"speaker": "User", "text": user_input, "timestamp": user_timestamp}) # Maybe don't add modification command itself to history? Or add differently?
         self.signals.log_message.emit(f"Processing modification: {user_input[:30]}...")
         final_confirmation_msg = "Could not understand modification request."
         final_action_type = "error"; final_target_info = ""; ok = False; msg = final_confirmation_msg
         try:
+            # --- Call backend analysis ---
             action_data = self.client.analyze_memory_modification_request(user_input)
             if isinstance(action_data, dict) and 'action' in action_data:
                 action = action_data.get('action'); final_action_type = action
                 target_uuid = action_data.get('target_uuid'); target_desc = action_data.get('target')
                 new_text = action_data.get('new_text'); topic = action_data.get('topic')
+
+                # Determine target info string for logging/signal
                 if action in ["delete", "edit"]: final_target_info = target_uuid or target_desc or "?"
                 elif action == "forget": final_target_info = topic or "?"
+
+                # --- Execute backend modification ---
                 if action == "delete":
-                    if target_uuid: ok = self.client.delete_memory_entry(target_uuid); msg = f"Deleted: {target_uuid[:8]}..." if ok else f"Failed delete: {target_uuid[:8]}..."
-                    else: msg = f"Could not identify UUID to delete for '{target_desc or user_input[:30]}...'."; final_action_type = "delete_clarify"
+                    if target_uuid:
+                        ok = self.client.delete_memory_entry(target_uuid)
+                        msg = f"Deleted entry: {target_uuid[:8]}..." if ok else f"Failed to delete entry: {target_uuid[:8]}..."
+                    else: msg = f"Cannot delete: Please specify the exact UUID of the memory entry."; final_action_type = "delete_clarify"
                 elif action == "edit":
-                    if target_uuid and new_text: new_uuid = self.client.edit_memory_entry(target_uuid, new_text); ok=bool(new_uuid); msg=f"Edited. New: {new_uuid[:8]}" if ok else f"Failed edit: {target_uuid[:8]}..."; final_target_info=new_uuid or target_uuid
-                    elif not target_uuid: msg = f"Could not identify UUID to edit for '{target_desc or user_input[:30]}...'."; final_action_type = "edit_clarify"
-                    else: msg = "Could not understand new text for edit."; final_action_type = "edit_clarify"
+                    if target_uuid and new_text is not None: # Allow empty string edit? Yes.
+                        new_uuid = self.client.edit_memory_entry(target_uuid, new_text)
+                        ok = bool(new_uuid)
+                        msg = f"Edited entry {target_uuid[:8]}. New ID: {new_uuid[:8]}" if ok else f"Failed to edit entry: {target_uuid[:8]}..."
+                        final_target_info = new_uuid[:8] if ok else target_uuid[:8] # Show new or old UUID
+                    elif not target_uuid: msg = f"Cannot edit: Please specify the exact UUID of the memory entry."; final_action_type = "edit_clarify"
+                    else: msg = "Cannot edit: Please provide the new text after the UUID."; final_action_type = "edit_clarify"
                 elif action == "forget":
-                    if topic: ok, msg = self.client.forget_topic(topic)
-                    else: msg = "Could not identify topic to forget."; final_action_type = "forget_clarify"
-                elif action == "none": ok, msg = True, "No memory action taken."
-                elif action == "error": ok, msg = False, f"Analysis Error: {action_data.get('reason', '?')}"
-                else: ok, msg = False, f"Unknown action '{action}'."
-                final_confirmation_msg=msg;
-                if action not in ["none","delete_clarify","edit_clarify","forget_clarify","error","unknown"]: final_action_type = f"{action}_{'success' if ok else 'fail'}"
-            else: final_confirmation_msg = "Failed analysis structure."; final_action_type = "analysis_fail"
-        except Exception as e: error_msg = f"Error during modification processing: {e}"; final_confirmation_msg = f"An internal error occurred: {e}"; final_action_type = "processing_exception"; backend_logger.error(error_msg, exc_info=True)
+                    if topic:
+                        ok, msg = self.client.forget_topic(topic) # forget_topic returns (bool, message)
+                    else: msg = "Cannot forget: Please specify the topic to forget."; final_action_type = "forget_clarify"
+                elif action == "none": ok, msg = True, "No memory modification action taken."
+                elif action == "error": ok, msg = False, f"Analysis Error: {action_data.get('reason', 'Unknown')}"
+                else: ok, msg = False, f"Unknown action type '{action}' received from analysis."
+
+                final_confirmation_msg = msg
+                # Refine suffix logic
+                if action not in ["none","error","unknown"] and "clarify" not in action:
+                    final_action_type = f"{action}_{'success' if ok else 'fail'}"
+
+            else:
+                final_confirmation_msg = "Failed to analyze modification request structure."
+                final_action_type = "analysis_fail"
+
+        except Exception as e:
+            error_msg = f"Error during modification processing: {e}"
+            final_confirmation_msg = f"An internal error occurred during modification: {e}"
+            final_action_type = "processing_exception"
+            backend_logger.error(error_msg, exc_info=True)
+
+        # Append system response to conversation history
         confirmation_timestamp = datetime.now(timezone.utc).isoformat()
         self.current_conversation.append({"speaker": "System", "text": final_confirmation_msg, "timestamp": confirmation_timestamp})
+        # Emit signal to GUI
         self.signals.modification_response_ready.emit(user_input, final_confirmation_msg, final_action_type, str(final_target_info))
 
     def handle_reset_task(self):
-        # (Implementation remains the same - uses self.client)
-        self.signals.log_message.emit("Resetting memory..."); backend_logger.info("Worker received reset request.")
+        # (Implementation remains the same - no interaction counter increment)
+        self.signals.log_message.emit("Resetting memory...")
+        backend_logger.info("Worker received reset request.")
         if self.client:
             try: reset_ok = self.client.reset_memory();
             except Exception as e: error_msg = f"Error calling backend reset_memory: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
-            if reset_ok: self.current_conversation.clear(); self.interaction_count = 0; backend_logger.info("Memory reset successful."); self.signals.memory_reset_complete.emit()
+            if reset_ok:
+                 self.current_conversation.clear()
+                 self.interaction_count = 0 # Reset interaction count on memory reset
+                 backend_logger.info("Memory reset successful.")
+                 self.signals.memory_reset_complete.emit()
             else: self.signals.error.emit("Backend failed to reset memory.")
         else: self.signals.error.emit("Backend client not available for reset.")
 
     def handle_consolidation_task(self, triggered_automatically=False):
-        # (Implementation remains the same - uses self.client)
-        prefix = "[Auto] " if triggered_automatically else "[Manual] "; self.signals.log_message.emit(f"{prefix}Running memory consolidation..."); backend_logger.info(f"{prefix}Worker received consolidation request.")
+        """Handles the task for running memory consolidation."""
+        prefix = "[Auto] " if triggered_automatically else "[Manual] "
+        self.signals.log_message.emit(f"{prefix}Running memory consolidation...")
+        backend_logger.info(f"{prefix}Worker received consolidation request for '{self.personality}'.")
         if self.client:
-            try: self.client.run_consolidation();
-            except Exception as e: error_msg = f"Error during consolidation: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
-            if triggered_automatically: self.interaction_count = 0; gui_logger.info("Automatic consolidation finished, counter reset.")
-            self.signals.consolidation_complete.emit(f"{prefix}Consolidation finished.")
-        else: self.signals.error.emit("Backend client not available for consolidation.")
+            try:
+                # --- Ensure the correct method name is called ---
+                self.client.run_consolidation() # <<< This call
+                # --- End Correction ---
+            except AttributeError as e:
+                 # Catch the specific error if the method is still missing
+                 error_msg = f"Error during consolidation: Method 'run_consolidation' not found on client. {e}"
+                 self.signals.error.emit(error_msg)
+                 backend_logger.error(error_msg, exc_info=True)
+                 return
+            except Exception as e:
+                 # Catch other errors during execution
+                 error_msg = f"Error during consolidation: {e}"
+                 self.signals.error.emit(error_msg)
+                 backend_logger.error(error_msg, exc_info=True)
+                 return # Stop if error occurs
+
+            # This logic correctly handles automatic vs manual triggers for logging/signals
+            if triggered_automatically:
+                 # Counter reset happens in handle_chat_task *before* automatic triggering logic queueing the task
+                 gui_logger.info("Automatic consolidation finished.") # Log completion
+            self.signals.consolidation_complete.emit(f"{prefix}Consolidation finished.") # Signal GUI
+        else:
+            self.signals.error.emit("Backend client not available for consolidation.")
+
+
 
     def handle_execute_action_task(self, action_data):
-        # (Implementation remains the same - uses self.client)
+        # (Implementation remains the same - no interaction counter increment)
         action = action_data.get('action', 'unknown'); self.signals.log_message.emit(f"Executing action: {action}...")
         if self.client:
             success = False; message = f"Failed to execute action '{action}'."; action_suffix = f"{action}_fail"
-            try: success, message, action_suffix = self.client.execute_action(action_data)
-            except Exception as e: error_msg = f"Error calling backend execute_action for '{action}': {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); success = False; message = f"Internal error executing action: {e}"; action_suffix = f"{action}_exception"
+            try:
+                # Backend now returns (bool, message, suffix)
+                success, message, action_suffix = self.client.execute_action(action_data)
+            except Exception as e:
+                error_msg = f"Error calling backend execute_action for '{action}': {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+                success = False
+                message = f"Internal error executing action: {e}"
+                action_suffix = f"{action}_exception"
+
+            # Add result message to conversation history
             result_timestamp = datetime.now(timezone.utc).isoformat()
             self.current_conversation.append({"speaker": "System", "text": message, "timestamp": result_timestamp})
-            user_input_placeholder = f"Action request: {action}"; target_info_placeholder = str(action_data.get('args', {}))[:100]
+
+            # Emit signal to GUI (use the suffix returned by execute_action)
+            # Need placeholder for user input and target info for this signal
+            user_input_placeholder = f"Action request: {action}"
+            target_info_placeholder = str(action_data.get('args', {}))[:100] # Use args as target info
             self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix, target_info_placeholder)
-        else: self.signals.error.emit("Backend client not available for action execution.")
+        else:
+             error_msg = "Backend client not available for action execution."
+             self.signals.error.emit(error_msg)
+             backend_logger.error(error_msg)
 
     def add_input(self, text: str, attachment: dict | None = None):
         """Analyzes input/attachment and adds appropriate task to the queue."""
-        if not self.client: self.signals.error.emit("Backend client not ready."); return
+        if not self.client:
+             self.signals.error.emit("Backend client not ready.")
+             return
 
         gui_logger.info(f"Worker received input: Text='{text[:50]}...', Attachment Type='{attachment.get('type') if attachment else None}'")
 
         # --- Prioritize Image Attachment ---
-        # If there's an image, treat it as a 'chat' task directly, skipping action analysis for now
-        # (Action analysis might need rework to handle multimodal prompts later)
         if attachment and attachment.get('type') == 'image':
              gui_logger.info("Image attachment found. Queuing chat task directly.")
              task_data = {'text': text, 'attachment': attachment}
@@ -301,29 +426,56 @@ class Worker(QThread):
              return
 
         # --- If no image, proceed with standard analysis ---
-        gui_logger.info(f"Analyzing text input: '{text[:50]}...'")
+        gui_logger.info(f"Analyzing text input for actions/commands: '{text[:50]}...'")
         try:
-            analysis_result = self.client.analyze_action_request(text); action = analysis_result.get("action")
-            if action == "error": self.signals.error.emit(f"Action Analysis Error: {analysis_result.get('reason', '?')}"); return
-            elif action == "clarify":
-                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-                self.signals.clarification_needed.emit(analysis_result.get("original_action", "?"), analysis_result.get("missing_args", [])); return
-            elif action != "none":
-                gui_logger.info(f"Action '{action}' detected. Queuing execution task.")
-                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-                self.input_queue.append(('execute_action', analysis_result)); return
-        except Exception as e: gui_logger.error(f"Error during action request analysis: {e}", exc_info=True); self.signals.error.emit(f"Failed to analyze for actions: {e}")
+            # Analyze for File/Calendar actions first
+            analysis_result = self.client.analyze_action_request(text)
+            action = analysis_result.get("action")
 
-        is_modification = False; text_lower = text.lower()
+            if action == "error":
+                self.signals.error.emit(f"Action Analysis Error: {analysis_result.get('reason', '?')}")
+                # Maybe proceed with chat? Or just stop? For now, stop.
+                return
+            elif action == "clarify":
+                # If clarification is needed, add user text to history and emit signal
+                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.signals.clarification_needed.emit(analysis_result.get("original_action", "?"), analysis_result.get("missing_args", []))
+                # Don't queue chat task, wait for user clarification
+                return
+            elif action != "none":
+                # If a specific file/calendar action is identified, queue it
+                gui_logger.info(f"Action '{action}' detected. Queuing execution task.")
+                # Add user text to history before queuing action
+                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.input_queue.append(('execute_action', analysis_result))
+                return # Don't queue chat task
+
+        except Exception as e:
+             # Log error during analysis but potentially fall through to check modification/chat
+             gui_logger.error(f"Error during action request analysis: {e}", exc_info=True)
+             self.signals.error.emit(f"Failed to analyze for file/calendar actions: {e}")
+
+        # --- If not a file/calendar action, check for memory modification keywords ---
+        is_modification = False
+        text_lower = text.lower()
         if self.mod_keywords:
+            # Use regex for potentially more robust keyword matching (whole word)
             for keyword in self.mod_keywords:
-                 if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower): is_modification = True; break
+                 # \b matches word boundaries
+                 if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
+                     is_modification = True
+                     break
+
         if is_modification:
-            gui_logger.info("Memory modification keyword detected."); self.input_queue.append(('modify', text)) # Modify task only takes text for now
+            gui_logger.info("Memory modification keyword detected. Queuing modify task.")
+            # Don't add user input to history here, let handle_modify_task decide
+            self.input_queue.append(('modify', text))
         else:
-            gui_logger.info("No specific action/modification detected.")
+            # --- If not action or modification, treat as regular chat ---
+            gui_logger.info("No specific action/modification detected. Queuing chat task.")
             task_data = {'text': text, 'attachment': None} # Ensure chat task always gets dict
             self.input_queue.append(('chat', task_data))
+
 
     def request_memory_reset(self):
         # (Implementation remains the same)
@@ -344,6 +496,8 @@ class Worker(QThread):
             try: self.client._save_memory(); backend_logger.info("Final save complete.")
             except Exception as e: backend_logger.error(f"Error during final save: {e}", exc_info=True)
         else: backend_logger.warning("Worker stopping, but no backend client to save.")
+
+
 
 
 # --- Collapsible Memory Widget ---
@@ -436,7 +590,7 @@ class PasteLineEdit(QLineEdit):
                 event.accept(); return # Consume event
 
         # If not handled, pass to default
-        gui_logger.debug("Passing key event to default handler.")
+        #gui_logger.debug("Passing key event to default handler.")
         super().keyPressEvent(event)
 
     # --- Helper Methods for Paste Handling ---
