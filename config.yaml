@@ -14,6 +14,13 @@ embedding_model: "all-MiniLM-L6-v2"
 tokenizer_name: "google/gemma-7b-it"
 kobold_api_url: "http://localhost:5001/api/v1/generate"
 
+# --- Feature Flags ---
+features:
+  enable_saliency: true # Enable/disable saliency calculations
+  enable_emotion_analysis: true # Enable/disable basic emotion analysis during consolidation
+  enable_forgetting: true # Enable/disable nuanced forgetting
+  enable_rich_associations: true # Enable/disable LLM-based rich association extraction (Phase 1.1+)
+
 # --- Activation Spreading Parameters ---
 activation:
   initial: 1.0
@@ -37,7 +44,7 @@ activation:
 
 # --- Prompting & Context Configuration ---
 prompting:
-  max_context_tokens: 8.192
+  max_context_tokens: 8192 # Corrected the float value to integer
   context_headroom: 250
   memory_budget_ratio: 0.45
   history_budget_ratio: 0.55
@@ -46,14 +53,36 @@ prompting:
 consolidation:
   turn_count: 10
   min_nodes: 5
-  # NEW: Threshold for linking to existing concepts (L2 distance, lower=more similar)
   concept_similarity_threshold: 0.3
+
+# --- Emotion Analysis ---
+emotion_analysis:
+  default_valence: 0.0 # Neutral
+  default_arousal: 0.1 # Slightly above baseline minimum arousal
 
 # --- Forget Topic ---
 forget_topic:
   similarity_k: 15
 
-# --- GUI Keywords ---
+# --- Nuanced Forgetting ---
+forgetting:
+  trigger_interaction_count: 20 # How often to run maintenance (0 to disable)
+  score_threshold: 0.7 # Score above which nodes get archived
+  candidate_min_age_hours: 24 # Only consider nodes older than this
+  candidate_min_activation: 0.05 # Only consider nodes with low activation
+  protected_node_types: ['concept', 'summary'] # Types never automatically forgotten
+  # --- Forgettability Score Weights (must sum roughly to 1.0) ---
+  weights:
+    # Factors increasing forgettability:
+    recency_factor: 0.3      # How long since last access (older = more forgettable)
+    activation_factor: 0.2   # Low activation = more forgettable
+    node_type_factor: 0.1    # e.g., 'turn' nodes are more forgettable than others
+    # Factors decreasing forgettability (Resistance):
+    saliency_factor: 0.2     # Higher saliency = less forgettable (Placeholder)
+    emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
+    connectivity_factor: 0.1 # Higher degree = less forgettable (Placeholder)
+
+# --- GUI Keywords --- # Moved from bottom for better grouping
 modification_keywords:
   - "forget"
   - "delete"
@@ -63,20 +92,21 @@ modification_keywords:
   - "correct"
   - "update"
 
+
 # --- GUI Style Configuration ---
+# (Keep existing style config)
 gui_style:
   bubbles:
     max_width_percent: 75
     side_margin_px: 50
     edge_margin_px: 5
     min_width_px: 400
-    # Removed min_height_px
     border_radius_px: 18
-    internal_padding_top_bottom_px: 6  # <<< Maybe try reducing this (e.g., 4) if height is still too much
+    internal_padding_top_bottom_px: 6
     internal_padding_left_right_px: 10
-    timestamp_color_user: "#E0E0E0"  # <<< ADD: Color for timestamp in user bubble (e.g., light gray/white)
-    timestamp_color_ai: "#B0B0B0"    # <<< ADD: Color for timestamp in AI/System bubble (e.g., medium gray)
-    thumbnail_max_width_px: 200 # <<< ADD: Max width for image thumbnails
+    timestamp_color_user: "#E0E0E0"
+    timestamp_color_ai: "#B0B0B0"
+    thumbnail_max_width_px: 200
   input_field:
     border_radius_px: 15
     padding_px: 8
@@ -84,3 +114,12 @@ gui_style:
     border_radius_px: 15
     padding_vertical_px: 8
     padding_horizontal_px: 16
+# --- Saliency Calculation ---
+saliency:
+  initial_scores: # Base scores by node type
+    turn: 0.4
+    summary: 0.7
+    concept: 0.8
+    default: 0.5
+  emotion_influence_factor: 0.2 # How much default arousal boosts initial saliency
+  activation_influence: 0.1 # How much saliency boosts activation spreading
