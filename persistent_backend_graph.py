@@ -2630,8 +2630,7 @@ class GraphMemoryClient:
         This will eventually involve LLM analysis or heuristics.
         For now, it might just apply decay.
         """
-        # Updates short-term drive activation levels based on recent experience (LLM analysis)
-        # and applies decay towards a dynamic baseline (config base + long-term drive).
+
         drive_cfg = self.config.get('subconscious_drives', {})
         if not drive_cfg.get('enabled', False):
             return # Do nothing if disabled
