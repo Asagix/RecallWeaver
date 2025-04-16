@@ -745,28 +745,34 @@ class GraphMemoryClient:
                                 logger.debug(f"    -> Filtered (Explicit): UUID={node_uuid[:8]} (Type {node_type} != {node_type_filter})")
                                 continue # Skip node type mismatch
 
-                            # --- Filter/Bias 2: Query Type ---
-                            # If episodic, strongly prefer 'turn' nodes
-                            if query_type == 'episodic' and node_type != 'turn':
-                                 # Option 1: Skip non-turn nodes entirely if enough turns found?
-                                 # Option 2: Penalize score heavily?
-                                 # Let's skip for now if we haven't reached k results yet.
-                                 if len(results) < k:
-                                      logger.debug(f"    -> Filtered (Episodic Bias): UUID={node_uuid[:8]} (Type {node_type} != 'turn')")
-                                      continue
-                                 # If we already have k results, allow others but maybe log?
-                                 # logger.debug(f"    -> Allowing non-turn node {node_uuid[:8]} for episodic query (already have {k} results)")
+                            node_type = node_data.get('node_type')
 
-                            # If semantic, strongly prefer 'summary' or 'concept' nodes
+                            # --- Filter 1: Explicit Node Type Filter ---
+                            if node_type_filter and node_type != node_type_filter:
+                                logger.debug(f"    -> Filtered (Explicit): UUID={node_uuid[:8]} (Type {node_type} != {node_type_filter})")
+                                continue # Skip node type mismatch
+
+                            # --- Score Adjustment/Penalty based on Query Type ---
+                            adjusted_dist = dist # Start with original distance
+                            penalty_applied = False
+                            if query_type == 'episodic' and node_type != 'turn':
+                                # Apply a penalty to non-turn nodes for episodic queries
+                                # Making them seem "further away"
+                                penalty_factor = 1.5 # Example: Increase distance by 50%
+                                adjusted_dist *= penalty_factor
+                                penalty_applied = True
+                                logger.debug(f"    -> Penalized (Episodic Bias): UUID={node_uuid[:8]} (Type {node_type} != 'turn'). Dist {dist:.3f} -> {adjusted_dist:.3f}")
                             elif query_type == 'semantic' and node_type not in ['summary', 'concept']:
-                                 if len(results) < k:
-                                      logger.debug(f"    -> Filtered (Semantic Bias): UUID={node_uuid[:8]} (Type {node_type} not summary/concept)")
-                                      continue
-                                 # logger.debug(f"    -> Allowing non-summary/concept node {node_uuid[:8]} for semantic query (already have {k} results)")
+                                # Apply a smaller penalty to non-summary/concept nodes for semantic queries
+                                penalty_factor = 1.2 # Example: Increase distance by 20%
+                                adjusted_dist *= penalty_factor
+                                penalty_applied = True
+                                logger.debug(f"    -> Penalized (Semantic Bias): UUID={node_uuid[:8]} (Type {node_type} not summary/concept). Dist {dist:.3f} -> {adjusted_dist:.3f}")
 
                             # --- Passed Filters ---
-                            results.append((node_uuid, dist))
-                            logger.debug(f"    -> Valid UUID: {node_uuid[:8]} (Type: {node_type})")
+                            # Store the *adjusted* distance
+                            results.append((node_uuid, adjusted_dist))
+                            logger.debug(f"    -> Added Candidate: UUID={node_uuid[:8]} (Type: {node_type}, AdjDist: {adjusted_dist:.3f})")
 
                         else: logger.debug(f"    -> UUID for FAISS ID {fid_int} not in graph/map.")
                     else: logger.debug(f"    -> Invalid FAISS ID -1 encountered.")
@@ -776,10 +782,13 @@ class GraphMemoryClient:
                         logger.debug(f"    -> Reached target k={k} results. Stopping search.")
                         break
 
-            # Sort final results by distance (FAISS might not guarantee order perfectly after filtering)
-            results.sort(key=lambda item: item[1])
-            logger.info(f"Found {len(results)} matching nodes (type='{node_type_filter or 'any'}') for query '{query_text[:30]}...'")
-            return results[:k] # Return only top k
+            # Sort final results by the potentially *adjusted* distance
+            results.sort(key=lambda item: item[1]) # item[1] is now the adjusted_dist
+            logger.info(f"Found {len(results)} potentially relevant nodes (type='{node_type_filter or 'any'}', query_type='{query_type}') for query '{query_text[:30]}...'")
+            # Return only top k based on adjusted distance
+            final_results = [(uuid, dist) for uuid, dist in results[:k]]
+            logger.debug(f" Final top {k} nodes after sorting by adjusted distance: {final_results}")
+            return final_results
 
         except Exception as e: logger.error(f"FAISS search error: {e}", exc_info=True); return []
 
@@ -1615,13 +1624,16 @@ class GraphMemoryClient:
         context_headroom = prompt_cfg.get('context_headroom', 250)
         mem_budget_ratio = prompt_cfg.get('memory_budget_ratio', 0.45)
         hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.55)
+        # Add the system note to fixed parts
+        system_note_block = f"{model_tag}[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]{end_turn}\n"
         try:
             fixed_tokens = (len(tokenizer.encode(time_info_block)) +
+                            len(tokenizer.encode(system_note_block)) + # Add system note tokens
                             len(tokenizer.encode(asm_block)) + # Add ASM block tokens
                             len(tokenizer.encode(user_input_fmt)) +
                             len(tokenizer.encode(final_model_tag)))
         except Exception as e:
-            logger.error(f"Tokenization error for fixed prompt parts (incl. ASM): {e}") # Corrected logger name
+            logger.error(f"Tokenization error for fixed prompt parts (incl. ASM/System Note): {e}") # Corrected logger name
             fixed_tokens = len(time_info_block) + len(user_input_fmt) + len(final_model_tag)
             logger.warning("Using character count proxy for fixed tokens.") # Corrected logger name
 
@@ -1744,7 +1756,9 @@ class GraphMemoryClient:
         # --- Assemble Final Prompt ---
         final_parts = []
         final_parts.append(time_info_block)
-        if asm_block: final_parts.append(asm_block) # Add ASM block after time
+        # Add instruction about temporal awareness
+        final_parts.append(f"{model_tag}[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]{end_turn}\n")
+        if asm_block: final_parts.append(asm_block) # Add ASM block after time/system note
         if mem_ctx_str: final_parts.append(mem_ctx_str)
         final_parts.extend(hist_parts)
         final_parts.append(user_input_fmt) # Crucial: Adds current user input (potentially with tag)

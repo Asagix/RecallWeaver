@@ -126,12 +126,13 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Add `prompts/query_type_prompt.txt`.
     -   [x] Implement `_classify_query_type` method in `GraphMemoryClient`.
     -   [x] Modify `process_interaction` to call classifier before search.
-    -   [x] Modify `_search_similar_nodes` to accept `query_type` and bias search results towards relevant node types ('turn' for episodic, 'summary'/'concept' for semantic).
+    -   [x] Modify `_search_similar_nodes` to accept `query_type` and bias search results towards relevant node types ('turn' for episodic, 'summary'/'concept' for semantic) by penalizing distance scores of non-matching types.
     -   [ ] Testing: Verify query classification and search biasing work as expected.
--   [ ] **Enhanced Sense of Time (Prompting):**
+-   [ ] **Enhanced Sense of Time & Episodic Awareness (Prompting):**
     -   [x] Add `_get_relative_time_desc` helper method to `GraphMemoryClient`.
     -   [x] Modify `_construct_prompt` to use the helper for formatting memory timestamps.
-    -   [ ] Testing: Verify relative time descriptions appear correctly in prompts.
+    -   [x] Modify `_construct_prompt` to add explicit instruction about sequence/timing awareness.
+    -   [ ] Testing: Verify relative time descriptions and system note appear correctly in prompts.
 -   [ ] **Prospective Memory (V1 - Storing Intentions):**
     -   [x] Add 'intention' node type saliency to `config.yaml`.
     -   [x] Create `prompts/intention_analysis_prompt.txt`.
