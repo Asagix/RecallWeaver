@@ -1190,10 +1190,9 @@ class GraphMemoryClient:
 
     # --- Saliency & Forgetting ---
 
-    def update_node_saliency(self, node_uuid: str, change_factor: float):
+    def update_node_saliency(self, node_uuid: str, direction: str): # <<< Added 'direction' parameter
         """
-        Placeholder: Updates the saliency score of a node based on external factors
-        (e.g., user feedback, explicit marking). Clamps score between 0.0 and 1.0.
+        Updates the saliency score of a node based on user feedback ('increase' or 'decrease').
         Uses `saliency.feedback_factor` from config for multiplicative adjustment.
         `direction` should be 'increase' or 'decrease'.
         """
