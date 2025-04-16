@@ -1581,11 +1581,32 @@ class GraphMemoryClient:
         time_info_block = f"{model_tag}Current time is {time_str}.{end_turn}\n"
         asm_block = "" # Initialize ASM block
 
-        # --- Format ASM Block ---
-        if self.autobiographical_model and "asm_summary" in self.autobiographical_model:
-            asm_text = self.autobiographical_model["asm_summary"]
-            asm_block = f"{model_tag}[My Self-Perception: {asm_text}]{end_turn}\n"
-            logger.debug("ASM block created.")
+        # --- Format Structured ASM Block ---
+        if self.autobiographical_model:
+            try:
+                # Format the structured data into a readable block
+                asm_parts = ["[My Self-Perception:]"]
+                if self.autobiographical_model.get("summary_statement"):
+                    asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
+                if self.autobiographical_model.get("core_traits"):
+                    asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+                if self.autobiographical_model.get("recurring_themes"):
+                    asm_parts.append(f"- Often Discuss: {', '.join(self.autobiographical_model['recurring_themes'])}")
+                if self.autobiographical_model.get("values_beliefs"):
+                    asm_parts.append(f"- Beliefs/Values: {', '.join(self.autobiographical_model['values_beliefs'])}")
+                # Optionally add significant events if space allows or needed
+                # if self.autobiographical_model.get("significant_events"):
+                #     asm_parts.append(f"- Key Events: {'; '.join(self.autobiographical_model['significant_events'])}")
+
+                if len(asm_parts) > 1: # Only add block if there's content beyond the header
+                    asm_text = "\n".join(asm_parts)
+                    asm_block = f"{model_tag}{asm_text}{end_turn}\n"
+                    logger.debug("Structured ASM block created.")
+                else:
+                    logger.debug("ASM dictionary present but contained no usable fields.")
+            except Exception as e:
+                logger.error(f"Error formatting structured ASM for prompt: {e}", exc_info=True)
+                asm_block = "" # Clear block on formatting error
         else:
             logger.debug("No ASM summary available to add to prompt.")
 
@@ -3493,30 +3514,49 @@ class GraphMemoryClient:
             return
 
         full_prompt = prompt_template.format(context_text=context_text)
-        # Use moderate temperature for slightly creative summary
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=200, temperature=0.6)
+        # Use moderate temperature for slightly creative summary, increase max length for structured output
+        llm_response_str = self._call_kobold_api(full_prompt, max_length=400, temperature=0.6)
 
         # --- Parse Response and Update Model ---
         if llm_response_str:
             try:
                 logger.debug(f"Raw ASM response: ```{llm_response_str}```")
-                # Extract JSON object
-                match = re.search(r'(\{.*?\})', llm_response_str, re.DOTALL)
-                if match:
-                    json_str = match.group(1)
+                # --- Improved JSON Extraction ---
+                cleaned_response = llm_response_str.strip()
+                if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+                if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+                if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+                start_brace = cleaned_response.find('{')
+                end_brace = cleaned_response.rfind('}')
+
+                if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                    json_str = cleaned_response[start_brace:end_brace + 1]
+                    logger.debug(f"Extracted potential JSON object string: {json_str}")
                     parsed_data = json.loads(json_str)
-                    if isinstance(parsed_data, dict) and "asm_summary" in parsed_data:
-                        new_summary = parsed_data["asm_summary"]
-                        if isinstance(new_summary, str) and new_summary.strip():
-                            self.autobiographical_model["asm_summary"] = new_summary.strip()
-                            self.autobiographical_model["last_updated"] = datetime.now(timezone.utc).isoformat()
-                            logger.info(f"Autobiographical Self-Model updated: '{self.autobiographical_model['asm_summary'][:100]}...'")
-                            # Save immediately after update?
-                            self._save_memory()
+
+                    # --- Validate Structured ASM ---
+                    if isinstance(parsed_data, dict):
+                        required_keys = ["core_traits", "recurring_themes", "significant_events", "values_beliefs", "summary_statement"]
+                        if all(key in parsed_data for key in required_keys):
+                            # Basic type validation (can be expanded)
+                            if (isinstance(parsed_data["core_traits"], list) and
+                                isinstance(parsed_data["recurring_themes"], list) and
+                                isinstance(parsed_data["significant_events"], list) and
+                                isinstance(parsed_data["values_beliefs"], list) and
+                                isinstance(parsed_data["summary_statement"], str)):
+
+                                # Update the entire model
+                                self.autobiographical_model = parsed_data
+                                self.autobiographical_model["last_updated"] = datetime.now(timezone.utc).isoformat()
+                                logger.info(f"Structured Autobiographical Self-Model updated. Summary: '{self.autobiographical_model.get('summary_statement', '')[:100]}...'")
+                                self._save_memory() # Save the updated model
+                            else:
+                                logger.warning("LLM response JSON had correct keys but incorrect value types for ASM.")
                         else:
-                            logger.warning("LLM returned empty or invalid asm_summary string.")
+                            logger.warning(f"LLM response JSON missing required keys for structured ASM. Keys found: {list(parsed_data.keys())}")
                     else:
-                        logger.warning("LLM response JSON did not contain valid 'asm_summary' key.")
+                        logger.warning("LLM response was not a valid JSON dictionary for structured ASM.")
                 else:
                     logger.warning(f"Could not extract valid JSON object from ASM response. Raw: '{llm_response_str}'")
             except json.JSONDecodeError as e:

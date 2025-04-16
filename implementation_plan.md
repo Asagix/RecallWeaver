@@ -144,8 +144,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Create `prompts/asm_generation_prompt.txt`.
     -   [x] Implement `_generate_autobiographical_model` helper method (select key nodes, call LLM, parse JSON).
     -   [x] Call `_generate_autobiographical_model` at the end of `run_consolidation`.
-    -   [x] Modify `_construct_prompt` to inject `asm_summary` into the prompt context, respecting token limits.
-    -   [ ] Testing: Verify ASM is generated, saved/loaded, and appears correctly in prompts.
+    -   [x] Modify `_construct_prompt` to inject structured ASM data into the prompt context, respecting token limits.
+    -   [ ] Testing: Verify structured ASM is generated, saved/loaded, and formatted correctly in prompts.
 -   [ ] **Causal Chain Extraction (V1):**
     -   [x] Add `consolidation.enable_causal_chains` flag to `config.yaml`.
     -   [x] Create `prompts/causal_chain_prompt.txt`.
@@ -158,6 +158,9 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement `_consolidate_extract_analogies` helper method.
     -   [x] Integrate call into `run_consolidation`.
     -   [ ] Testing: Verify analogies are extracted and `ANALOGY` edges are added correctly.
+-   [ ] **Autobiographical Self-Model (V2 - Influence):**
+    -   [ ] Modify response generation to explicitly use ASM fields (e.g., traits, values) to bias output.
+    -   [ ] Modify memory interpretation (e.g., saliency assignment) based on ASM themes/values.
 -   [ ] **Second-Order Relationship Inference (V1 - Generic):**
     -   [x] Add `consolidation.inference` section to `config.yaml` (enable, strength_factor).
     -   [x] Implement `_infer_second_order_relations` helper method (find paths A->B->C, add weak 'INFERRED_RELATED_TO' edge A->C).
