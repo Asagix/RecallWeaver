@@ -2445,15 +2445,15 @@ class GraphMemoryClient:
                             try:
                                 # Add edge if it doesn't exist or update timestamp
                                 edge_type = f"SPACY_{verb_text.upper()}" # e.g., SPACY_USE, SPACY_BE
-                                    if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != edge_type:
-                                        base_strength = 0.5 # Lower base strength for spaCy relations?
-                                        self.graph.add_edge(subj_uuid, obj_uuid, type=edge_type, base_strength=base_strength, last_traversed_ts=current_time)
-                                        logger.info(f"Added spaCy Edge: {subj_uuid[:8]} --[{edge_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')")
-                                        added_spacy_edge_count += 1
-                                    else:
-                                        self.graph.edges[subj_uuid, obj_uuid]['last_traversed_ts'] = current_time
-                                except Exception as e:
-                                    logger.error(f"Error adding spaCy edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
+                                if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != edge_type:
+                                    base_strength = 0.5 # Lower base strength for spaCy relations?
+                                    self.graph.add_edge(subj_uuid, obj_uuid, type=edge_type, base_strength=base_strength, last_traversed_ts=current_time)
+                                    logger.info(f"Added spaCy Edge: {subj_uuid[:8]} --[{edge_type}]--> {obj_uuid[:8]} ('{subj_text}' -> '{obj_text}')")
+                                    added_spacy_edge_count += 1
+                                else:
+                                    self.graph.edges[subj_uuid, obj_uuid]['last_traversed_ts'] = current_time
+                            except Exception as e:
+                                logger.error(f"Error adding spaCy edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
                         # else: logger.warning(f"Skipping spaCy relation involving inactive node: {subj_uuid} or {obj_uuid}") # No longer needed
 
             logger.info(f"Added {added_spacy_edge_count} new spaCy-derived relationship edges.")
