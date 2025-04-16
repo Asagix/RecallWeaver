@@ -736,10 +736,13 @@ class GraphMemoryClient:
 
         except Exception as e: logger.error(f"FAISS search error: {e}", exc_info=True); return []
 
-    def retrieve_memory_chain(self, initial_node_uuids: list[str], recent_concept_uuids: list[str] | None = None) -> list[dict]:
+    def retrieve_memory_chain(self, initial_node_uuids: list[str],
+                              recent_concept_uuids: list[str] | None = None,
+                              current_mood: tuple[float, float] | None = None) -> list[dict]:
         """
         Retrieves relevant memories using activation spreading.
-        Considers memory strength, saliency, edge types, and optionally boosts recently mentioned concepts.
+        Considers memory strength, saliency, edge types, optionally boosts recently mentioned concepts,
+        and optionally biases based on emotional context similarity to current_mood.
         """
         # --- Config Access ---
         act_cfg = self.config.get('activation', {})
