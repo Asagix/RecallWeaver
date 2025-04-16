@@ -93,6 +93,12 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] GUI: Implement logic in `Worker` to handle `clarify` responses (store state, process next input as clarification) and queue/execute specific action tasks.
     -   [x] GUI: Implement UI elements/flow for clarification requests (clearer prompt, persistent status bar message, placeholder text, visual indicator light).
     -   [ ] GUI: Implement UI flow for potential action confirmations (e.g., before overwriting a file).
+-   [ ] **Context Dependency (Focus via Recent Concepts):**
+    -   [x] Modify `process_interaction` to identify concept nodes mentioned in the last user/AI turn.
+    -   [x] Modify `retrieve_memory_chain` to accept recent concept UUIDs.
+    -   [x] Implement logic in `retrieve_memory_chain` to apply `context_focus_boost` to initial activation of relevant nodes.
+    -   [x] Add `activation.context_focus_boost` parameter to `config.yaml`.
+    -   [ ] Testing: Verify boost is applied correctly and influences retrieval as expected.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

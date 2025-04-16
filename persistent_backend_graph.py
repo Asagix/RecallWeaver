@@ -770,10 +770,32 @@ class GraphMemoryClient:
                 node_data = self.graph.nodes[uuid]
                 # Apply initial strength modulation
                 initial_strength = node_data.get('memory_strength', 1.0)
-                activation_levels[uuid] = initial_activation * initial_strength
+                base_initial_activation = initial_activation * initial_strength
+
+                # --- Apply Context Focus Boost ---
+                boost_applied = 1.0 # Default: no boost
+                if context_focus_boost > 0 and recent_concept_uuids_set:
+                    is_recent_concept = uuid in recent_concept_uuids_set
+                    mentions_recent_concept = False
+                    if not is_recent_concept: # Only check outgoing edges if node itself isn't the concept
+                         try:
+                              for succ_uuid in self.graph.successors(uuid):
+                                   if succ_uuid in recent_concept_uuids_set:
+                                        edge_data = self.graph.get_edge_data(uuid, succ_uuid)
+                                        if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                             mentions_recent_concept = True
+                                             break
+                         except Exception as e: logger.warning(f"Error checking concept links for focus boost on {uuid[:8]}: {e}")
+
+                    if is_recent_concept or mentions_recent_concept:
+                         boost_applied = 1.0 + context_focus_boost
+                         logger.debug(f"Applying context focus boost ({boost_applied:.2f}) to node {uuid[:8]} (IsRecent: {is_recent_concept}, MentionsRecent: {mentions_recent_concept})")
+
+                final_initial_activation = base_initial_activation * boost_applied
+                activation_levels[uuid] = final_initial_activation
                 node_data['last_accessed_ts'] = current_time # Update access time
                 valid_initial_nodes.add(uuid)
-                logger.debug(f"Initialized node {uuid[:8]} with strength {initial_strength:.3f}, initial activation {activation_levels[uuid]:.3f}")
+                logger.debug(f"Initialized node {uuid[:8]} - Strength: {initial_strength:.3f}, BaseAct: {base_initial_activation:.3f}, Boost: {boost_applied:.2f}, FinalAct: {final_initial_activation:.3f}")
             else:
                 logger.warning(f"Initial node {uuid} not in graph.")
 
@@ -1868,8 +1890,25 @@ class GraphMemoryClient:
 
                     if initial_uuids:
                         logger.info("Retrieving memory chain...")
-                        # This is where the ValueError occurred
-                        memory_chain_data = self.retrieve_memory_chain(initial_uuids)
+                        # Find concepts mentioned in the *current* interaction (user+AI turns just added)
+                        recent_concept_uuids_for_retrieval = set()
+                        nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs captured above
+                        for turn_uuid in nodes_to_check_for_concepts:
+                            if turn_uuid and turn_uuid in self.graph:
+                                try:
+                                    for successor_uuid in self.graph.successors(turn_uuid):
+                                        edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
+                                        if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                            if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
+                                                recent_concept_uuids_for_retrieval.add(successor_uuid)
+                                except Exception as concept_find_e:
+                                     logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]} during retrieval prep: {concept_find_e}")
+
+                        logger.info(f"Passing {len(recent_concept_uuids_for_retrieval)} recent concept UUIDs to retrieval.")
+                        memory_chain_data = self.retrieve_memory_chain(
+                            initial_uuids,
+                            recent_concept_uuids=list(recent_concept_uuids_for_retrieval) # Pass the list
+                        )
                         logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
                     else:
                         logger.info("No relevant initial nodes found.")
@@ -1904,6 +1943,24 @@ class GraphMemoryClient:
             # Use parsed_response (which could be success or error message)
             logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
+
+            # --- Find concepts mentioned in the last two turns ---
+            recent_concept_uuids = set()
+            nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid]
+            for turn_uuid in nodes_to_check_for_concepts:
+                if turn_uuid and turn_uuid in self.graph:
+                    try:
+                        for successor_uuid in self.graph.successors(turn_uuid):
+                            edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
+                            if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
+                                    recent_concept_uuids.add(successor_uuid)
+                                    logger.debug(f"Identified recent concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}'")
+                    except Exception as concept_find_e:
+                         logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]}: {concept_find_e}")
+            logger.info(f"Found {len(recent_concept_uuids)} unique concepts mentioned in last interaction.")
+            # Store these to potentially pass to retrieve_memory_chain if needed later
+            # For now, we'll pass them directly in the text-only path below.
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)

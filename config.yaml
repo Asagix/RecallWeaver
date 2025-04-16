@@ -41,6 +41,8 @@ activation:
     HIERARCHICAL_fwd: 1.1
     HIERARCHICAL_bwd: 0.5
     UNKNOWN: 0.5
+  # --- Context Focus ---
+  context_focus_boost: 0.15 # Multiplicative boost to initial activation for recently mentioned concepts/turns
 
 # --- Prompting & Context Configuration ---
 prompting:
