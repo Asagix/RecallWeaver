@@ -2713,7 +2713,7 @@ class GraphMemoryClient:
         else:
             logger.info("LLM reported no direct hierarchical relationships.")
 
-    def run_consolidation(self):
+    def run_consolidation(self, active_nodes_to_process=None):
         """
         Orchestrates the memory consolidation process: summarization, concept extraction,
         relation extraction, and pruning.
