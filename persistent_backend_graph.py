@@ -370,9 +370,9 @@ class GraphMemoryClient:
         else: logger.info("Memory loading complete.")
 
     def _rebuild_index_from_graph_embeddings(self):
-        """Rebuilds FAISS index based on current graph nodes/embeddings, including ONLY 'active' nodes."""
-        logger.info(f"Rebuilding FAISS index from {self.graph.number_of_nodes()} graph nodes (filtering for 'active')...")
-        forgetting_enabled = self.config.get('features', {}).get('enable_forgetting', False)
+        """Rebuilds FAISS index based on current graph nodes/embeddings."""
+        logger.info(f"Rebuilding FAISS index from {self.graph.number_of_nodes()} graph nodes...")
+        # forgetting_enabled = self.config.get('features', {}).get('enable_forgetting', False) # No longer needed here
 
         if self.graph.number_of_nodes() == 0:
             logger.warning("Graph empty, initializing empty index.")
@@ -397,28 +397,22 @@ class GraphMemoryClient:
 
             nodes_in_graph = list(self.graph.nodes(data=True)) # Get data as well
 
-            active_node_count = 0
+            nodes_with_valid_embeddings = 0
             for node_uuid, node_data in nodes_in_graph:
-                # --- Filter by Status ---
-                if node_data.get('status', 'active') != 'active':
-                    # logger.debug(f"Skipping node {node_uuid[:8]} in rebuild (status: {node_data.get('status')}).")
-                    continue
-
-                active_node_count += 1
-                embedding = self.embeddings.get(node_uuid)
-
                 # --- Filter by Valid Embedding ---
+                embedding = self.embeddings.get(node_uuid)
                 if embedding is not None and isinstance(embedding, np.ndarray) and embedding.shape == (self.embedding_dim,):
                     emb_list.append(embedding.astype('float32'))
                     uuid_list_for_index.append(node_uuid) # Track UUID associated with this embedding
+                    nodes_with_valid_embeddings += 1
                 else:
-                    logger.warning(f"Skipping active node {node_uuid[:8]} in rebuild (invalid/missing embedding).")
+                    logger.warning(f"Skipping node {node_uuid[:8]} in rebuild (invalid/missing embedding).")
 
             # Add embeddings to the new index
             if emb_list:
                 embeddings_np = np.vstack(emb_list)
                 new_index.add(embeddings_np)
-                logger.info(f"Added {new_index.ntotal} vectors (from {active_node_count} active nodes) to new FAISS index.")
+                logger.info(f"Added {new_index.ntotal} vectors (from {nodes_with_valid_embeddings} nodes with valid embeddings) to new FAISS index.")
 
                 # Rebuild the mappings ONLY for the nodes added to the index
                 current_faiss_id = 0
@@ -539,10 +533,11 @@ class GraphMemoryClient:
                 speaker=speaker,
                 timestamp=timestamp,
                 node_type=node_type,
-                status='active', # NEW: Initial status
-                access_count=0, # NEW: Initial access count
-                emotion_valence=default_valence, # NEW: Default emotion
-                emotion_arousal=default_arousal, # NEW: Default emotion
+                # status='active', # REMOVED: Replaced by memory_strength
+                memory_strength=self.config.get('memory_strength', {}).get('initial_value', 1.0), # NEW: Initial strength
+                access_count=0, # Initial access count
+                emotion_valence=default_valence, # Default emotion
+                emotion_arousal=default_arousal, # Default emotion
                 saliency_score=initial_saliency, # NEW: Calculated initial saliency
                 # --- Existing attributes ---
                 base_strength=float(base_strength),
@@ -551,7 +546,7 @@ class GraphMemoryClient:
             )
             # Access node data *after* adding it to the graph
             node_data = self.graph.nodes[node_uuid]
-            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Status: {node_data.get('status')}, Saliency: {node_data.get('saliency_score')}).")
+            logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Strength: {node_data.get('memory_strength')}, Saliency: {node_data.get('saliency_score')}).")
         except Exception as e:
              logger.error(f"Failed adding node {node_uuid} to graph: {e}")
              return None
@@ -570,16 +565,12 @@ class GraphMemoryClient:
                      self._rollback_add(node_uuid)
                      return None
 
-            # Add only if status is 'active' (which it always is initially)
-            # This check becomes relevant if we re-index archived nodes later
-            if self.graph.nodes[node_uuid].get('status', 'active') == 'active':
-                self.index.add(np.array([embedding], dtype='float32'))
-                new_faiss_id = self.index.ntotal - 1
-                self.faiss_id_to_uuid[new_faiss_id] = node_uuid
-                self.uuid_to_faiss_id[node_uuid] = new_faiss_id
-                logger.debug(f"Embedding {node_uuid[:8]} added to FAISS ID {new_faiss_id}.")
-            else:
-                 logger.warning(f"Node {node_uuid[:8]} has status other than 'active', not adding to FAISS.")
+            # Add to FAISS index (no status check needed here anymore)
+            self.index.add(np.array([embedding], dtype='float32'))
+            new_faiss_id = self.index.ntotal - 1
+            self.faiss_id_to_uuid[new_faiss_id] = node_uuid
+            self.uuid_to_faiss_id[node_uuid] = new_faiss_id
+            logger.debug(f"Embedding {node_uuid[:8]} added to FAISS ID {new_faiss_id}.")
 
         except Exception as e:
              logger.error(f"Failed adding embed {node_uuid} to FAISS: {e}")
@@ -589,15 +580,12 @@ class GraphMemoryClient:
         # --- Link temporally ---
         if self.last_added_node_uuid and self.last_added_node_uuid in self.graph:
             try:
-                # Check if predecessor is active before adding edge
-                if self.graph.nodes[self.last_added_node_uuid].get('status', 'active') == 'active':
-                    self.graph.add_edge(
-                        self.last_added_node_uuid, node_uuid,
-                        type='TEMPORAL', base_strength=0.8, last_traversed_ts=current_time
-                    )
-                    logger.debug(f"Added T-edge {self.last_added_node_uuid[:8]}->{node_uuid[:8]}.")
-                else:
-                     logger.debug(f"Skipped T-edge from inactive node {self.last_added_node_uuid[:8]} to {node_uuid[:8]}.")
+                # Add temporal edge (no status check needed on predecessor)
+                self.graph.add_edge(
+                    self.last_added_node_uuid, node_uuid,
+                    type='TEMPORAL', base_strength=0.8, last_traversed_ts=current_time
+                )
+                logger.debug(f"Added T-edge {self.last_added_node_uuid[:8]}->{node_uuid[:8]}.")
             except Exception as e:
                  logger.error(f"Failed adding T-edge: {e}")
 
@@ -690,11 +678,11 @@ class GraphMemoryClient:
         base = edge_data.get('base_strength', 0.5); last_trav = edge_data.get('last_traversed_ts', current_time); time_delta = max(0, current_time - last_trav); decay_mult = (1.0 - edge_decay_rate) ** time_delta; dyn_str = base * decay_mult; return max(0.0, dyn_str)
 
     def _search_similar_nodes(self, query_text: str, k: int = None, node_type_filter: str = None) -> list[tuple[str, float]]:
-        """Searches FAISS for ACTIVE nodes similar to query_text, optionally filtering by type."""
+        """Searches FAISS for nodes similar to query_text, optionally filtering by type."""
         # --- Config Access ---
         act_cfg = self.config.get('activation', {})
-        features_cfg = self.config.get('features', {})
-        forgetting_enabled = features_cfg.get('enable_forgetting', False)
+        # features_cfg = self.config.get('features', {}) # No longer needed for status check
+        # forgetting_enabled = features_cfg.get('enable_forgetting', False) # No longer needed for status check
         if k is None: k = act_cfg.get('max_initial_nodes', 7)
 
         if not query_text or self.index is None or self.index.ntotal == 0: return []
@@ -703,14 +691,14 @@ class GraphMemoryClient:
             if q_embed is None or q_embed.shape != (self.embedding_dim,): return []
 
             q_embed_np = np.array([q_embed], dtype='float32')
-            # Search more initially if filtering later
-            search_k = k * 3 if (node_type_filter or forgetting_enabled) else k
+            # Search more initially if filtering later by type
+            search_k = k * 3 if node_type_filter else k
             actual_k = min(search_k, self.index.ntotal)
 
             if actual_k == 0: return []
             dists, idxs = self.index.search(q_embed_np, actual_k)
             results = []
-            logger.debug(f"FAISS Search Results (Top {actual_k}, filter='{node_type_filter}', forgetting='{forgetting_enabled}'):")
+            logger.debug(f"FAISS Search Results (Top {actual_k}, filter='{node_type_filter}'):")
 
             if len(idxs) > 0:
                 for i, faiss_id in enumerate(idxs[0]):
@@ -721,22 +709,17 @@ class GraphMemoryClient:
                         node_uuid = self.faiss_id_to_uuid.get(fid_int)
                         if node_uuid and node_uuid in self.graph:
                             node_data = self.graph.nodes[node_uuid]
-                            node_status = node_data.get('status', 'active')
+                            # node_status = node_data.get('status', 'active') # No longer needed
                             node_type = node_data.get('node_type')
 
-                            # --- Filter 1: Status (if forgetting enabled) ---
-                            if forgetting_enabled and node_status != 'active':
-                                logger.debug(f"    -> Filtered UUID: {node_uuid[:8]} (Status: {node_status})")
-                                continue # Skip archived node
-
-                            # --- Filter 2: Node Type ---
+                            # --- Filter 1: Node Type ---
                             if node_type_filter and node_type != node_type_filter:
                                 logger.debug(f"    -> Filtered UUID: {node_uuid[:8]} (Type Mismatch: {node_type} != {node_type_filter})")
                                 continue # Skip node type mismatch
 
                             # --- Passed Filters ---
                             results.append((node_uuid, dist))
-                            logger.debug(f"    -> Valid UUID: {node_uuid[:8]} (Status: {node_status}, Type: {node_type})")
+                            logger.debug(f"    -> Valid UUID: {node_uuid[:8]} (Type: {node_type})")
 
                         else: logger.debug(f"    -> UUID for FAISS ID {fid_int} not in graph/map.")
                     else: logger.debug(f"    -> Invalid FAISS ID -1 encountered.")
@@ -748,18 +731,18 @@ class GraphMemoryClient:
 
             # Sort final results by distance (FAISS might not guarantee order perfectly after filtering)
             results.sort(key=lambda item: item[1])
-            logger.info(f"Found {len(results)} active & matching nodes (type='{node_type_filter or 'any'}') for query '{query_text[:30]}...'")
+            logger.info(f"Found {len(results)} matching nodes (type='{node_type_filter or 'any'}') for query '{query_text[:30]}...'")
             return results[:k] # Return only top k
 
         except Exception as e: logger.error(f"FAISS search error: {e}", exc_info=True); return []
 
     def retrieve_memory_chain(self, initial_node_uuids: list[str]) -> list[dict]:
-        """Retrieves relevant memories using activation spreading, considering status, saliency, and edge types."""
+        """Retrieves relevant memories using activation spreading, considering memory strength, saliency, and edge types."""
         # --- Config Access ---
         act_cfg = self.config.get('activation', {})
         features_cfg = self.config.get('features', {})
         saliency_cfg = self.config.get('saliency', {})
-        forgetting_cfg = self.config.get('forgetting', {})
+        # forgetting_cfg = self.config.get('forgetting', {}) # No longer needed for status check
 
         initial_activation = act_cfg.get('initial', 1.0)
         spreading_depth = act_cfg.get('spreading_depth', 3)
@@ -772,31 +755,31 @@ class GraphMemoryClient:
 
         saliency_enabled = features_cfg.get('enable_saliency', False)
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
-        forgetting_enabled = features_cfg.get('enable_forgetting', False)
+        # forgetting_enabled = features_cfg.get('enable_forgetting', False) # No longer needed for status check
 
-        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (Saliency Influence: {activation_influence:.2f}, Guarantee Sal >= {guaranteed_saliency_threshold}, Filter Archived: {forgetting_enabled})")
+        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (Saliency Influence: {activation_influence:.2f}, Guarantee Sal >= {guaranteed_saliency_threshold})")
         if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
 
         activation_levels = defaultdict(float)
         current_time = time.time()
         valid_initial_nodes = set()
 
-        # --- Initialize Activation for ACTIVE initial nodes ---
+        # --- Initialize Activation for initial nodes ---
         for uuid in initial_node_uuids:
             if uuid in self.graph:
                 node_data = self.graph.nodes[uuid]
-                if forgetting_enabled and node_data.get('status', 'active') != 'active':
-                    logger.debug(f"Skipping archived initial node: {uuid[:8]}")
-                    continue
-                activation_levels[uuid] = initial_activation
+                # Apply initial strength modulation
+                initial_strength = node_data.get('memory_strength', 1.0)
+                activation_levels[uuid] = initial_activation * initial_strength
                 node_data['last_accessed_ts'] = current_time # Update access time
                 valid_initial_nodes.add(uuid)
+                logger.debug(f"Initialized node {uuid[:8]} with strength {initial_strength:.3f}, initial activation {activation_levels[uuid]:.3f}")
             else:
                 logger.warning(f"Initial node {uuid} not in graph.")
 
-        if not activation_levels: logger.warning("No valid, active initial nodes."); return []
+        if not activation_levels: logger.warning("No valid initial nodes found in graph."); return []
 
-        logger.debug(f"Valid initial active nodes: {len(valid_initial_nodes)}")
+        logger.debug(f"Valid initial nodes: {len(valid_initial_nodes)}")
         active_nodes = set(activation_levels.keys()) # Nodes currently considered for spreading FROM
 
         # --- Activation Spreading Loop ---
@@ -823,9 +806,7 @@ class GraphMemoryClient:
                     neighbor_data = self.graph.nodes.get(neighbor_uuid)
                     if not neighbor_data: continue
 
-                    if forgetting_enabled and neighbor_data.get('status', 'active') != 'active':
-                        # logger.debug(f"  Skipping spread to archived neighbor: {source_uuid[:8]} -> {neighbor_uuid[:8]}") # Can be verbose
-                        continue
+                    # No status check needed here anymore
 
                     is_forward = self.graph.has_edge(source_uuid, neighbor_uuid)
                     edge_data = self.graph.get_edge_data(source_uuid, neighbor_uuid) if is_forward else self.graph.get_edge_data(neighbor_uuid, source_uuid)
@@ -841,10 +822,13 @@ class GraphMemoryClient:
 
                     dyn_str = self._calculate_dynamic_edge_strength(edge_data, current_time)
                     saliency_boost = 1.0 + (source_saliency * activation_influence) if saliency_enabled else 1.0
-                    act_pass = source_act * dyn_str * prop_base * type_factor * saliency_boost
+                    # --- Apply neighbor's memory strength ---
+                    neighbor_strength = neighbor_data.get('memory_strength', 1.0)
+                    act_pass = source_act * dyn_str * prop_base * type_factor * saliency_boost * neighbor_strength
 
                     if act_pass > 1e-6:
                         newly_activated[neighbor_uuid] += act_pass
+                        # logger.debug(f"  Spread: {source_uuid[:8]}(A:{source_act:.2f},S:{source_saliency:.2f}) -> {neighbor_uuid[:8]}(Str:{neighbor_strength:.2f}) ({edge_type},{'F' if is_forward else 'B'}), EdgeStr:{dyn_str:.2f}, Factor:{type_factor:.2f}, SalBoost:{saliency_boost:.2f} => Pass:{act_pass:.3f}")
                         # logger.debug(f"  Spread: {source_uuid[:8]}(A:{source_act:.2f},S:{source_saliency:.2f}) -> {neighbor_uuid[:8]} ({edge_type},{'F' if is_forward else 'B'}), Str:{dyn_str:.2f}, Factor:{type_factor:.2f}, Boost:{saliency_boost:.2f} => Pass:{act_pass:.3f}")
 
                         edge_key = (source_uuid, neighbor_uuid) if is_forward else (neighbor_uuid, source_uuid)
@@ -885,7 +869,8 @@ class GraphMemoryClient:
         for uuid, final_activation in activation_levels.items():
             if final_activation >= activation_threshold:
                 node_data = self.graph.nodes.get(uuid)
-                if node_data and node_data.get('status', 'active') == 'active':
+                # No status check needed here
+                if node_data:
                     # Increment access count only once per retrieval
                     if uuid not in processed_uuids_for_access_count:
                         node_data['access_count'] = node_data.get('access_count', 0) + 1
@@ -913,7 +898,8 @@ class GraphMemoryClient:
         for uuid, final_activation in activation_levels.items():
             if uuid not in relevant_nodes_dict: # Only check nodes not already included
                 node_data = self.graph.nodes.get(uuid)
-                if node_data and node_data.get('status', 'active') == 'active':
+                # No status check needed here
+                if node_data:
                     current_saliency = node_data.get('saliency_score', 0.0)
                     if current_saliency >= guaranteed_saliency_threshold:
                         logger.info(f"Guaranteed inclusion for node {uuid[:8]} (Sal: {current_saliency:.3f} >= {guaranteed_saliency_threshold}, Act: {final_activation:.3f} < {activation_threshold})")
@@ -954,11 +940,13 @@ class GraphMemoryClient:
         # --- Corrected Debug Logging ---
         logger.debug("--- Retrieved Node Details (Top 5) ---")
         for i, node in enumerate(relevant_nodes[:5]):
-            # Safely get and format saliency score
+            # Safely get and format saliency and strength scores
             saliency_val = node.get('saliency_score', '?')
+            strength_val = node.get('memory_strength', '?')
             saliency_str = f"{saliency_val:.2f}" if isinstance(saliency_val, (int, float)) else str(saliency_val)
-            # Format the log message including status
-            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Status:{node.get('status','?')} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
+            strength_str = f"{strength_val:.2f}" if isinstance(strength_val, (int, float)) else str(strength_val)
+            # Format the log message including strength
+            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Str:{strength_str} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
         logger.debug("------------------------------------")
 
         return relevant_nodes
@@ -988,61 +976,45 @@ class GraphMemoryClient:
     # --- Forgetting Mechanism ---
     def run_memory_maintenance(self):
         """
-        Runs the nuanced forgetting process.
-        Identifies candidate nodes, calculates forgettability scores, and archives nodes
-        exceeding the threshold by setting their status to 'archived'.
+        Runs the memory strength reduction process based on forgettability.
+        Identifies candidate nodes, calculates forgettability scores, and reduces
+        memory_strength based on the score and decay rate.
         Triggered periodically based on interaction count or other criteria.
         """
         if not self.config.get('features', {}).get('enable_forgetting', False):
-            logger.debug("Nuanced forgetting feature disabled. Skipping maintenance.")
+            logger.debug("Memory strength reduction feature disabled. Skipping maintenance.")
             return
 
-        logger.info("--- Running Memory Maintenance (Nuanced Forgetting) ---")
-        # 1. Get config: threshold, weights, min_age, min_activation, protected types
+        logger.info("--- Running Memory Maintenance (Strength Reduction) ---")
+        # 1. Get config: weights, min_age, min_activation, strength decay rate
         forget_cfg = self.config.get('forgetting', {})
-        score_threshold = forget_cfg.get('score_threshold', 0.7)
         weights = forget_cfg.get('weights', {})
         min_age_hr = forget_cfg.get('candidate_min_age_hours', 24)
-        min_activation_threshold = forget_cfg.get('candidate_min_activation', 0.05) # Renamed for clarity
-        protected_types = forget_cfg.get('protected_node_types', [])
-        saliency_protection_threshold = forget_cfg.get('saliency_protection_threshold', 0.9) # NEW Threshold
+        min_activation_threshold = forget_cfg.get('candidate_min_activation', 0.05)
+        strength_cfg = self.config.get('memory_strength', {})
+        strength_decay_rate = strength_cfg.get('decay_rate', 0.1)
         logger.debug(
-            f"Forgetting Params: Threshold={score_threshold}, MinAgeHr={min_age_hr}, MinAct={min_activation_threshold}, ProtectedTypes={protected_types}, ProtectSal>={saliency_protection_threshold}, Weights={weights}")
+            f"Strength Reduction Params: MinAgeHr={min_age_hr}, MinAct={min_activation_threshold}, DecayRate={strength_decay_rate}, Weights={weights}")
 
-        # 2. Identify Candidate Nodes:
-        #    - status == 'active'
-        #    - node_type NOT IN protected_types
+        # 2. Identify Candidate Nodes for strength reduction check:
         #    - age > min_age_hr (based on last_accessed_ts)
         #    - activation_level < min_activation (using stored 'activation_level')
+        #    - memory_strength > purge_threshold (don't decay already very weak nodes?) - Optional optimization
         candidate_uuids = []
         current_time = time.time()
         min_age_sec = min_age_hr * 3600
         nodes_to_check = list(self.graph.nodes(data=True)) # Get a snapshot
-        logger.debug(f"Checking {len(nodes_to_check)} nodes for forgetting candidacy...")
+        logger.debug(f"Checking {len(nodes_to_check)} nodes for strength reduction candidacy...")
 
         for uuid, data in nodes_to_check:
-            # Filter 1: Status must be active
-            if data.get('status', 'active') != 'active':
-                # logger.debug(f"  Skip {uuid[:8]}: Status not active ({data.get('status')})")
-                continue
-            # Filter 2: Node type must not be protected
-            if data.get('node_type') in protected_types:
-                # logger.debug(f"  Skip {uuid[:8]}: Protected type ({data.get('node_type')})")
-                continue
-            # Filter 3: Saliency must be below protection threshold
-            current_saliency = data.get('saliency_score', 0.0)
-            if current_saliency >= saliency_protection_threshold:
-                logger.debug(f"  Skip {uuid[:8]}: Protected by high saliency ({current_saliency:.3f} >= {saliency_protection_threshold})")
-                continue
-            # Filter 4: Age must be sufficient
+            # Filter 1: Age must be sufficient
             last_accessed = data.get('last_accessed_ts', 0)
             age_sec = current_time - last_accessed
             if age_sec < min_age_sec:
                 # logger.debug(f"  Skip {uuid[:8]}: Too recent (Age: {age_sec/3600:.1f}h < {min_age_hr}h)")
                 continue
-            # Filter 4: Activation must be low enough
+            # Filter 2: Activation must be low enough
             # Note: 'activation_level' reflects the *last calculated* activation during retrieval.
-            # It might not be perfectly up-to-date if retrieval hasn't run recently.
             # An alternative could be to calculate decay *here* based on last_accessed_ts,
             # but that might be computationally heavier. Using stored value for now.
             current_activation = data.get('activation_level', 0.0)
@@ -1051,42 +1023,46 @@ class GraphMemoryClient:
                 continue
 
             # Passed all filters
-            # logger.debug(f"  Candidate {uuid[:8]}: Status={data.get('status')}, Type={data.get('node_type')}, Age={age_sec/3600:.1f}h, Act={current_activation:.3f}")
+            # logger.debug(f"  Candidate {uuid[:8]}: Type={data.get('node_type')}, Age={age_sec/3600:.1f}h, Act={current_activation:.3f}")
             candidate_uuids.append(uuid)
 
-        logger.info(f"Found {len(candidate_uuids)} candidate nodes for potential forgetting.")
+        logger.info(f"Found {len(candidate_uuids)} candidate nodes for potential strength reduction.")
         if not candidate_uuids:
             logger.info("--- Memory Maintenance Finished (No candidates) ---")
             return
 
-        # 3. Calculate Forgettability Score for each candidate:
-        archived_count = 0
-        nodes_to_remove_from_index = [] # Track UUIDs to remove from FAISS
+        # 3. Calculate Forgettability Score and Reduce Strength for each candidate:
+        strength_reduced_count = 0
+        nodes_changed = False
         for uuid in candidate_uuids:
             if uuid not in self.graph: continue # Node might have been deleted since snapshot
             node_data = self.graph.nodes[uuid]
-            score = self._calculate_forgettability(uuid, node_data, current_time, weights)
-            logger.debug(f"  Node {uuid[:8]} ({node_data.get('node_type')}): Forgettability Score = {score:.3f}")
+            forget_score = self._calculate_forgettability(uuid, node_data, current_time, weights)
+            logger.debug(f"  Node {uuid[:8]} ({node_data.get('node_type')}): Forgettability Score = {forget_score:.3f}")
 
-            # 4. Archive if score exceeds threshold (Soft Delete):
-            if score >= score_threshold:
-                node_data['status'] = 'archived'
-                # Reset activation level for archived nodes? Optional.
-                # node_data['activation_level'] = 0.0
-                archived_count += 1
-                nodes_to_remove_from_index.append(uuid)
-                logger.info(f"  Archiving node {uuid[:8]} (Score: {score:.3f} >= {score_threshold})")
+            # 4. Reduce memory_strength based on score and decay rate
+            current_strength = node_data.get('memory_strength', 1.0)
+            # Strength reduction is proportional to forgettability score and decay rate
+            strength_reduction = forget_score * strength_decay_rate
+            new_strength = current_strength * (1.0 - strength_reduction)
+            new_strength = max(0.0, new_strength) # Ensure strength doesn't go below 0
+
+            if new_strength < current_strength:
+                node_data['memory_strength'] = new_strength
+                strength_reduced_count += 1
+                nodes_changed = True
+                logger.info(f"  Reduced strength for node {uuid[:8]} from {current_strength:.3f} to {new_strength:.3f} (ForgetScore: {forget_score:.3f}, Rate: {strength_decay_rate})")
             # else:
-            # logger.debug(f"  Keeping node {uuid[:8]} (Score: {score:.3f} < {score_threshold})")
+                # logger.debug(f"  Strength for node {uuid[:8]} remains {current_strength:.3f} (Reduction: {strength_reduction:.3f})")
 
-        # 5. Rebuild FAISS index if nodes were archived
-        if archived_count > 0:
-            logger.info(f"Archived {archived_count} nodes. Rebuilding FAISS index to remove them...")
-            # _rebuild_index_from_graph_embeddings inherently only includes 'active' nodes
-            self._rebuild_index_from_graph_embeddings()
-            self._save_memory() # Save changes after maintenance and index rebuild
+        # 5. Save memory if any strengths were changed
+        if nodes_changed:
+            logger.info(f"Reduced strength for {strength_reduced_count} nodes. Saving memory...")
+            self._save_memory() # Save changes after maintenance
+        else:
+            logger.info("No node strengths were reduced in this maintenance cycle.")
 
-        logger.info(f"--- Memory Maintenance Finished ({archived_count} archived) ---")
+        logger.info(f"--- Memory Maintenance Finished ({strength_reduced_count} strengths reduced) ---")
 
 
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
@@ -2382,7 +2358,7 @@ class GraphMemoryClient:
                 summary_created = True
                 logger.info(f"Added summary node {summary_node_uuid[:8]}. Adding 'SUMMARY_OF' edges...")
                 current_time = time.time()
-                for orig_uuid in active_nodes_to_process:
+                for orig_uuid in nodes_to_process:
                     if orig_uuid in self.graph:
                         try:
                             self.graph.add_edge(summary_node_uuid, orig_uuid, type='SUMMARY_OF', base_strength=0.9,
@@ -2460,12 +2436,10 @@ class GraphMemoryClient:
 
 
                         if subj_uuid and obj_uuid and subj_uuid != obj_uuid:
-                            # Check if nodes are active
-                            if (self.graph.nodes[subj_uuid].get("status", "active") == "active" and
-                                    self.graph.nodes[obj_uuid].get("status", "active") == "active"):
-                                try:
-                                    # Add edge if it doesn't exist or update timestamp
-                                    edge_type = f"SPACY_{verb_text.upper()}" # e.g., SPACY_USE, SPACY_BE
+                            # No status check needed before adding edge
+                            try:
+                                # Add edge if it doesn't exist or update timestamp
+                                edge_type = f"SPACY_{verb_text.upper()}" # e.g., SPACY_USE, SPACY_BE
                                     if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != edge_type:
                                         base_strength = 0.5 # Lower base strength for spaCy relations?
                                         self.graph.add_edge(subj_uuid, obj_uuid, type=edge_type, base_strength=base_strength, last_traversed_ts=current_time)
@@ -2475,6 +2449,8 @@ class GraphMemoryClient:
                                         self.graph.edges[subj_uuid, obj_uuid]['last_traversed_ts'] = current_time
                                 except Exception as e:
                                     logger.error(f"Error adding spaCy edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
+                        # else: logger.warning(f"Skipping spaCy relation involving inactive node: {subj_uuid} or {obj_uuid}") # No longer needed
+
             logger.info(f"Added {added_spacy_edge_count} new spaCy-derived relationship edges.")
         elif self.nlp is None:
              logger.debug("spaCy model not loaded, skipping spaCy relation extraction.")
@@ -2553,13 +2529,10 @@ class GraphMemoryClient:
                     obj_uuid = concept_node_map.get(obj_text)
 
                     if subj_uuid and obj_uuid and subj_uuid in self.graph and obj_uuid in self.graph:
-                        if (
-                            self.graph.nodes[subj_uuid].get("status", "active") == "active"
-                            and self.graph.nodes[obj_uuid].get("status", "active") == "active"
-                        ):
-                            try:
-                                if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != rel_type:
-                                    base_strength = 0.7
+                        # No status check needed before adding edge
+                        try:
+                            if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != rel_type:
+                                base_strength = 0.7
                                     self.graph.add_edge(
                                         subj_uuid,
                                         obj_uuid,
@@ -2580,13 +2553,10 @@ class GraphMemoryClient:
                                     )
                             except Exception as e:
                                 logger.error(f"Error adding LLM typed edge {subj_uuid[:8]} -> {obj_uuid[:8]}: {e}")
-                        else:
-                            logger.warning(f"Skipping relation '{rel}' because one or both nodes are not active.")
-                    elif subj_uuid and obj_uuid: # Nodes exist but one might be inactive
-                         logger.warning(f"Skipping LLM relation '{rel}' because one or both nodes are not active.")
-                    else: # One or both concepts not found in map
+                        # else: logger.warning(f"Skipping LLM relation '{rel}' because one or both nodes are not active.") # No longer needed
+                    else: # One or both concepts not found in map or graph
                         logger.warning(
-                            f"Could not find nodes in map for LLM relation: Subject='{subj_text}' ({subj_uuid}), Object='{obj_text}' ({obj_uuid})"
+                            f"Could not find nodes in map/graph for LLM relation: Subject='{subj_text}' ({subj_uuid}), Object='{obj_text}' ({obj_uuid})"
                         )
                 else:
                     logger.warning(f"Skipping invalid LLM relation object in list: {rel}")
@@ -2714,10 +2684,9 @@ class GraphMemoryClient:
                     if (
                             child_uuid and parent_uuid
                             and child_uuid in self.graph
-                            and self.graph.nodes[child_uuid].get('status', 'active') == 'active'
                             and parent_uuid in self.graph
-                            and self.graph.nodes[parent_uuid].get('status', 'active') == 'active'
                     ):
+                        # No status check needed before adding edge
                         try:
                             if not self.graph.has_edge(parent_uuid, child_uuid):
                                 self.graph.add_edge(parent_uuid, child_uuid, type='HIERARCHICAL', base_strength=0.85,
@@ -2730,13 +2699,10 @@ class GraphMemoryClient:
                                     f"Hierarchical edge {parent_uuid[:8]}->{child_uuid[:8]} exists. Updated timestamp.")
                         except Exception as e:
                             logger.error(f"Error adding/updating hierarchical edge: {e}")
-                    elif child_uuid and parent_uuid:
-                        logger.warning(
-                            f"Could not link hierarchy because one or both nodes not active: Child='{child_text}' ({child_uuid}, Status={self.graph.nodes[child_uuid].get('status')}), Parent='{parent_text}' ({parent_uuid}, Status={self.graph.nodes[parent_uuid].get('status')})"
-                        )
+                    # else: logger.warning(...) # No longer needed
                     else:
                         logger.warning(
-                            f"Could not find nodes for hierarchy: Child='{child_text}' ({child_uuid}), Parent='{parent_text}' ({parent_uuid})")
+                            f"Could not find nodes in graph for hierarchy: Child='{child_text}' ({child_uuid}), Parent='{parent_text}' ({parent_uuid})")
                 else:
                     logger.debug(f"Line did not match hierarchy format: '{line}'")
         else:
@@ -2760,26 +2726,25 @@ class GraphMemoryClient:
 
         # --- 1. Select Nodes ---
         nodes_to_consolidate = self._select_nodes_for_consolidation(count=turn_count_for_consolidation)
-        # Filter out nodes that are already summarized or not 'active' turns
-        active_nodes_to_process = []
+        # Filter out nodes that are already summarized or not 'turn' nodes
+        nodes_to_process = []
         nodes_data = []
         for uuid in nodes_to_consolidate:
             if uuid in self.graph:
                 node_data = self.graph.nodes[uuid]
-                # Check if it's an 'active' 'turn' node and not already linked FROM a summary
+                # Check if it's a 'turn' node and not already linked FROM a summary
                 is_summarized = any(
                     True for pred, _, data in self.graph.in_edges(uuid, data=True) if data.get('type') == 'SUMMARY_OF')
-                if node_data.get('node_type') == 'turn' and node_data.get('status',
-                                                                          'active') == 'active' and not is_summarized:
-                    active_nodes_to_process.append(uuid)
+                if node_data.get('node_type') == 'turn' and not is_summarized:
+                    nodes_to_process.append(uuid)
                     nodes_data.append(node_data)
                 else:
                     logger.debug(
-                        f"Skipping node {uuid[:8]} for consolidation (Type: {node_data.get('node_type')}, Status: {node_data.get('status')}, Summarized: {is_summarized})")
+                        f"Skipping node {uuid[:8]} for consolidation (Type: {node_data.get('node_type')}, Summarized: {is_summarized})")
 
-        if len(active_nodes_to_process) < min_nodes_for_consolidation:
+        if len(nodes_to_process) < min_nodes_for_consolidation:
             logger.info(
-                f"Consolidation skipped: Only {len(active_nodes_to_process)} suitable nodes found (min: {min_nodes_for_consolidation}).")
+                f"Consolidation skipped: Only {len(nodes_to_process)} suitable nodes found (min: {min_nodes_for_consolidation}).")
             return
 
         logger.info(f"Consolidating {len(active_nodes_to_process)} nodes: {active_nodes_to_process}")
@@ -2807,25 +2772,20 @@ class GraphMemoryClient:
                 if concept_text in processed_llm_concepts: continue  # Avoid processing duplicates from LLM list itself
                 processed_llm_concepts.add(concept_text)
                 logger.debug(f"Processing LLM concept: '{concept_text}'")
-                # Search for existing similar 'concept' nodes that are 'active'
+                # Search for existing similar 'concept' nodes
                 similar_concepts = self._search_similar_nodes(concept_text, k=1, node_type_filter='concept')
 
                 existing_uuid = None
                 if similar_concepts:
                     best_match_uuid, best_match_score = similar_concepts[0]
-                    # Check if the existing node is active
-                    if best_match_uuid in self.graph and self.graph.nodes[best_match_uuid].get('status',
-                                                                                               'active') == 'active':
-                        if best_match_score <= concept_sim_threshold:
-                            existing_uuid = best_match_uuid
-                            logger.info(
-                                f"Concept '{concept_text}' matches existing active node {existing_uuid[:8]} (Score: {best_match_score:.3f})")
-                        else:
-                            logger.debug(
-                                f"Found similar concept {best_match_uuid[:8]}, but score ({best_match_score:.3f}) > threshold ({concept_sim_threshold}).")
+                    # No status check needed here, just check score
+                    if best_match_score <= concept_sim_threshold:
+                        existing_uuid = best_match_uuid
+                        logger.info(
+                            f"Concept '{concept_text}' matches existing node {existing_uuid[:8]} (Score: {best_match_score:.3f})")
                     else:
                         logger.debug(
-                            f"Found similar concept {best_match_uuid[:8]}, but it's not active (Status: {self.graph.nodes[best_match_uuid].get('status')}).")
+                            f"Found similar concept {best_match_uuid[:8]}, but score ({best_match_score:.3f}) > threshold ({concept_sim_threshold}).")
 
                 if existing_uuid:
                     concept_node_map[concept_text] = existing_uuid
@@ -2907,7 +2867,7 @@ class GraphMemoryClient:
         # --- 7b. Emotion Analysis (Optional) ---
         if emotion_analysis_enabled and te:
             logger.info("Running V1 Emotion Analysis on consolidated nodes...")
-            nodes_for_emotion = set(active_nodes_to_process)
+            nodes_for_emotion = set(nodes_to_process)
             if summary_node_uuid: nodes_for_emotion.add(summary_node_uuid)
             nodes_for_emotion.update(concept_node_map.values())
 
@@ -2921,31 +2881,28 @@ class GraphMemoryClient:
              logger.warning("Emotion analysis enabled but text2emotion library not loaded.")
 
 
-        # --- 8. Pruning (Optional) ---
+        # --- 8. Pruning Summarized Nodes (Optional) ---
         if prune_summarized and summary_created:
             logger.info("Pruning original turn nodes that were summarized...")
             pruned_count = 0
-            for uuid_to_prune in active_nodes_to_process:
-                if uuid_to_prune in self.graph:
-                    try:
-                        # Mark as 'archived' instead of deleting? (Safer)
-                        # Set status to 'archived'
-                        node_data = self.graph.nodes[uuid_to_prune]
-                        node_data['status'] = 'archived'
-                        # Optionally reset activation level
-                        # node_data['activation_level'] = 0.0
-                        logger.debug(f"Archived summarized turn node: {uuid_to_prune[:8]}")
-                        pruned_count += 1
-                    except KeyError:
-                         logger.warning(f"Node {uuid_to_prune[:8]} not found during pruning (already deleted?).")
-                    except Exception as e:
-                        logger.error(f"Error archiving node {uuid_to_prune[:8]}: {e}")
-            logger.info(f"Archived {pruned_count} summarized turn nodes.")
-            if pruned_count > 0:
-                logger.info("Rebuilding FAISS index after pruning...")
-                self._rebuild_index_from_graph_embeddings()  # Rebuild index to remove archived nodes
+            for uuid_to_prune in nodes_to_process:
+                # Use delete_memory_entry for permanent removal
+                if self.delete_memory_entry(uuid_to_prune):
+                    pruned_count += 1
+                else:
+                    logger.warning(f"Failed to prune summarized node {uuid_to_prune[:8]} (might have been deleted already).")
 
-        self._save_memory()  # Save changes after consolidation
+            logger.info(f"Pruned {pruned_count} summarized turn nodes.")
+            # Note: delete_memory_entry already rebuilds the index and saves memory,
+            # so no explicit rebuild/save needed here if pruning happened.
+            # If no pruning happened, we still need to save other consolidation changes.
+            if pruned_count == 0:
+                 self._save_memory() # Save if no pruning occurred but other changes did
+        else:
+             # Save memory if pruning is disabled or no summary was created,
+             # but other changes (concepts, relations) might have occurred.
+             self._save_memory()
+
         logger.info("--- Consolidation Finished ---")
 
 #Function call

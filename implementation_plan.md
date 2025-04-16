@@ -17,10 +17,10 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Implement `_get_embedding` helper.
     -   [x] Implement `add_memory_node` (UUID, timestamp, embedding generation, add to graph, add to FAISS, update mappings).
     -   [x] Add temporal edge creation in `add_memory_node`.
--   [x] **Data Model Enhancements (Phase 1):**
-    -   [x] **Modify `add_memory_node`:** Initialize new node attributes: `status` ('active'), `access_count` (0), default `emotion_valence`/`arousal` (from config), initial `saliency_score` (calculated based on V1 formula - see Saliency section).
+-   [x] **Data Model Enhancements (Phase 1 - Strength Based):**
+    -   [x] **Modify `add_memory_node`:** Initialize new node attributes: `memory_strength` (1.0), `access_count` (0), default `emotion_valence`/`arousal` (from config), initial `saliency_score` (calculated based on V1 formula - see Saliency section). Remove `status`.
     -   [x] **Verify Save/Load:** Test `_save_memory` and `_load_memory` to ensure new attributes are persisted correctly.
-    -   [x] **Update `config.yaml`:** Add `features` section with enable flags. Add `emotion_analysis` section with `default_valence`/`arousal`. Add placeholders in `forgetting.weights`. (Config already updated in provided file)
+    -   [x] **Update `config.yaml`:** Add `features` section with enable flags. Add `emotion_analysis` section with `default_valence`/`arousal`. Add `memory_strength` section. Remove `status`-related forgetting params.
 -   [x] **V1 Saliency Implementation (Phase 1):**
     -   [x] **Enable Flag:** Check `features.enable_saliency` in relevant code sections.
     * [x] **Modify `add_memory_node`:** Implement V1 initial `saliency_score` calculation (based on node type base score + default emotion arousal influence, clamped 0-1) as detailed in Data Model changes.
@@ -70,19 +70,19 @@ This document tracks the implementation progress and outlines future enhancement
         -   [x] Integrate local sentiment/emotion library analysis during `run_consolidation`. (Using text2emotion)
         -   [x] Call `_analyze_and_update_emotion` helper to store results on relevant nodes.
     -   [x] Implement mechanism for automatic/periodic consolidation trigger.
--   [x] **Nuanced Forgetting (V1 Implementation):**
+-   [x] **Memory Strength & Forgetting (V1 Implementation):**
     -   [x] **Enable Flag:** Check `features.enable_forgetting`.
     * [x] **Implement `run_memory_maintenance()` Method:**
         -   [x] Add trigger mechanism (interaction count based) in `Worker`.
-        -   [x] Implement efficient candidate node filtering (status='active', type, age, activation thresholds from config).
+        -   [x] Implement candidate node filtering (age, activation).
         -   [x] Implement normalization functions for score factors.
         -   [x] Implement forgettability score calculation (weighted sum formula).
-        -   [x] Implement **soft delete** (set `status='archived'`) if score exceeds threshold.
-        -   [x] Add clear logging for archived nodes.
-    * [x] **Modify Retrieval:** Update `retrieve_memory_chain` and `_search_similar_nodes` to filter out `status=='archived'` nodes.
-    * [x] **Update `config.yaml`:** Define `forgetting` section with enable flag, trigger, thresholds, weights, candidate/protected types. Define `saliency_factor` and `emotion_resistance_factor` weights. (Config already updated)
-    * [ ] **Testing (Forgetting):** Test candidate filtering, score calculation, archiving logic, and retrieval exclusion. Verify tuning knobs work.
-    * [x] **(V2 Placeholder):** Define `purge_archived_nodes()` stub method.
+        -   [x] Implement **strength reduction** (`memory_strength *= (1 - forget_score * decay_rate)`).
+        -   [x] Add clear logging for strength reduction.
+    * [x] **Modify Retrieval:** Update `retrieve_memory_chain` and `_search_similar_nodes` to remove `status` filtering and incorporate `memory_strength` into activation.
+    * [x] **Update `config.yaml`:** Define `forgetting` section (weights, candidates). Define `memory_strength` section (initial, decay_rate, purge_threshold, purge_age). Remove status-based params.
+    * [ ] **Testing (Forgetting/Strength):** Test candidate filtering, score calculation, strength reduction logic, and retrieval modulation. Verify tuning knobs work.
+    * [x] **Implement `purge_weak_nodes()`:** Permanently delete nodes below strength threshold and above age threshold.
 -   [x] **Action/Tool Handling (via Focused Intent Analysis):**
     -   [x] Backend: Basic structure for `analyze_action_request` and `execute_action` exists.
     -   [x] Backend: Basic file/calendar wrapper methods exist.
@@ -131,10 +131,10 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Basic `if __name__ == "__main__":` tests exist.
     -   [x] Added basic docstrings.
     -   [x] Created initial README.
-    -   [ ] Develop **unit tests** for new helpers (saliency calc, forgettability score (incl. exponential decay), normalization, emotion analysis wrappers, parsers, saliency boost logic).
-    -   [ ] Develop **integration tests** for Phase 1 features (saliency influence & recall boost, forgetting cycle with exponential decay) and existing flows.
+    -   [ ] Develop **unit tests** for new helpers (saliency calc, forgettability score, strength reduction logic, normalization, emotion analysis wrappers, parsers, saliency boost logic).
+    -   [ ] Develop **integration tests** for Phase 1 features (saliency influence & recall boost, strength reduction cycle, retrieval modulation by strength, purging) and existing flows.
     -   [ ] Complete/Refine docstrings.
-    -   [ ] Update README as features evolve.
+    -   [x] Update README as features evolve (Reflected strength change).
     -   [ ] Add clear documentation for all `config.yaml` parameters.
 -   [ ] **Scalability Enhancements (Future):**
     -   [ ] Evaluate optimized FAISS index.

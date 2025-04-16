@@ -39,10 +39,13 @@ The system uses a combination of:
     * `delete` specific memory nodes (by UUID).
     * `edit` the text of memory nodes (by UUID).
     * `forget` memories related to a specific topic (via similarity search).
-* **Nuanced Forgetting (V1 - Soft Delete):**
-    * Periodically (based on interaction count), identifies less relevant nodes based on age, access count, activation level, saliency, type, etc.
-    * Calculates a "forgettability score".
-    * Nodes exceeding a threshold are marked as `archived` (soft delete) and excluded from normal retrieval.
+* **Memory Strength & Gradual Forgetting:**
+    * Nodes have a `memory_strength` attribute (0.0-1.0), initialized at 1.0.
+    * Periodically (based on interaction count), the system identifies nodes eligible for potential strength reduction (based on age, activation level).
+    * A "forgettability score" is calculated based on various factors (recency, activation, saliency, emotion, connectivity, type).
+    * The `memory_strength` of candidate nodes is reduced based on their forgettability score and a configured decay rate.
+    * Node strength influences activation spreading during retrieval (weaker nodes contribute less).
+    * Nodes with strength below a configurable threshold and older than a certain age can be permanently purged.
 * **Basic File/Calendar Actions (Experimental):**
     * Includes backend logic (`file_manager.py`) and analysis prompts (`analyze_action_request`) to potentially handle requests for creating/appending files or adding/reading calendar events within a personality-specific workspace. (GUI integration is incomplete).
 * **Graphical User Interface (PyQt6):**

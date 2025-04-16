@@ -68,12 +68,11 @@ forget_topic:
 forgetting:
   trigger_interaction_count: 20 # How often to run maintenance (0 to disable)
   score_threshold: 0.7 # Score above which nodes get archived
-  candidate_min_age_hours: 24 # Only consider nodes older than this
-  candidate_min_activation: 0.05 # Only consider nodes with low activation
-  protected_node_types: ['concept', 'summary'] # Types never automatically forgotten
-  # --- Forgettability Score Weights (must sum roughly to 1.0) ---
+  candidate_min_age_hours: 24 # Only consider nodes older than this for strength reduction check
+  candidate_min_activation: 0.05 # Only consider nodes with low activation for strength reduction check
+  # --- Forgettability Score Weights (used to calculate strength reduction) ---
   weights:
-    # Factors increasing forgettability:
+    # Factors increasing forgettability score (leading to more strength reduction):
     recency_factor: 0.3      # How long since last access (older = more forgettable)
     activation_factor: 0.2   # Low activation = more forgettable
     node_type_factor: 0.1    # e.g., 'turn' nodes are more forgettable than others
@@ -82,10 +81,15 @@ forgetting:
     emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
     connectivity_factor: 0.1 # Higher degree = less forgettable (Placeholder)
     access_count_factor: 0.0 # Higher access count = less forgettable (Placeholder, add weight if desired)
-    # --- Recency Decay Constant (Higher value = faster initial forgetting) ---
+    # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
     recency_decay_constant: 0.000005 # Example value (adjust based on desired time scale, e.g., for seconds)
-  # --- Saliency Protection ---
-  saliency_protection_threshold: 0.9 # Nodes with saliency >= this are never archived
+
+# --- Memory Strength Parameters ---
+memory_strength:
+  initial_value: 1.0 # Starting strength for new nodes
+  decay_rate: 0.1 # Factor applied to forgettability score for strength reduction (e.g., new_strength = old_strength * (1 - forget_score * decay_rate))
+  purge_threshold: 0.01 # Strength below which nodes are eligible for permanent deletion by purge_weak_nodes
+  purge_min_age_days: 60 # Minimum age (in days) before a node below threshold can be purged
 
 # --- GUI Keywords --- # Moved from bottom for better grouping
 modification_keywords:
