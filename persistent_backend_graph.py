@@ -758,9 +758,10 @@ class GraphMemoryClient:
 
         saliency_enabled = features_cfg.get('enable_saliency', False)
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
-        # forgetting_enabled = features_cfg.get('enable_forgetting', False) # No longer needed for status check
+        context_focus_boost = act_cfg.get('context_focus_boost', 0.0) # Get boost factor, default 0 (no boost)
+        recent_concept_uuids_set = set(recent_concept_uuids) if recent_concept_uuids else set() # Use set for faster lookup
 
-        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (Saliency Influence: {activation_influence:.2f}, Guarantee Sal >= {guaranteed_saliency_threshold})")
+        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (SalInf: {activation_influence:.2f}, GuarSal>=: {guaranteed_saliency_threshold}, FocusBoost: {context_focus_boost}, RecentConcepts: {len(recent_concept_uuids_set)})")
         if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
 
         activation_levels = defaultdict(float)
