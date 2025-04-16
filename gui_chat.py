@@ -510,7 +510,8 @@ class CollapsibleMemoryWidget(QWidget):
         if self.parentWidget() and self.parentWidget().layout(): self.parentWidget().layout().activate()
     def populate_content(self):
         if not self.memories: self.content_area.setHtml("<small><i>No relevant memories retrieved.</i></small>"); return
-        html_content = ""; sorted_memories = sorted(self.memories, key=lambda x: x.get('timestamp', ''))
+        # Sort memories by final_activation score (descending), then timestamp as secondary key
+        html_content = ""; sorted_memories = sorted(self.memories, key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True)
         for mem in sorted_memories:
             ts_str = mem.get('timestamp', 'N/A'); node_type = mem.get('node_type', '?type'); act_score = mem.get('final_activation', -1.0); speaker = str(mem.get('speaker', '?')).replace('<', '&lt;').replace('>', '&gt;'); text = str(mem.get('text', '')).replace('<', '&lt;').replace('>', '&gt;'); text_multiline = text.replace('\n', '<br/>'); uuid_str = mem.get('uuid', '')[:8]; score_str = f"(Act: {act_score:.3f})" if act_score >= 0 else ""; time_desc = ts_str[:10]
             try: dt_obj = datetime.fromisoformat(ts_str.replace('Z', '+00:00')); time_diff = datetime.now(timezone.utc) - dt_obj;
