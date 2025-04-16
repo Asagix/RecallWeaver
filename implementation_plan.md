@@ -127,6 +127,10 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Modify `process_interaction` to call classifier before search.
     -   [x] Modify `_search_similar_nodes` to accept `query_type` and bias search results towards relevant node types ('turn' for episodic, 'summary'/'concept' for semantic).
     -   [ ] Testing: Verify query classification and search biasing work as expected.
+-   [ ] **Enhanced Sense of Time (Prompting):**
+    -   [x] Add `_get_relative_time_desc` helper method to `GraphMemoryClient`.
+    -   [x] Modify `_construct_prompt` to use the helper for formatting memory timestamps.
+    -   [ ] Testing: Verify relative time descriptions appear correctly in prompts.
 
 ## Phase 2: GUI (`gui_chat.py`)
 

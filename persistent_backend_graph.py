@@ -1369,6 +1369,39 @@ class GraphMemoryClient:
 
         return final_score
 
+    def _get_relative_time_desc(self, timestamp_str: str) -> str:
+        """Converts an ISO timestamp string into a human-readable relative time description."""
+        if not timestamp_str: return "Timestamp Unknown"
+        try:
+            # Ensure timezone awareness
+            target_dt_utc = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            if target_dt_utc.tzinfo is None:
+                target_dt_utc = target_dt_utc.replace(tzinfo=timezone.utc)
+
+            now_utc = datetime.now(timezone.utc)
+            delta = now_utc - target_dt_utc
+
+            seconds = delta.total_seconds()
+            days = delta.days
+
+            if seconds < 60: return "just now"
+            if seconds < 3600: return f"{int(seconds / 60)} minutes ago"
+            if seconds < 86400: # Less than a day
+                hours = int(seconds / 3600)
+                return f"{hours} hour{'s' if hours > 1 else ''} ago"
+            if days == 1: return "yesterday"
+            if days < 7: return f"{days} days ago" # Or target_dt_utc.strftime('%A') for "last Tuesday"? Let's keep it simple.
+            if days < 30: return f"{int(days / 7)} week{'s' if int(days / 7) > 1 else ''} ago"
+            if days < 365: return f"{int(days / 30)} month{'s' if int(days / 30) > 1 else ''} ago"
+            else: return f"{int(days / 365)} year{'s' if int(days / 365) > 1 else ''} ago" # Or return the date "on YYYY-MM-DD"?
+
+        except ValueError:
+            logger.warning(f"Could not parse timestamp for relative description: {timestamp_str}")
+            return f"on {timestamp_str[:10]}" # Fallback to date part
+        except Exception as e:
+            logger.error(f"Error generating relative time description: {e}", exc_info=True)
+            return "Timestamp Error"
+
     def purge_weak_nodes(self):
         """
         Permanently deletes nodes whose memory_strength is below a configured threshold
@@ -1513,17 +1546,10 @@ class GraphMemoryClient:
                 spk = node.get('speaker','?')
                 txt = node.get('text','')
                 ts = node.get('timestamp','')
-                td = "TS?" # Default timestamp description
-                try:
-                    dt=datetime.fromisoformat(ts.replace('Z','+00:00'))
-                    diff=datetime.now(timezone.utc)-dt
-                    if diff < timedelta(hours=1): td=f"{int(diff.total_seconds()/60)}m ago"
-                    elif diff < timedelta(days=1): td=f"{int(diff.total_seconds()/3600)}h ago"
-                    else: td=dt.strftime('%Y-%m-%d')
-                except Exception as ts_e:
-                    logger.debug(f"Could not parse memory timestamp '{ts}': {ts_e}") # Corrected logger name
+                # --- Use new helper for relative time ---
+                relative_time_desc = self._get_relative_time_desc(ts)
 
-                fmt_mem = f"{spk} ({td}): {txt}\n"
+                fmt_mem = f"{spk} ({relative_time_desc}): {txt}\n"
                 try:
                     mem_tok_len = len(tokenizer.encode(fmt_mem))
                 except Exception as e:
