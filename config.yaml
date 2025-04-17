@@ -289,7 +289,7 @@ prompting:
 # --- Consolidation Parameters ---
 consolidation:
   trigger_interaction_count: 15 # How often to run consolidation automatically (e.g., every 15 interactions). Set > 0 to enable.
-  turn_count: 10 # How many turns to process when consolidation runs
+  turn_count: 15 # How many turns to process when consolidation runs (Increased from 10)
   min_nodes: 5 # Minimum suitable nodes required to proceed
   concept_similarity_threshold: 0.3
   # --- Relation Extraction ---
