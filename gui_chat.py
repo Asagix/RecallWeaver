@@ -924,7 +924,7 @@ class PasteLineEdit(QLineEdit):
 
         urls = mime_data.urls()
        # urls = mime_data.urls() # Removed duplicate line
-       if urls:
+       if urls: # Corrected indentation
            file_path = urls[0].toLocalFile()
            gui_logger.debug(f"Checking URL path: {file_path}")
            if file_path and os.path.isfile(file_path):
