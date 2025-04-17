@@ -2235,12 +2235,14 @@ class GraphMemoryClient:
         return final_prompt
 
 
-    def _call_kobold_api(self, prompt: str, max_length: int = 512, temperature: float = 1.0, top_p: float = 0.95, top_k: int = 64, min_p: float = 0.0) -> str:
+    # --- Updated signature to accept parameters ---
+    def _call_kobold_api(self, prompt: str, model_name: str, max_length: int, temperature: float, top_p: float, top_k: int, min_p: float) -> str:
         """
-        Sends prompt to KoboldCpp API, returns generated text.
-        Uses updated default parameters and includes top_k, min_p.
+        Sends prompt to KoboldCpp Generate API, returns generated text.
+        Parameters are passed in, typically from _call_configured_llm.
         """
         logger.debug(f"_call_kobold_api received prompt ('{prompt[:80]}...'). Length: {len(prompt)}")
+        logger.debug(f"  Params: max_len={max_length}, temp={temperature}, top_p={top_p}, top_k={top_k}, min_p={min_p}")
 
         # Calculate max_context_length
         try:
@@ -3550,10 +3552,14 @@ class GraphMemoryClient:
         logger.info(f"Client request to delete workspace file: {filename}")
         return file_manager.delete_file(self.config, self.personality, filename)
 
-    def _call_kobold_multimodal_api(self, messages: list, max_tokens: int = 512, temperature: float = 0.7,
-                                    top_p: float = 0.9) -> str:
-        """Sends prompt to KoboldCpp OpenAI-compatible API, handles multimodal messages."""
+    # --- Updated signature to accept parameters ---
+    def _call_kobold_multimodal_api(self, messages: list, model_name: str, max_tokens: int, temperature: float, top_p: float) -> str:
+        """
+        Sends prompt to KoboldCpp OpenAI-compatible Chat API, handles multimodal messages.
+        Parameters are passed in, typically from _call_configured_llm.
+        """
         logger.debug(f"Calling Kobold Chat Completions API ({self.kobold_chat_api_url})")
+        logger.debug(f"  Params: model={model_name}, max_tokens={max_tokens}, temp={temperature}, top_p={top_p}")
         # Maybe get model name from config? Kobold might ignore it anyway.
         model_name = self.config.get('kobold_model_name', 'gemma-3-27b-it')  # Optional
 
