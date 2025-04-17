@@ -26,8 +26,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMimeData, QUrl, QBuffer, QByteArray, \
     QIODevice
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextBrowser, QLineEdit,
+    QPushButton, QScrollArea, QLabel, QHBoxLayout, QFrame,
+    QSizePolicy, QSpacerItem, QMessageBox, QInputDialog, QFileDialog,
+    QGridLayout, QDialog # Added QGridLayout, QDialog
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMimeData, QUrl, QBuffer, QByteArray, \
+    QIODevice, QPoint # Added QPoint
 from PyQt6.QtGui import QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
-    QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices  # Added QDesktopServices
+    QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices, \
+    QMouseEvent # Added QMouseEvent
 
 from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis # <<< Import strip_emojis
 import file_manager
@@ -1423,6 +1432,14 @@ class ChatWindow(QMainWindow):
         self.reset_button.setToolTip("Reset memory for loaded personality")
         self.input_layout.addWidget(self.input_field, 1);
         self.input_layout.addWidget(self.attach_button);
+        # --- Add Emoji Button ---
+        self.emoji_button = QPushButton("😀") # Use an emoji as the button icon/text
+        self.emoji_button.setObjectName("EmojiButton") # For styling
+        self.emoji_button.setToolTip("Insert Emoji")
+        self.emoji_button.setFixedSize(self.attach_button.sizeHint().height(), self.attach_button.sizeHint().height()) # Make it square like attach
+        self.emoji_button.clicked.connect(self.open_emoji_picker)
+        self.input_layout.addWidget(self.emoji_button) # Add before send button
+        # --- End Add Emoji Button ---
         self.input_layout.addWidget(self.send_button);
         self.input_layout.addWidget(self.consolidate_button);
         self.input_layout.addWidget(self.reset_button)
@@ -1571,6 +1588,7 @@ class ChatWindow(QMainWindow):
         if hasattr(self, 'emotion_indicator_label'): self.emotion_indicator_label.setObjectName("EmotionIndicator") # Apply name
         # ... (re-apply other object names) ...
         if hasattr(self, 'attach_button'): self.attach_button.setObjectName("AttachButton")
+        if hasattr(self, 'emoji_button'): self.emoji_button.setObjectName("EmojiButton") # Apply name
         if hasattr(self, 'send_button'): self.send_button.setObjectName("SendButton")
         if hasattr(self, 'reset_button'): self.reset_button.setObjectName("ResetButton")
         if hasattr(self, 'consolidate_button'): self.consolidate_button.setObjectName("ConsolidateButton")
@@ -1590,6 +1608,7 @@ class ChatWindow(QMainWindow):
 
         if hasattr(self, 'send_button'): self.send_button.setEnabled(enabled)
         if hasattr(self, 'attach_button'): self.attach_button.setEnabled(enabled)
+        if hasattr(self, 'emoji_button'): self.emoji_button.setEnabled(enabled) # Enable/disable emoji button
         # Only enable Reset/Consolidate if a model is loaded (enabled=True)
         if hasattr(self, 'reset_button'): self.reset_button.setEnabled(enabled)
         if hasattr(self, 'consolidate_button'): self.consolidate_button.setEnabled(enabled)
