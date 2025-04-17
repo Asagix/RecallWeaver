@@ -1,6 +1,7 @@
 # persistent_backend_graph.py
 import math
 import os
+import re # <<< Add import re
 import subprocess
 import sys
 
@@ -96,6 +97,19 @@ def log_tuning_event(event_type: str, data: dict):
     except Exception as e:
         # Log error to the main logger if tuning log fails
         logger.error(f"Error logging tuning event '{event_type}': {e}", exc_info=True)
+
+
+def strip_emojis(text: str) -> str:
+    """Removes common emoji characters from a string."""
+    if not isinstance(text, str):
+        return text # Return non-strings as-is
+    try:
+        # Attempt to encode/decode to handle potential broken surrogates before regex
+        cleaned_text = text.encode('utf-16', 'surrogatepass').decode('utf-16', 'surrogatepass')
+        return EMOJI_PATTERN.sub(r'', cleaned_text)
+    except Exception:
+        # Fallback to regex only if encoding/decoding fails
+        return EMOJI_PATTERN.sub(r'', text)
 
 
 class GraphMemoryClient:
@@ -603,7 +617,7 @@ class GraphMemoryClient:
 
         if not text: logger.warning("Skip adding empty node."); return None
         log_text = text[:80] + '...' if len(text) > 80 else text
-        logger.info(f"Adding node: Spk={speaker}, Typ={node_type}, Txt='{log_text}'")
+        logger.info(f"Adding node: Spk={speaker}, Typ={node_type}, Txt='{strip_emojis(log_text)}'") # Strip emojis
         current_time = time.time()
         node_uuid = str(uuid.uuid4())
         timestamp = timestamp or datetime.now(timezone.utc).isoformat()
@@ -743,7 +757,7 @@ class GraphMemoryClient:
 
     def edit_memory_entry(self, node_uuid: str, new_text: str) -> str | None:
         """Edits the text of a specific memory node by replacing it."""
-        logger.info(f"Editing: UUID={node_uuid[:8]}, Text='{new_text[:50]}...'");
+        logger.info(f"Editing: UUID={node_uuid[:8]}, Text='{strip_emojis(new_text[:50])}...'"); # Strip emojis
         if not new_text: logger.warning("Cannot edit with empty text."); return None
         if node_uuid not in self.graph: logger.warning(f"Node {node_uuid} not found."); return None
         try:
@@ -767,7 +781,7 @@ class GraphMemoryClient:
         """Identifies and deletes nodes related to a topic via similarity."""
         # (Keep implementation from previous version)
         similarity_k = self.config.get('forget_topic', {}).get('similarity_k', 15)
-        logger.info(f"Forget topic request: '{topic[:50]}...'")
+        logger.info(f"Forget topic request: '{strip_emojis(topic[:50])}...'") # Strip emojis
         if not topic: return False, "No topic provided."
         if self.index is None or self.index.ntotal == 0: return False, "Memory empty."
         logger.debug(f"Searching nodes similar to '{topic[:30]}...' (k={similarity_k})")
@@ -780,8 +794,8 @@ class GraphMemoryClient:
                 if self.delete_memory_entry(node_uuid): deleted_count += 1; deleted_uuids.append(node_uuid[:8])
                 else: failed_count += 1; logger.warning(f"Failed deleting node {node_uuid} during forget.")
             else: logger.debug(f"Node {node_uuid} already deleted before forget loop.")
-        if deleted_count > 0: message = f"Forgot topic '{topic}'. Deleted {deleted_count} entries." + (f" ({failed_count} fails)." if failed_count else ""); logger.info(message + f" UUIDs: {deleted_uuids}"); return True, message
-        else: message = f"Could not delete memories for '{topic}'."; logger.warning(message); return False, message
+        if deleted_count > 0: message = f"Forgot topic '{strip_emojis(topic)}'. Deleted {deleted_count} entries." + (f" ({failed_count} fails)." if failed_count else ""); logger.info(message + f" UUIDs: {deleted_uuids}"); return True, message # Strip emojis in message
+        else: message = f"Could not delete memories for '{strip_emojis(topic)}'."; logger.warning(message); return False, message # Strip emojis in message
 
 
     # --- Activation Spreading & Retrieval ---
@@ -885,6 +899,7 @@ class GraphMemoryClient:
             logger.info(f"Found {len(results)} potentially relevant nodes (type='{node_type_filter or 'any'}', query_type='{query_type}') for query '{query_text[:30]}...'")
             # Return only top k based on adjusted distance
             final_results = [(uuid, dist) for uuid, dist in results[:k]]
+            logger.info(f"Found {len(results)} potentially relevant nodes (type='{node_type_filter or 'any'}', query_type='{query_type}') for query '{strip_emojis(query_text[:30])}...'") # Strip emojis
             logger.debug(f" Final top {k} nodes after sorting by adjusted distance: {final_results}")
             return final_results
 
@@ -1446,7 +1461,7 @@ class GraphMemoryClient:
             saliency_str = f"{saliency_val:.2f}" if isinstance(saliency_val, (int, float)) else str(saliency_val)
             strength_str = f"{strength_val:.2f}" if isinstance(strength_val, (int, float)) else str(strength_val)
             # Format the log message including strength
-            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Str:{strength_str} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
+            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Str:{strength_str} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{strip_emojis(node.get('text', 'N/A')[:80])}...'") # Strip emojis
         logger.debug("------------------------------------")
 
         # --- Tuning Log: Retrieval Result ---
@@ -2840,7 +2855,7 @@ class GraphMemoryClient:
         log_tuning_event("INTERACTION_START", {
             "interaction_id": interaction_id,
             "personality": self.personality,
-            "user_input_preview": user_input[:100],
+            "user_input_preview": strip_emojis(user_input[:100]), # Strip emojis
             "has_attachment": bool(attachment_data),
             "attachment_type": attachment_data.get('type') if attachment_data else None,
         })
@@ -2914,7 +2929,7 @@ class GraphMemoryClient:
                     log_tuning_event("QUERY_CLASSIFICATION", {
                         "interaction_id": interaction_id,
                         "personality": self.personality,
-                        "query_preview": user_input[:100],
+                        "query_preview": strip_emojis(user_input[:100]), # Strip emojis
                         "classified_type": query_type,
                     })
 
@@ -2928,7 +2943,7 @@ class GraphMemoryClient:
                     log_tuning_event("INITIAL_SEARCH_RESULT", {
                         "interaction_id": interaction_id,
                         "personality": self.personality,
-                        "query_preview": user_input[:100],
+                        "query_preview": strip_emojis(user_input[:100]), # Strip emojis
                         "query_type": query_type,
                         "initial_node_scores": initial_nodes, # List of (uuid, score)
                         "initial_uuids_selected": initial_uuids,
@@ -3108,12 +3123,12 @@ class GraphMemoryClient:
 
             # Add nodes to graph regardless of LLM success/failure, using appropriate text
             logger.info("Adding user input node to graph...")
-            logger.debug(f"Adding user node with text: '{graph_user_input[:100]}...'")
+            logger.debug(f"Adding user node with text: '{strip_emojis(graph_user_input[:100])}...'") # Strip emojis
             user_node_uuid = self.add_memory_node(graph_user_input, "User")
 
             logger.info("Adding AI/System response node to graph...")
             # Use parsed_response (which could be success or error message)
-            logger.debug(f"Adding AI node with text: '{parsed_response[:100]}...'")
+            logger.debug(f"Adding AI node with text: '{strip_emojis(parsed_response[:100])}...'") # Strip emojis
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
             # --- Calculate and Store context for NEXT interaction's retrieval bias ---
@@ -3259,7 +3274,7 @@ class GraphMemoryClient:
         log_tuning_event("INTERACTION_END", {
             "interaction_id": interaction_id,
             "personality": self.personality,
-            "final_response_preview": parsed_response[:100],
+            "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
             "retrieved_memory_count": len(memory_chain_data),
             "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
             "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
@@ -5264,7 +5279,7 @@ class GraphMemoryClient:
         Plans and executes workspace actions based on user input and conversation context.
         Called separately by the worker thread if flagged by process_interaction.
         """
-        logger.info(f"--- Starting Separate Workspace Planning & Execution for input: '{user_input[:50]}...' ---")
+        logger.info(f"--- Starting Separate Workspace Planning & Execution for input: '{strip_emojis(user_input[:50])}...' ---") # Strip emojis
         workspace_action_results = [] # Initialize results list
 
         try:
@@ -5287,8 +5302,8 @@ class GraphMemoryClient:
             logger.info(f"Retrieved {len(memory_chain_data)} memories for planning context.")
 
             # 2. Prepare Planning Prompt Context
-            planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in conversation_history[-5:]]) # Limit history
-            planning_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {mem.get('text', '')}" for mem in memory_chain_data])
+            planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Strip emojis
+            planning_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {strip_emojis(mem.get('text', ''))}" for mem in memory_chain_data]) # Strip emojis
             if not planning_memory_text: planning_memory_text = "[No relevant memories retrieved]"
 
             planning_prompt_template = self._load_prompt("workspace_planning_prompt.txt")
@@ -5311,7 +5326,7 @@ class GraphMemoryClient:
             parsed_plan = None
             if plan_response_str and not plan_response_str.startswith("Error:"):
                 try:
-                    logger.debug(f"Raw workspace plan response: ```{plan_response_str}```")
+                    logger.debug(f"Raw workspace plan response: ```{strip_emojis(plan_response_str)}```") # Strip emojis
                     match = re.search(r'(\[.*?\])', plan_response_str, re.DOTALL | re.MULTILINE)
                     if match:
                         plan_json_str = match.group(1)

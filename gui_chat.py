@@ -31,7 +31,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMi
 from PyQt6.QtGui import QTextCursor, QColor, QPalette, QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
     QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices  # Added QDesktopServices
 
-from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger
+from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis # <<< Import strip_emojis
 import file_manager
 
 # --- Logger Setup ---
@@ -229,7 +229,7 @@ class Worker(QThread):
         # We need the UUID *after* adding to graph, so add placeholder for now
         user_turn_data = {"speaker": "User", "text": history_text, "timestamp": user_timestamp, "uuid": None}
         self.current_conversation.append(user_turn_data)
-        self.signals.log_message.emit(f"Processing chat: {history_text[:30]}...")
+        self.signals.log_message.emit(f"Processing chat: {strip_emojis(history_text[:30])}...") # Strip emojis
 
         ai_response_text = "Error: Could not get response."
         memory_chain_data = []
@@ -361,11 +361,12 @@ class Worker(QThread):
             backend_logger.error(error_msg)
 
     # --- NEW Task Handler for Planning/Execution ---
+    # --- NEW Task Handler for Planning/Execution ---
     def handle_plan_and_execute_task(self, context_data: dict):
         """Handles the separate task for planning and executing workspace actions."""
         user_input = context_data.get('user_input', '')
         history_context = context_data.get('history', []) # Get history context
-        gui_logger.info(f"Worker handling plan_and_execute task for input: '{user_input[:50]}...'")
+        gui_logger.info(f"Worker handling plan_and_execute task for input: '{strip_emojis(user_input[:50])}...'") # Strip emojis
         self.signals.log_message.emit("Planning workspace actions...") # Update status
 
         if self.client:
@@ -383,7 +384,7 @@ class Worker(QThread):
                             action_name = action_suffix.split('_')[0] if '_' in action_suffix else action_suffix
                             placeholder_input = f"Workspace Action: {action_name}"
                             placeholder_target = "" # Target info not directly available here
-                            self.signals.modification_response_ready.emit(placeholder_input, message, action_suffix, placeholder_target)
+                            self.signals.modification_response_ready.emit(placeholder_input, strip_emojis(message), action_suffix, placeholder_target) # Strip emojis from message
                         else:
                             gui_logger.error(f"Invalid result format from plan_and_execute: {result_tuple}")
                             self.signals.error.emit(f"Received invalid workspace result format: {result_tuple}")
@@ -406,7 +407,7 @@ class Worker(QThread):
         # (Implementation remains the same - no interaction counter increment)
         user_timestamp = datetime.now(timezone.utc).isoformat()
         # self.current_conversation.append({"speaker": "User", "text": user_input, "timestamp": user_timestamp}) # Maybe don't add modification command itself to history? Or add differently?
-        self.signals.log_message.emit(f"Processing modification: {user_input[:30]}...")
+        self.signals.log_message.emit(f"Processing modification: {strip_emojis(user_input[:30])}...") # Strip emojis
         final_confirmation_msg = "Could not understand modification request."
         final_action_type = "error";
         final_target_info = "";
@@ -478,8 +479,8 @@ class Worker(QThread):
         self.current_conversation.append(
             {"speaker": "System", "text": final_confirmation_msg, "timestamp": confirmation_timestamp})
         # Emit signal to GUI
-        self.signals.modification_response_ready.emit(user_input, final_confirmation_msg, final_action_type,
-                                                      str(final_target_info))
+        self.signals.modification_response_ready.emit(strip_emojis(user_input), strip_emojis(final_confirmation_msg), final_action_type,
+                                                      str(final_target_info)) # Strip emojis
 
     def handle_reset_task(self):
         # (Implementation remains the same - no interaction counter increment)
@@ -1830,7 +1831,7 @@ class ChatWindow(QMainWindow):
         # This slot ONLY displays the AI's conversational response and memories.
         # The needs_planning flag is received but not directly used for display here.
         # Workspace results will arrive via modification_response_ready signal later if planning was needed.
-        gui_logger.debug(f"GUI received AI response: '{ai_response[:50]}...' (UUID: {ai_node_uuid})")
+        gui_logger.debug(f"GUI received AI response: '{strip_emojis(ai_response[:50])}...' (UUID: {ai_node_uuid})") # Strip emojis
         # --- Pass ai_node_uuid to display_message for the AI bubble ---
         self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
         if memories:
