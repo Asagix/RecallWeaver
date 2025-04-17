@@ -2371,10 +2371,12 @@ class GraphMemoryClient:
         )
 
         logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=512, temperature=0.1)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('action_analysis', prompt=full_prompt)
 
-        if not llm_response_str:
-            logger.error("Failed to load action analysis prompt template. Cannot analyze action.")
+        # --- Check for API call errors BEFORE parsing ---
+        if not llm_response_str or llm_response_str.startswith("Error:"):
+            error_reason = llm_response_str if llm_response_str else "LLM call failed (empty response)"
             return {'action': 'error', 'reason': 'Action analysis prompt template missing.'}
 
         # The prompt template now contains the descriptions directly.
