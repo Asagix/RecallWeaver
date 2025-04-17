@@ -1292,7 +1292,7 @@ class ChatWindow(QMainWindow):
 
         # --- Initial State ---
         self.set_input_enabled(False)  # Start with input disabled
-        self.update_status_light(False)  # Start with red light
+        self.update_status_light("not_ready")  # Start with red light (use string status)
         self.statusBar().showMessage("Please select a personality from the menu to begin.")
         # Add initial message to chat display
         QTimer.singleShot(100, lambda: self.display_message("System",
@@ -2489,6 +2489,7 @@ class ChatWindow(QMainWindow):
             file_type = attachment_info.get("type") # Assign if info exists
             file_name = attachment_info.get("filename", "attached_file") # Assign if info exists
 
+            # --- Check if file_type is valid before proceeding ---
             if file_type == "image":
                 # Get base64 string directly from the passed attachment_info
                 image_base64 = attachment_info.get('base64_string')
@@ -2524,22 +2525,18 @@ class ChatWindow(QMainWindow):
                     attachment_label = QLabel(f"[Image: {file_name}]")  # Show filename as fallback
                     attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic;")
 
-
-        elif file_type == "file":
-
-            # Display placeholder for generic files
-
-            attachment_label = QLabel(f"[File Attached: {file_name}]")
+            elif file_type == "file":
+                # Display placeholder for generic files
+                attachment_label = QLabel(f"[File Attached: {file_name}]")
 
             attachment_label.setStyleSheet(
 
                 "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
-
             )
-
-        else:
-
-            gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
+            # --- End check for valid file_type ---
+            elif file_type is not None: # Only log warning if type was present but unknown
+                gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
+            # If file_type was None, we simply don't create an attachment_label, no warning needed here.
 
         # --- Create Main Message Label (if text provided) ---
         message_label = None
