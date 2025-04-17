@@ -501,7 +501,7 @@ subconscious_drives:
 
   # --- Baseline Dynamics (NEW) ---
   # Influence of high-impact events on long-term state
-  high_impact_memory_baseline_shift_factor: 0.25 # Increased from 0.1: How much a single high-impact memory nudges the long-term drive state (0-1).
+  high_impact_memory_baseline_shift_factor: 0.30 # Increased from 0.25: How much a single high-impact memory nudges the long-term drive state (0-1).
 
 
 # --- Autobiographical Self-Model (ASM) Generation ---

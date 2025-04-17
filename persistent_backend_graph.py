@@ -1757,6 +1757,15 @@ class GraphMemoryClient:
                 self.autobiographical_model['last_contradiction_node'] = contradicting_node_uuid # Store conflicting node UUID
                 self.autobiographical_model['last_contradiction_time'] = datetime.now(timezone.utc).isoformat()
                 logger.info(f"ASM flagged for review. Conflicting node: {contradicting_node_uuid[:8]}")
+                # --- Log more details about the contradiction ---
+                log_tuning_event("ASM_CONTRADICTION_FLAGGED", {
+                    "personality": self.personality,
+                    "conflicting_node_uuid": contradicting_node_uuid,
+                    "conflicting_node_text_preview": node_text[:100] if 'node_text' in locals() else "N/A",
+                    "conflicting_node_saliency": node_saliency if 'node_saliency' in locals() else "N/A",
+                    "asm_summary_preview": asm_summary[:100] if 'asm_summary' in locals() else "N/A",
+                    "asm_state_at_detection": self.autobiographical_model.copy() # Log the ASM state when contradiction found
+                })
                 # Optionally trigger _generate_autobiographical_model immediately with specific context?
                 # self._generate_autobiographical_model(focus_node_uuid=contradicting_node_uuid) # Needs modification to accept focus
 
@@ -2676,8 +2685,8 @@ class GraphMemoryClient:
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
             # --- Mood/Drive Tone Instruction ---
             f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). Let this subtly influence your response tone. For example, high Valence might lead to warmer language, high Arousal might lead to more energetic phrasing, low Safety might lead to more cautious language.]" if current_mood else "[System Note: Current mood unavailable.]",
-            # --- ASM Integration Instruction (Revised) ---
-            "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself, but **adapt your response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed.]",
+            # --- ASM Integration Instruction (Revised for Adaptation) ---
+            "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself, but **adapt your response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed. Prioritize recent information when it conflicts with the baseline summary.]",
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
