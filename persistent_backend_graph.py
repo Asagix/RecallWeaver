@@ -2413,7 +2413,9 @@ class GraphMemoryClient:
                 else: logger.debug("History budget reached."); break # Corrected logger name
 
             hist_parts.reverse() # Chronological order
-            logger.debug(f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns).") # Corrected logger name
+            # --- Log the actual history text being included ---
+            history_context_for_log = "".join(hist_parts)
+            logger.debug(f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
 
         # --- Assemble Final Prompt ---
         final_parts = []
