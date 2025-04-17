@@ -206,6 +206,8 @@ class GraphMemoryClient:
         self.last_conversation_turns = [] # NEW: Store actual last N turns separately
         self.time_since_last_interaction_hours = 0.0 # Store time gap
         self.pending_re_greeting = None # Store generated re-greeting message
+        # --- Track nodes with high emotional impact within a single interaction ---
+        self.high_impact_nodes_this_interaction = {} # uuid -> magnitude
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -454,10 +456,10 @@ class GraphMemoryClient:
 
             # Update node attributes
             node_data['emotion_valence'] = final_valence
-            node_data['emotion_valence'] = final_valence
+            # node_data['emotion_valence'] = final_valence # Duplicate line removed
             node_data['emotion_arousal'] = final_arousal
 
-            logger.info(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})") # Changed level to INFO
+            logger.info(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})")
             # --- Log final clamped values ---
             log_tuning_event("EMOTION_ANALYSIS_FINAL", {
                 "personality": self.personality,
@@ -465,6 +467,25 @@ class GraphMemoryClient:
                 "final_valence": final_valence,
                 "final_arousal": final_arousal,
             })
+
+            # --- Check for High Emotional Impact ---
+            try:
+                magnitude = math.sqrt(final_valence**2 + final_arousal**2)
+                impact_threshold = self.config.get('subconscious_drives', {}).get('emotional_impact_threshold', 1.0) # Get threshold from config
+                if magnitude >= impact_threshold:
+                    logger.info(f"Node {node_uuid[:8]} registered as high emotional impact (Magnitude: {magnitude:.3f} >= {impact_threshold:.3f})")
+                    self.high_impact_nodes_this_interaction[node_uuid] = magnitude
+                    # Log this specific event
+                    log_tuning_event("EMOTIONAL_IMPACT_DETECTED", {
+                        "personality": self.personality,
+                        "node_uuid": node_uuid,
+                        "magnitude": magnitude,
+                        "threshold": impact_threshold,
+                        "valence": final_valence,
+                        "arousal": final_arousal,
+                    })
+            except Exception as impact_e:
+                logger.error(f"Error checking emotional impact for node {node_uuid[:8]}: {impact_e}", exc_info=True)
 
         except Exception as e:
             logger.error(f"Error during text2emotion analysis for node {node_uuid[:8]}: {e}", exc_info=True)
@@ -3146,6 +3167,7 @@ class GraphMemoryClient:
         ai_node_uuid = None # Initialize ai_node_uuid here
         user_node_uuid = None # Initialize user_node_uuid here
         is_first_interaction_of_session = (len(conversation_history) == len(self.initial_history_turns) + 1) # +1 for current user input
+        self.high_impact_nodes_this_interaction.clear() # Clear tracker for new interaction
 
         # --- Tuning Log: Interaction Start ---
         log_tuning_event("INTERACTION_START", {
@@ -3874,8 +3896,37 @@ class GraphMemoryClient:
                                     })
 
                                     # 5. Adjust short_term drive_state based on satisfaction/frustration factors
-                                    satisfaction_factor = drive_cfg.get('llm_satisfaction_factor', 0.1) # Use new config key
-                                    frustration_factor = drive_cfg.get('llm_frustration_factor', 0.15) # Use new config key
+                                    base_satisfaction_factor = drive_cfg.get('llm_satisfaction_factor', 0.1)
+                                    base_frustration_factor = drive_cfg.get('llm_frustration_factor', 0.15)
+
+                                    # --- Amplify factors if high-impact nodes were involved ---
+                                    amplification_factor = 1.0 # Default: no amplification
+                                    if self.high_impact_nodes_this_interaction:
+                                        max_magnitude = max(self.high_impact_nodes_this_interaction.values()) if self.high_impact_nodes_this_interaction else 0.0
+                                        amp_config_factor = drive_cfg.get('emotional_impact_amplification_factor', 1.5) # How much to amplify by
+                                        # Simple amplification: scale based on max magnitude relative to threshold
+                                        impact_threshold = drive_cfg.get('emotional_impact_threshold', 1.0)
+                                        # Ensure threshold is not zero to avoid division error
+                                        if impact_threshold > 0:
+                                             # Scale amplification based on how much magnitude exceeds threshold, up to configured max factor
+                                             magnitude_ratio = max(0.0, (max_magnitude - impact_threshold) / impact_threshold) # How much over threshold, relative
+                                             amplification_factor = 1.0 + (magnitude_ratio * (amp_config_factor - 1.0))
+                                             amplification_factor = min(amp_config_factor, amplification_factor) # Cap at max configured factor
+                                             logger.info(f"Amplifying drive adjustments due to high emotional impact. MaxMag={max_magnitude:.3f}, AmpFactor={amplification_factor:.3f}")
+                                             # Log amplification details
+                                             log_tuning_event("DRIVE_ADJUSTMENT_AMPLIFICATION", {
+                                                 "personality": self.personality,
+                                                 "amplification_factor": amplification_factor,
+                                                 "max_magnitude": max_magnitude,
+                                                 "impact_threshold": impact_threshold,
+                                                 "high_impact_nodes": list(self.high_impact_nodes_this_interaction.keys())
+                                             })
+
+                                    # Use amplified factors for this update cycle
+                                    satisfaction_factor = base_satisfaction_factor * amplification_factor
+                                    frustration_factor = base_frustration_factor * amplification_factor
+                                    logger.debug(f"Using Adjustment Factors: Satisfaction={satisfaction_factor:.4f}, Frustration={frustration_factor:.4f}")
+                                    # --- End amplification ---
 
                                     for drive_name, status in drive_adjustments.items():
                                         if drive_name in self.drive_state["short_term"]:

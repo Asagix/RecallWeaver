@@ -412,8 +412,12 @@ subconscious_drives:
 
   # --- LLM-Based Short-Term Adjustments ---
   # Factors applied based on LLM analysis ("satisfied"/"frustrated") during the update interval.
-  llm_satisfaction_factor: 0.1 # How much 'satisfied' status reduces drive activation (moves towards baseline). Applied multiplicatively to the deviation above baseline.
-  llm_frustration_factor: 0.15 # How much 'frustrated' status increases drive activation (moves away from baseline). Applied additively.
+  llm_satisfaction_factor: 0.15 # How much 'satisfied' status reduces drive activation (moves towards baseline). Applied multiplicatively to the deviation above baseline. (Increased base)
+  llm_frustration_factor: 0.20 # How much 'frustrated' status increases drive activation (moves away from baseline). Applied additively. (Increased base)
+
+  # --- Emotional Impact on Short-Term Adjustments ---
+  emotional_impact_threshold: 1.0 # Magnitude (sqrt(V^2+A^2)) above which an interaction node is considered high-impact.
+  emotional_impact_amplification_factor: 2.0 # Multiplier applied to satisfaction/frustration factors when high-impact nodes are present (e.g., 2.0 doubles the effect).
 
   # --- Long-Term Drive Dynamics ---
   # Long-term state reflects persistent tendencies, updated less frequently based on ASM analysis.
