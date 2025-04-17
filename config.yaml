@@ -443,13 +443,13 @@ subconscious_drives:
       Safety: -0.25     # Positive deviation (safe) -> slightly less pleasant (complacent?). Negative (unsafe) -> much less pleasant.
       Understanding: 0.1 # Positive deviation (understanding) -> more pleasant. Negative (confused) -> less pleasant.
       Novelty: 0.1     # Positive deviation (stimulated) -> more pleasant. Negative (bored) -> less pleasant. (Changed sign from 0.05)
-      Control: 0.1     # Positive deviation (in control) -> more pleasant. Negative (loss of control) -> less pleasant.
+      Control: 0.25    # Positive deviation (in control) -> more pleasant. Negative (loss of control) -> less pleasant. (Increased from 0.1)
     arousal_factors: # How deviation affects Activation/Energy (0 to 1)
       Connection: 0.1  # Both high satisfaction and high frustration might increase arousal slightly. (Increased from 0.05)
       Safety: -0.3     # Positive deviation (safe) -> decreases arousal (calm). Negative (unsafe) -> increases arousal (anxiety). (Correct)
       Understanding: 0.1 # Positive deviation (engaged) -> increases arousal. Negative (confused) -> increases arousal (frustration). (Increased from 0.05)
       Novelty: 0.25    # Positive deviation (excited) -> increases arousal. Negative (bored) -> decreases arousal. (Increased from 0.2)
-      Control: -0.15   # Positive deviation (competent) -> decreases arousal (calm control). Negative (loss of control) -> increases arousal (agitation). (Changed sign from 0.15)
+      Control: 0.20    # Positive deviation (competent) -> slightly increases arousal (focused?). Negative (loss of control) -> increases arousal (agitation). (Changed sign and value from -0.15)
     max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
 
 # --- Feedback System ---

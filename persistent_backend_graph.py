@@ -3456,11 +3456,14 @@ class GraphMemoryClient:
                 logger.info("No 'turn' nodes found in graph for initial history.")
                 return
 
-            # Sort by timestamp (most recent first)
-            turn_nodes.sort(key=lambda x: x[1]['timestamp'], reverse=True)
+            # Sort ALL turn nodes by timestamp first (most recent first)
+            turn_nodes.sort(key=lambda x: x[1].get('timestamp', ''), reverse=True)
 
-            # Get the last 'count' nodes
-            initial_nodes_data = [data for uuid, data in turn_nodes[:count]]
+            # THEN take the top 'count' nodes from the sorted list
+            latest_turn_nodes = turn_nodes[:count]
+
+            # Get the data for these latest nodes
+            initial_nodes_data = [data for uuid, data in latest_turn_nodes]
 
             # Sort them back into chronological order for display/context
             initial_nodes_data.sort(key=lambda x: x.get('timestamp', ''))
