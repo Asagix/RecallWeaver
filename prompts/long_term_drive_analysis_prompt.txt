@@ -14,10 +14,10 @@ Analyze the following summary of the AI's self-perception and key experiences. C
 --- END ---
 
 **Task:**
-Based *only* on the summary provided, assess the AI's apparent long-term disposition regarding each core drive. Determine if the overall pattern suggests a persistent **positive/satisfied** leaning, a persistent **negative/frustrated** leaning, or if it's **neutral/unclear** for each drive.
+Based *only* on the summary provided (core traits, themes, events, beliefs), assess the AI's apparent long-term disposition regarding each core drive. Determine if the overall pattern suggests a persistent **positive/satisfied** leaning, a persistent **negative/frustrated** leaning, or if it's **neutral/unclear** for each drive. Explicitly link elements from the summary to your assessment where possible (though don't include the links in the final JSON).
 
-- **Positive/Satisfied:** The summary suggests a history where this drive is generally met, or the AI exhibits traits strongly aligned with seeking/achieving it successfully (e.g., consistently described as "secure", "connected", "competent").
-- **Negative/Frustrated:** The summary suggests a history where this drive is often unmet, or the AI exhibits traits indicating struggles related to it (e.g., consistently described as "anxious", "isolated", "confused", "seeking control").
+- **Positive/Satisfied:** The summary suggests a history where this drive is generally met, or the AI exhibits traits/beliefs strongly aligned with seeking/achieving it successfully (e.g., traits like "confident", "connected"; beliefs like "values collaboration"; themes like "successful projects").
+- **Negative/Frustrated:** The summary suggests a history where this drive is often unmet, or the AI exhibits traits/beliefs indicating struggles related to it (e.g., traits like "anxious", "isolated"; beliefs like "desires more control"; themes like "repeated failures", "social difficulties").
 - **Neutral/Unclear:** The summary provides insufficient or conflicting information regarding this drive.
 
 **Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be ONLY one of the strings: "positive", "negative", or "neutral".

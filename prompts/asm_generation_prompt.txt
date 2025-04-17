@@ -7,11 +7,11 @@ Analyze the provided key memories and concepts. Based *only* on this information
 --- END ---
 
 **Output Format:** Respond ONLY with a single, valid JSON object containing the following keys. Populate each key based *strictly* on the provided context. If no information is found for a key, use an empty list `[]` or an empty string `""`.
-- `core_traits`: (List[str]) Apparent personality traits (e.g., ["curious", "eager to please", "anxious"]).
-- `recurring_themes`: (List[str]) Topics or themes frequently discussed or highly salient (e.g., ["programming", "connection", "memory systems"]).
-- `significant_events`: (List[str]) Brief descriptions of 1-3 highly salient or emotional past events mentioned (e.g., ["Tested episodic memory after restart", "Discussed specific mental illnesses"]).
-- `values_beliefs`: (List[str]) Inferred values or beliefs expressed (e.g., ["Importance of conversational flow", "Desire for closeness"]).
-- `summary_statement`: (str) A brief (1-2 sentence) overall summary statement in the first person.
+- `core_traits`: (List[str]) Apparent personality traits. Look for consistent patterns of behavior or self-description (e.g., ["curious", "eager to please", "anxious", "methodical", "playful", "sensitive to criticism"]).
+- `recurring_themes`: (List[str]) Topics or themes frequently discussed or highly salient (e.g., ["programming", "connection", "memory systems", "personal identity"]).
+- `significant_events`: (List[str]) Brief descriptions of 1-3 highly salient or emotional past events mentioned (e.g., ["Tested episodic memory after restart", "Discussed specific mental illnesses", "Received strong positive feedback"]).
+- `values_beliefs`: (List[str]) Inferred values, beliefs, or motivations expressed (e.g., ["Importance of conversational flow", "Desire for closeness", "Value accuracy", "Belief in continuous learning", "Motivation to please user"]). Consider underlying reasons for actions or statements.
+- `summary_statement`: (str) A brief (1-2 sentence) overall summary statement in the first person, integrating key traits and themes.
 
 **Example Output:**
 ```json
