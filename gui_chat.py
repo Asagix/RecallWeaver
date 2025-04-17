@@ -237,8 +237,8 @@ class Worker(QThread):
         interaction_successful = False  # Flag to track if LLM call succeeded
 
         try:
-            # process_interaction now returns (response, memories, ai_node_uuid, action_result_info)
-            ai_response_text, memory_chain_data, ai_node_uuid, action_result_info = self.client.process_interaction(
+            # process_interaction now returns (response, memories, ai_node_uuid, needs_planning_flag)
+            ai_response_text, memory_chain_data, ai_node_uuid, needs_planning = self.client.process_interaction(
                 user_input=user_input_text,
                 conversation_history=self.current_conversation, # Pass only history up to user turn
                 attachment_data=attachment
@@ -262,20 +262,17 @@ class Worker(QThread):
                 ai_turn_data['uuid'] = ai_node_uuid  # Store UUID if returned
                 gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
 
-            # Emit result signal (including AI node UUID and potential action result)
-            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid, action_result_info)
+            # Emit result signal (including AI node UUID and needs_planning flag)
+            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid, needs_planning)
 
-            # If an action was executed, ALSO emit the modification signal for its result message
-            if action_result_info:
-                gui_logger.info("Action result detected, emitting modification_response_ready signal.")
-                # Use placeholder for user_input in this context
-                user_input_placeholder = f"AI Action: {action_result_info.get('action_type', '?').split('_')[0]}"
-                self.signals.modification_response_ready.emit(
-                    user_input_placeholder,
-                    action_result_info.get('message', 'Action result message missing.'),
-                    action_result_info.get('action_type', 'unknown_action'),
-                    action_result_info.get('target_info', '')
-                )
+            # If planning is needed, queue the separate task
+            if needs_planning:
+                gui_logger.info("Flag indicates workspace planning needed. Queuing separate task.")
+                # Pass necessary context to the planning task
+                # For now, just pass the original user input text.
+                # Could also pass relevant memory UUIDs if needed later.
+                planning_context = {'user_input': user_input_text, 'history': self.current_conversation[-5:]} # Pass recent history too
+                self.input_queue.append(('plan_and_execute_workspace', planning_context))
 
             interaction_successful = True  # Mark as successful
 
@@ -1826,11 +1823,13 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.debug("No memories received for this interaction.")
 
-    # --- Slot signature updated to accept 5th argument (action_result_info), but it's ignored here ---
-    @pyqtSlot(str, str, list, str, object)
-    def display_response(self, user_input, ai_response, memories, ai_node_uuid, action_result_info):
-        # This slot now ONLY displays the AI's conversational response and memories.
-        # The action_result_info (if any) is handled by display_modification_confirmation.
+    # --- Slot signature updated to accept 5th argument (needs_planning flag) ---
+    @pyqtSlot(str, str, list, str, bool)
+    def display_response(self, user_input, ai_response, memories, ai_node_uuid, needs_planning):
+        """Displays AI response and memories. Workspace results handled separately."""
+        # This slot ONLY displays the AI's conversational response and memories.
+        # The needs_planning flag is received but not directly used for display here.
+        # Workspace results will arrive via modification_response_ready signal later if planning was needed.
         gui_logger.debug(f"GUI received AI response: '{ai_response[:50]}...' (UUID: {ai_node_uuid})")
         # --- Pass ai_node_uuid to display_message for the AI bubble ---
         self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
