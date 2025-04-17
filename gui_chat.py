@@ -921,7 +921,7 @@ class PasteLineEdit(QLineEdit):
             return False
 
         urls = mime_data.urls()
-       urls = mime_data.urls()
+       # urls = mime_data.urls() # Removed duplicate line
        if urls:
            file_path = urls[0].toLocalFile()
            gui_logger.debug(f"Checking URL path: {file_path}")
@@ -1028,7 +1028,7 @@ class ChatWindow(QMainWindow):
         self.scroll_area = QScrollArea(); self.scroll_area.setObjectName("ScrollArea"); self.scroll_area.setWidgetResizable(True); self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_widget = QWidget(); self.scroll_widget.setObjectName("ScrollWidget"); self.chat_layout = QVBoxLayout(self.scroll_widget); self.chat_layout.setContentsMargins(10, 10, 10, 10); self.chat_layout.setSpacing(8); self.chat_layout.addStretch(); self.scroll_area.setWidget(self.scroll_widget)
         self.input_frame = QFrame(); self.input_frame.setObjectName("InputFrame"); self.input_layout = QHBoxLayout(self.input_frame); self.input_layout.setContentsMargins(5, 5, 5, 5); self.input_layout.setSpacing(5)
-        self.input_field = PasteLineEdit(self, self)  # <<< CHANGED: Pass 'self' twice
+        self.input_field = PasteLineEdit(self, self.input_frame) # Pass self as chat_window_ref, input_frame as parent
         self.input_field.setPlaceholderText("Select a personality from the menu to start...")
         self.input_field.returnPressed.connect(self.send_message)
         self.attach_button = QPushButton("+"); self.attach_button.setObjectName("AttachButton"); self.attach_button.setToolTip("Attach Image File"); self.attach_button.clicked.connect(self.handle_attach_file)
@@ -1530,9 +1530,7 @@ class ChatWindow(QMainWindow):
                   self.display_error(f"Failed display memories: {e}")
         else:
              gui_logger.debug("No memories received for this interaction.")
-        self._finalize_display()
-
-    # --- Slot signature updated to accept ai_node_uuid ---
+    # --- Removed duplicate @pyqtSlot decorator ---
     @pyqtSlot(str, str, list, str)
     def display_response(self, user_input, ai_response, memories, ai_node_uuid):
         # (Implementation remains the same - calls display_message, re-enables via _finalize_display)
@@ -1732,9 +1730,10 @@ class ChatWindow(QMainWindow):
         if is_image:
             gui_logger.debug(f"Processing image file: {file_name}")
             try:
-            with open(file_path, "rb") as image_file: binary_data = image_file.read()
-            base64_encoded_data = base64.b64encode(binary_data)
-            base64_string = base64_encoded_data.decode('utf-8')
+                # --- Read image data ---
+                with open(file_path, "rb") as image_file: binary_data = image_file.read()
+                base64_encoded_data = base64.b64encode(binary_data)
+                base64_string = base64_encoded_data.decode('utf-8')
             mime_type, _ = mimetypes.guess_type(file_path)
             if mime_type is None: mime_type = "application/octet-stream"
             image_data_url = f"data:{mime_type};base64,{base64_string}"
@@ -1801,34 +1800,7 @@ class ChatWindow(QMainWindow):
             self.display_error(f"Error attaching file: {e}")
             self.clear_attachment()
 
-    def handle_attach_payload(self, payload: dict):
-        """Stores attachment payload and updates UI."""
-        if not payload or payload.get("type") != "image":
-            gui_logger.warning("Invalid payload received by handle_attach_payload.")
-            return
-
-        try:
-            file_name = payload.get("filename", "attached_image.png")  # Use provided or default filename
-            # --- Store payload ---
-            self.clear_attachment(clear_status=False)  # Clear previous first
-            self.attachment_payload = payload
-            gui_logger.info(f"Attachment payload stored: {file_name}")
-
-            # --- Update UI ---
-            current_text = self.input_field.text()
-            # Clean any previous placeholder before adding new one
-            current_text = re.sub(r'(^|\s)\[(Image|File) Attached:\s*.*?\s*\](\s|$)', r'\1\3', current_text).strip()
-            placeholder_text = f" [Image Attached: {file_name}] "
-            separator = " " if current_text and not current_text.endswith(" ") else ""
-            self.input_field.setText(current_text + separator + placeholder_text)
-            self.input_field.setFocus()
-            self.statusBar().showMessage(f"Ready to send with image: {file_name}", 5000)
-
-        except Exception as e:
-            gui_logger.error(f"Error handling attachment payload for {payload.get('filename', '?')}: {e}",
-                             exc_info=True)
-            self.display_error(f"Error processing attachment: {e}")
-            self.clear_attachment()
+    # --- Removed duplicate handle_attach_payload method ---
 
     def clear_attachment(self, clear_status=True):
         """Helper to clear the attachment payload and UI placeholder."""
@@ -1857,15 +1829,12 @@ class ChatWindow(QMainWindow):
            file_name = attachment_info.get("filename", "attached_file")
 
            if file_type == "image":
-               # Try to get base64 data (might be missing if only path was stored initially)
-               # This assumes send_message prepares the base64 if it's an image
-               image_base64 = getattr(self, 'attachment_payload', {}).get('base64_string') # Re-check payload? No, should be passed if needed.
-               # Let's assume send_message passes base64 if it's an image display request
-               # We need to adjust send_message to pass the base64 string within attachment_info_for_display
-               image_base64 = attachment_info.get('base64_string') # Get from passed info
+               # Get base64 string directly from the passed attachment_info
+               image_base64 = attachment_info.get('base64_string')
 
                if image_base64:
                    try:
+                       # Decode and create pixmap
                        image_bytes = base64.b64decode(image_base64)
                 pixmap = QPixmap()
                 loaded = pixmap.loadFromData(image_bytes)
