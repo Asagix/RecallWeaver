@@ -6460,6 +6460,9 @@ class GraphMemoryClient:
                     recent_concept_uuids=list(concepts_for_retrieval),
                     current_mood=mood_for_retrieval
                 )
+                # Unpack the tuple returned by retrieve_memory_chain
+                retrieved_nodes, _ = memory_chain_data # We only need the nodes list here
+                memory_chain_data = retrieved_nodes # Assign the list of nodes
             logger.info(f"Retrieved {len(memory_chain_data)} memories for planning context.")
 
             # 2. Prepare Planning Prompt Context
