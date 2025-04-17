@@ -2147,11 +2147,15 @@ class ChatWindow(QMainWindow):
                         ai_node_uuid: str | None = None):
         """Adds a message bubble with optional text, image thumbnail or file placeholder, and timestamp."""
 
-        # --- Create Attachment Label (Image or File Placeholder) ---
+        # --- Initialize variables ---
         attachment_label = None
+        file_type = None # Initialize file_type
+        file_name = None # Initialize file_name
+
+        # --- Create Attachment Label (Image or File Placeholder) ---
         if attachment_info:
-            file_type = attachment_info.get("type")
-            file_name = attachment_info.get("filename", "attached_file")
+            file_type = attachment_info.get("type") # Assign if info exists
+            file_name = attachment_info.get("filename", "attached_file") # Assign if info exists
 
             if file_type == "image":
                 # Get base64 string directly from the passed attachment_info
