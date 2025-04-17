@@ -238,6 +238,10 @@ This document tracks the implementation progress and outlines future enhancement
 -   [x] **LLM Configuration:**
     -   [x] Extract LLM model names, API types, and parameters per task into `config.yaml`.
     -   [x] Implement helper `_call_configured_llm` to read config and dispatch calls.
+    -   [ ] Refactor backend code to use the helper function. # Marked as partially done
+-   [x] **LLM Configuration:**
+    -   [x] Extract LLM model names, API types, and parameters per task into `config.yaml`.
+    -   [x] Implement helper `_call_configured_llm` to read config and dispatch calls.
     -   [x] Refactor backend code to use the helper function.
 -   [x] **LLM Configuration:**
     -   [x] Extract LLM model names, API types, and parameters per task into `config.yaml`.
