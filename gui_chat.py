@@ -2833,7 +2833,7 @@ class ChatWindow(QMainWindow):
             copy_button = QPushButton("📋") # Use clipboard emoji
             copy_button.setToolTip("Copy message text")
             copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            copy_button.setFixedSize(24, 24) # Small fixed size
+            #copy_button.setFixedSize(24, 24) # Small fixed size
             copy_button.setStyleSheet("QPushButton { border: none; background-color: transparent; font-size: 12pt; color: #AAAAAA; } QPushButton:hover { color: #E0E0E0; }")
             # Use lambda to capture the specific text for this message
             copy_button.clicked.connect(lambda checked, txt=text: self.handle_copy_click(txt))
