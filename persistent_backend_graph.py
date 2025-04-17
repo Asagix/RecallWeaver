@@ -263,6 +263,36 @@ class GraphMemoryClient:
         else:
              logger.error("INIT END: EMBEDDER ATTRIBUTE IS MISSING OR NONE!")
 
+        # --- Log Key Config Parameters for Tuning ---
+        try:
+            key_params = {
+                "personality": self.personality,
+                "activation": self.config.get('activation', {}),
+                "saliency": self.config.get('saliency', {}),
+                "forgetting_weights": self.config.get('forgetting', {}).get('weights', {}),
+                "forgetting_thresholds": {
+                    "score_threshold": self.config.get('forgetting', {}).get('score_threshold'),
+                    "candidate_min_age_hours": self.config.get('forgetting', {}).get('candidate_min_age_hours'),
+                    "candidate_min_activation": self.config.get('forgetting', {}).get('candidate_min_activation'),
+                },
+                "memory_strength": self.config.get('memory_strength', {}),
+                "consolidation": {
+                    "turn_count": self.config.get('consolidation', {}).get('turn_count'),
+                    "min_nodes": self.config.get('consolidation', {}).get('min_nodes'),
+                    "concept_similarity_threshold": self.config.get('consolidation', {}).get('concept_similarity_threshold'),
+                    "prune_summarized_turns": self.config.get('consolidation', {}).get('prune_summarized_turns'),
+                    "inference_enabled": self.config.get('consolidation', {}).get('inference', {}).get('enable'),
+                },
+                "prompting_budget": {
+                    "memory_budget_ratio": self.config.get('prompting', {}).get('memory_budget_ratio'),
+                    "history_budget_ratio": self.config.get('prompting', {}).get('history_budget_ratio'),
+                }
+                # Add other key sections as needed
+            }
+            log_tuning_event("CONFIG_SNAPSHOT", key_params)
+        except Exception as e:
+            logger.error(f"Failed to log config snapshot for tuning: {e}", exc_info=True)
+
         logger.info(f"GraphMemoryClient initialized for personality '{self.personality}'.")
 
 
@@ -1462,6 +1492,9 @@ class GraphMemoryClient:
             return
 
         logger.info("--- Running Memory Maintenance (Strength Reduction) ---")
+        # --- Tuning Log: Maintenance Start ---
+        log_tuning_event("MAINTENANCE_STRENGTH_START", {"personality": self.personality})
+
         # 1. Get config: weights, min_age, min_activation, strength decay rate
         forget_cfg = self.config.get('forgetting', {})
         weights = forget_cfg.get('weights', {})
