@@ -92,15 +92,17 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Backend: Implement robust JSON parsing & argument validation for `analyze_action_request` (include new file actions).
     -   [x] Backend: Enhance error handling within `execute_action` and file/calendar/new file wrappers.
     -   [x] Backend: Update `execute_action` to handle `list_files`, `read_file`, `delete_file`.
-    -   [x] GUI: Integrate action analysis call into `Worker.add_input`.
-    -   [x] GUI: Implement logic in `Worker` to handle `clarify` responses (store state, process next input as clarification) and queue/execute specific action tasks.
-    -   [x] GUI: Implement UI elements/flow for clarification requests (clearer prompt, persistent status bar message, placeholder text, visual indicator light).
-    -   [x] GUI: Implement UI flow for action confirmations (overwrite file):
-        -   [x] Backend: `execute_action` checks file existence for `create_file`.
-        -   [x] Backend: Returns `confirm_overwrite` action if file exists.
-        -   [x] GUI: Worker detects `confirm_overwrite`, stores state, emits `confirmation_needed`.
-        -   [x] GUI: ChatWindow handles signal, shows `QMessageBox`, queues `execute_action_confirmed` on Yes.
-        -   [x] GUI: Worker handles `execute_action_confirmed`, calls file manager directly.
+    -   [ ] **Workspace Agent Implementation (Multi-Action):**
+        -   [x] Design: New plan tag `[WORKSPACE_PLAN: ...]`, planning prompt, `WorkspaceAgent` class.
+        -   [x] Prompts: Create `prompts/workspace_planning_prompt.txt`.
+        -   [x] Agent: Create `workspace_agent.py` with `WorkspaceAgent` class and `execute_plan` method calling `file_manager`.
+        -   [x] Config: Add `workspace_planning` LLM config, deprecate `action_analysis`.
+        -   [x] Backend: Modify `process_interaction` to call planning prompt (with memories), parse plan, instantiate and run `WorkspaceAgent`, return list of results.
+        -   [x] Backend: Deprecate/remove `analyze_action_request` and `execute_action`.
+        -   [x] GUI: Update `WorkerSignals.response_ready` signature for list of results.
+        -   [x] GUI: Update `Worker.handle_chat_task` to emit new signal payload.
+        -   [x] GUI: Update `ChatWindow.display_response` to handle and display list of action results.
+        -   [x] GUI: Remove old clarification/confirmation logic, signals, and state variables.
 -   [ ] **Context Dependency (Focus via Recent Concepts):**
     -   [x] Modify `process_interaction` to identify concept nodes mentioned in the last user/AI turn.
     -   [x] Modify `retrieve_memory_chain` to accept recent concept UUIDs.
