@@ -9,6 +9,8 @@ import yaml
 import requests
 import mimetypes # <<< Add mimetypes
 
+from pip._internal.utils import urls
+
 # Import zoneinfo safely
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
