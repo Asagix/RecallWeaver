@@ -86,10 +86,12 @@ This document tracks the implementation progress and outlines future enhancement
     * [x] **Implement `purge_weak_nodes()`:** Permanently delete nodes below strength threshold and above age threshold.
 -   [x] **Action/Tool Handling (via Focused Intent Analysis):**
     -   [x] Backend: Basic structure for `analyze_action_request` and `execute_action` exists.
-    -   [x] Backend: Basic file/calendar wrapper methods exist.
-    -   [x] Backend: Refine LLM prompt for `analyze_action_request`.
-    -   [x] Backend: Implement robust JSON parsing & argument validation for `analyze_action_request`.
-    -   [x] Backend: Enhance error handling within `execute_action` and file/calendar wrappers.
+    -   [x] Backend: Basic file/calendar wrapper methods exist (`create_file`, `append_file`, `add_calendar_event`, `read_calendar`).
+    -   [x] Backend: Add file manager functions and backend wrappers for `list_files`, `read_file`, `delete_file`.
+    -   [x] Backend: Refine LLM prompt for `analyze_action_request` (add new file actions).
+    -   [x] Backend: Implement robust JSON parsing & argument validation for `analyze_action_request` (include new file actions).
+    -   [x] Backend: Enhance error handling within `execute_action` and file/calendar/new file wrappers.
+    -   [x] Backend: Update `execute_action` to handle `list_files`, `read_file`, `delete_file`.
     -   [x] GUI: Integrate action analysis call into `Worker.add_input`.
     -   [x] GUI: Implement logic in `Worker` to handle `clarify` responses (store state, process next input as clarification) and queue/execute specific action tasks.
     -   [x] GUI: Implement UI elements/flow for clarification requests (clearer prompt, persistent status bar message, placeholder text, visual indicator light).

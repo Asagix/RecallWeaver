@@ -2153,14 +2153,28 @@ class GraphMemoryClient:
         (V4 Prompt: Same prompt, improved extraction and increased max_length)
         """
         logger.info(f"Analyzing for action request: '{request_text[:100]}...'")
+        # Define available tools and their required arguments
         tools = {
             "create_file": ["filename", "content"],
             "append_file": ["filename", "content"],
+            "list_files": [], # No arguments required
+            "read_file": ["filename"],
+            "delete_file": ["filename"],
             "add_calendar_event": ["date", "time", "description"],
-            "read_calendar": []
+            "read_calendar": [] # 'date' is optional here
         }
-        tool_descriptions = """AVAILABLE ACTIONS:
-        - create_file: Creates or completely overwrites a file with the given text content. Requires: 'filename', 'content'.
+        # Tool descriptions are now loaded from the prompt file, no need to define here
+
+        prompt_template = self._load_prompt("action_analysis_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load action analysis prompt template. Cannot analyze action.")
+            return {'action': 'error', 'reason': 'Action analysis prompt template missing.'}
+
+        # No need to format tool_descriptions here, prompt file handles it
+        full_prompt = prompt_template.format(
+            # tool_descriptions=tool_descriptions, # Removed
+            request_text=request_text
+        )
         - append_file: Adds text content to the end of an existing file (or creates it if it doesn't exist). Requires: 'filename', 'content'.
         - add_calendar_event: Adds an event to the calendar log. Requires: 'date' (e.g., YYYY-MM-DD, 'today', 'tomorrow'), 'time' (e.g., HH:MM, 'morning', '9am'), 'description' (the event text).
         - read_calendar: Reads calendar events for a specific date. Optional: 'date' (defaults to 'today' if not provided)."""
@@ -2472,7 +2486,12 @@ class GraphMemoryClient:
         # *** ADDED: Log arguments before execution ***
         logger.debug(f"Attempting to execute action '{action}' with args: {args}")
         success = False; message = f"Action '{action}' failed."; action_suffix = f"{action}_fail"
+        # --- Initialize variables for potential return values ---
+        file_list = None
+        file_content = None
+
         try:
+            # --- File Actions ---
             if action == "create_file":
                 filename, content = args.get("filename"), args.get("content")
                 if filename and content is not None:
@@ -3128,7 +3147,24 @@ class GraphMemoryClient:
         """Wrapper to read events from the calendar file."""
         logger.info(f"Client request to read calendar events (Date: {target_date or 'All'}).")
         # Pass personality to the file manager function
-        return file_manager.read_calendar_events(self.config, self.personality, target_date)
+        success, message = file_manager.read_calendar_events(self.config, self.personality, target_date)
+        # Return only the list of events for internal use, message is discarded here
+        return success if isinstance(success, list) else [] # Ensure list return
+
+    def list_files_wrapper(self) -> tuple[list[str] | None, str]:
+        """Wrapper to list files in the workspace."""
+        logger.info("Client request to list workspace files.")
+        return file_manager.list_files(self.config, self.personality)
+
+    def read_file_wrapper(self, filename: str) -> tuple[str | None, str]:
+        """Wrapper to read a file from the workspace."""
+        logger.info(f"Client request to read workspace file: {filename}")
+        return file_manager.read_file(self.config, self.personality, filename)
+
+    def delete_file_wrapper(self, filename: str) -> tuple[bool, str]:
+        """Wrapper to delete a file from the workspace."""
+        logger.info(f"Client request to delete workspace file: {filename}")
+        return file_manager.delete_file(self.config, self.personality, filename)
 
     def _call_kobold_multimodal_api(self, messages: list, max_tokens: int = 512, temperature: float = 0.7,
                                     top_p: float = 0.9) -> str:

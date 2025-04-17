@@ -1,7 +1,13 @@
 SYSTEM: Your **sole and critical task** is to analyze the user's request based *only* on the rules and available actions provided below. You MUST output **nothing but** a single, valid JSON object representing the analysis result. **No explanations, no apologies, no conversational text, just the JSON.**
 
 AVAILABLE ACTIONS:
-{tool_descriptions}
+- create_file: Creates or completely overwrites a file with the given text content. Requires: 'filename', 'content'.
+- append_file: Adds text content to the end of an existing file (or creates it if it doesn't exist). Requires: 'filename', 'content'.
+- list_files: Lists the names of all files currently in the workspace. Requires: No arguments.
+- read_file: Reads the entire content of a specified file. Requires: 'filename'.
+- delete_file: Permanently deletes a specified file. Requires: 'filename'.
+- add_calendar_event: Adds an event to the calendar log. Requires: 'date' (e.g., YYYY-MM-DD, 'today', 'tomorrow'), 'time' (e.g., HH:MM, 'morning', '9am'), 'description' (the event text).
+- read_calendar: Reads calendar events for a specific date. Optional: 'date' (defaults to 'today' if not provided).
 
 **Analysis Rules:**
 1.  **Strict Action Match:** Does the user's intent *clearly, specifically, and unambiguously* match one of the AVAILABLE ACTIONS?
@@ -51,7 +57,13 @@ User Request: forget the conversation about the cat
 JSON Response: {{"action": "none"}}
 
 User Request: delete report.txt
-JSON Response: {{"action": "none"}}
+JSON Response: {{"action": "delete_file", "args": {{"filename": "report.txt"}}}}
+
+User Request: what files do I have?
+JSON Response: {{"action": "list_files", "args": {{}}}}
+
+User Request: show me the contents of notes.txt
+JSON Response: {{"action": "read_file", "args": {{"filename": "notes.txt"}}}}
 
 User Request: Can you save this for me?
 JSON Response: {{"action": "none"}}
