@@ -2456,7 +2456,7 @@ class ChatWindow(QMainWindow):
             elif speaker == "Error":
                 ts_object_name = "ErrorTimestampLabel"
             timestamp_label.setObjectName(ts_object_name)
-                timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         except Exception as e:
             gui_logger.warning(f"Timestamp error: {e}")
             timestamp_label = None
