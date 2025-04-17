@@ -2712,6 +2712,9 @@ class ChatWindow(QMainWindow):
         if text:  # Only create label if there is text
             message_label = QLabel()
             message_label.setWordWrap(True)
+            # --- Allow vertical expansion ---
+            message_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+            # --- End Allow vertical expansion ---
             message_label.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
             )
