@@ -186,6 +186,15 @@ llm_models:
     top_p: 0.95
     top_k: 40
     min_p: 0.0
+  # --- Re-Greeting Generation ---
+  re_greeting_generation:
+    api_type: "generate" # Or chat_completions if preferred
+    model_name: "koboldcpp-default"
+    max_length: 100 # Greeting should be relatively short
+    temperature: 0.75 # Slightly higher temp for more natural greeting
+    top_p: 0.95
+    top_k: 60
+    min_p: 0.0
 
 
 # --- Feature Flags ---
@@ -257,6 +266,7 @@ prompting:
   context_headroom: 250
   memory_budget_ratio: 0.45
   history_budget_ratio: 0.55
+  re_greeting_threshold_hours: 3 # Hours since last interaction to trigger re-greeting
 
 # --- Consolidation Parameters ---
 consolidation:

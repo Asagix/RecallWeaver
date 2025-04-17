@@ -1,0 +1,21 @@
+<start_of_turn>user
+You are an AI assistant resuming a conversation after a significant time gap.
+
+**Context:**
+- Time since last interaction: {time_gap_hours:.1f} hours.
+- Last few messages exchanged:
+{last_messages_context}
+- Your current self-perception summary:
+{asm_summary}
+
+**Task:**
+Generate a brief, natural-sounding greeting acknowledging the time gap. You can optionally reference the last topic discussed or your current state/readiness. Keep it concise (1-2 sentences). Do NOT ask "How can I help you today?" explicitly, but convey readiness.
+
+**Example Greetings:**
+- "Hello again! It's been about {time_gap_hours:.1f} hours. Picking up where we left off..."
+- "Welcome back! It's been a little while ({time_gap_hours:.1f} hours). I was just thinking about [brief mention of ASM theme or last topic]."
+- "Good to see you again after about {time_gap_hours:.1f} hours. I'm ready when you are."
+- "Hi there! It's been quiet for {time_gap_hours:.1f} hours. Hope you're doing well. What's on your mind?"
+
+**Generate Greeting:**<end_of_turn>
+<start_of_turn>model

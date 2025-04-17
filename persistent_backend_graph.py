@@ -202,6 +202,7 @@ class GraphMemoryClient:
             "long_term": {}   # {drive_name: level} - Stable, reflects core tendencies
         }
         self.initial_history_turns = [] # Store last N turns from previous session
+        self.time_since_last_interaction_hours = 0.0 # Store time gap
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -2891,6 +2892,7 @@ class GraphMemoryClient:
         interaction_id = str(uuid.uuid4()) # Unique ID for this interaction
         ai_node_uuid = None # Initialize ai_node_uuid here
         user_node_uuid = None # Initialize user_node_uuid here
+        is_first_interaction_of_session = (len(conversation_history) == len(self.initial_history_turns) + 1) # +1 for current user input
 
         # --- Tuning Log: Interaction Start ---
         log_tuning_event("INTERACTION_START", {
@@ -2924,6 +2926,51 @@ class GraphMemoryClient:
         action_result_message = None # Initialize here
 
         try:
+            # --- Check for Re-Greeting Condition ---
+            re_greeting_threshold = self.config.get('prompting', {}).get('re_greeting_threshold_hours', 3.0)
+            logger.debug(f"Checking re-greeting: FirstInteraction={is_first_interaction_of_session}, TimeGap={self.time_since_last_interaction_hours:.2f}h, Threshold={re_greeting_threshold}h")
+            if is_first_interaction_of_session and self.time_since_last_interaction_hours > re_greeting_threshold:
+                logger.info(f"Time gap ({self.time_since_last_interaction_hours:.2f}h) exceeds threshold ({re_greeting_threshold}h). Generating re-greeting.")
+                # --- Tuning Log: Re-Greeting Triggered ---
+                log_tuning_event("RE_GREETING_TRIGGERED", {
+                    "interaction_id": interaction_id,
+                    "personality": self.personality,
+                    "time_gap_hours": self.time_since_last_interaction_hours,
+                    "threshold_hours": re_greeting_threshold,
+                })
+
+                # Prepare context for re-greeting prompt
+                last_messages_context = "\n".join([f"- {turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in self.initial_history_turns[-3:]]) # Last 3 turns # Strip emojis
+                asm_summary = self.autobiographical_model.get("summary_statement", "[No self-summary available]")
+
+                re_greeting_prompt_template = self._load_prompt("re_greeting_prompt.txt")
+                if not re_greeting_prompt_template:
+                    logger.error("Re-greeting prompt template missing. Falling back to standard response.")
+                    # Fall through to normal processing below
+                else:
+                    re_greeting_prompt = re_greeting_prompt_template.format(
+                        time_gap_hours=self.time_since_last_interaction_hours,
+                        last_messages_context=last_messages_context,
+                        asm_summary=asm_summary
+                    )
+                    logger.debug(f"Sending re-greeting prompt:\n{re_greeting_prompt}")
+                    # Call LLM using dedicated config
+                    ai_response = self._call_configured_llm('re_greeting_generation', prompt=re_greeting_prompt)
+                    parsed_response = ai_response.strip() if ai_response and not ai_response.startswith("Error:") else "Hello again! It's been a while." # Fallback greeting
+
+                    # Add user/AI nodes for this interaction
+                    user_node_uuid = self.add_memory_node(graph_user_input, "User")
+                    ai_node_uuid = self.add_memory_node(parsed_response, "AI")
+
+                    # Update context for next interaction (mood/concepts) - reuse logic from end of block
+                    self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
+
+                    # Return the greeting - no memory chain, no planning needed for this
+                    return parsed_response, [], ai_node_uuid, False # Return False for needs_planning
+
+            # --- If not re-greeting, proceed with normal interaction ---
+            logger.debug("Proceeding with normal interaction flow (not re-greeting).")
+
             # --- Handle Multimodal Input ---
             if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('data_url'):
                 logger.info("Image attachment detected. Using Chat Completions API.")
@@ -3174,8 +3221,10 @@ class GraphMemoryClient:
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
             # --- Calculate and Store context for NEXT interaction's retrieval bias ---
-            current_turn_concept_uuids = set()
-            nodes_to_check_for_concepts = [user_node_uuid, ai_node_uuid] # Use UUIDs just added
+            self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
+
+            # --- Check for Intention Request (if not handled as action/mod) ---
+            # This check happens *after* adding the user/AI nodes, using the original user_input
             for turn_uuid in nodes_to_check_for_concepts:
                 if turn_uuid and turn_uuid in self.graph:
                     try:
@@ -3206,10 +3255,6 @@ class GraphMemoryClient:
             if mood_nodes_found > 0:
                 current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
             logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias.")
-            self.last_interaction_mood = current_turn_mood # Update state
-
-            # --- Check for Intention Request (if not handled as action/mod) ---
-            # This check happens *after* adding the user/AI nodes, using the original user_input
             # We might want to move this earlier if intention analysis should prevent normal response generation.
             # For V1, let's just store it alongside the normal interaction flow.
             try:
@@ -3289,6 +3334,44 @@ class GraphMemoryClient:
         # Default values assigned at the start: parsed_response="Error: Processing failed.", memory_chain_data=[], ai_node_uuid=None
         return parsed_response, memory_chain_data, ai_node_uuid, False
 
+    def _update_next_interaction_context(self, user_node_uuid: str | None, ai_node_uuid: str | None):
+        """Helper to calculate and store concept/mood context for the *next* interaction's bias."""
+        current_turn_concept_uuids = set()
+        nodes_to_check_for_concepts = [uuid for uuid in [user_node_uuid, ai_node_uuid] if uuid] # Filter out None UUIDs
+
+        for turn_uuid in nodes_to_check_for_concepts:
+            if turn_uuid in self.graph:
+                try:
+                    # Check outgoing edges for MENTIONS_CONCEPT
+                    for successor_uuid in self.graph.successors(turn_uuid):
+                        edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
+                        if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                            if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
+                                current_turn_concept_uuids.add(successor_uuid)
+                except Exception as concept_find_e:
+                     logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]} for next bias: {concept_find_e}")
+
+        logger.info(f"Storing {len(current_turn_concept_uuids)} concepts for next interaction's bias.")
+        self.last_interaction_concept_uuids = current_turn_concept_uuids # Update state
+
+        current_turn_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
+        mood_nodes_found = 0
+        total_valence = 0.0
+        total_arousal = 0.0
+        for node_uuid in nodes_to_check_for_concepts:
+            if node_uuid in self.graph:
+                node_data = self.graph.nodes[node_uuid]
+                default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
+                default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
+                total_valence += node_data.get('emotion_valence', default_v)
+                total_arousal += node_data.get('emotion_arousal', default_a)
+                mood_nodes_found += 1
+        if mood_nodes_found > 0:
+            current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
+
+        logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias.")
+        self.last_interaction_mood = current_turn_mood # Update state
+
 
     # --- Consolidation ---
     # (Keep _select_nodes_for_consolidation and run_consolidation from previous version)
@@ -3361,6 +3444,26 @@ class GraphMemoryClient:
         except Exception as e:
             logger.error(f"Error loading initial history: {e}", exc_info=True)
             self.initial_history_turns = [] # Ensure it's empty on error
+            self.time_since_last_interaction_hours = 0.0 # Reset time gap on error
+
+        # --- Calculate time since last interaction ---
+        if self.initial_history_turns:
+            try:
+                last_turn_timestamp_str = self.initial_history_turns[-1].get("timestamp")
+                if last_turn_timestamp_str:
+                    last_turn_dt = datetime.fromisoformat(last_turn_timestamp_str.replace('Z', '+00:00'))
+                    now_dt = datetime.now(timezone.utc)
+                    time_delta = now_dt - last_turn_dt
+                    self.time_since_last_interaction_hours = time_delta.total_seconds() / 3600.0
+                    logger.info(f"Time since last interaction: {self.time_since_last_interaction_hours:.2f} hours.")
+                else:
+                    logger.warning("Last turn in initial history has no timestamp.")
+                    self.time_since_last_interaction_hours = 0.0
+            except Exception as e:
+                logger.error(f"Error calculating time since last interaction: {e}", exc_info=True)
+                self.time_since_last_interaction_hours = 0.0
+        else:
+            self.time_since_last_interaction_hours = 0.0 # No history, so no gap
 
     def get_initial_history(self) -> list:
         """Returns the loaded initial history turns."""
