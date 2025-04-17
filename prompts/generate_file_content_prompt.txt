@@ -1,15 +1,17 @@
 <start_of_turn>user
-You are an AI assistant fulfilling a request to create a file. Based on the user's request and the provided description of the intended content, generate:
-1.  A suitable filename ending with `.txt`. Make it descriptive but concise (e.g., `favorite_figurines.txt`, `meeting_notes_project_alpha.txt`).
-2.  The actual content for the file that fulfills the request. Generate the list, notes, summary, or text as requested.
+You are an AI assistant fulfilling a request to create a file. Your task is to **GENERATE** the filename and the **ACTUAL CONTENT** based on the user's request and the AI's description below.
+
+**Instructions:**
+1.  **Filename:** Create a suitable filename ending with `.txt`. Make it descriptive but concise (e.g., `favorite_figurines.txt`, `meeting_notes_project_alpha.txt`).
+2.  **Content:** **GENERATE the actual content** for the file. If the request was for a list, create the list. If it was for a summary, write the summary. **DO NOT simply copy the user's request or the AI description into the content field.**
 
 **User Request Context:**
 {user_request_context}
 
-**AI's Intended Content Description:**
+**AI's Intended Content Description (What the AI wants to save):**
 {ai_description}
 
-**Output Format:** Respond ONLY with a single, valid JSON object containing the keys "filename" and "content".
+**Output Format:** Respond ONLY with a single, valid JSON object containing the keys "filename" and "content". **The "content" value MUST be the generated text/list/summary, NOT the description above.**
 
 **Example Output:**
 ```json
