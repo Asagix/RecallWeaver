@@ -3762,11 +3762,11 @@ class GraphMemoryClient:
         except Exception as e:
             logger.error(f"Unexpected error saving drive state: {e}", exc_info=True)
 
-    def _update_drive_state(self, relevant_nodes: list = None):
+    # --- Signature changed to accept context_text ---
+    def _update_drive_state(self, context_text: str = ""):
         """
-        Placeholder: Updates drive activation levels based on recent experience.
-        This will eventually involve LLM analysis or heuristics.
-        For now, it might just apply decay.
+        Updates drive activation levels based on recent experience (context_text).
+        Applies decay and potentially LLM analysis based on the provided text.
         """
 
         drive_cfg = self.config.get('subconscious_drives', {})
