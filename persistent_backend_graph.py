@@ -2531,16 +2531,79 @@ class GraphMemoryClient:
                 else: message = "Missing date/time/description."
             elif action == "read_calendar":
                 date = args.get("date") # Optional
-                logger.debug(f"Calling file_manager.read_calendar_events(config, personality='{self.personality}', target_date='{date}')")
-                # TODO: Date parsing
-                events = file_manager.read_calendar_events(self.config, self.personality, date)
-                success = True; action_suffix = "cal_read_success"
-                date_str = f" for {date}" if date else ""
-                if events: message = f"Found {len(events)} event(s){date_str}:\n" + "\n".join([f"- {e.get('time', '?')}: {e.get('description', '?')} ({e.get('event_date', '?')})" for e in events])
-                else: message = f"No events found{date_str}."
-            else: message = f"Unknown action '{action}'."; action_suffix = "unknown_action_fail"
+                # file_manager.read_calendar_events now returns (list[dict], str)
+                events, fm_message = file_manager.read_calendar_events(self.config, self.personality, date)
+                # For reading, success is true if the read operation itself didn't fail,
+                # even if no events were found. The message conveys the outcome.
+                success = True # Assume read operation itself succeeded unless exception below
+                action_suffix = "read_calendar_success" # Use success suffix
+                date_str = f" for {date}" if date else " (all dates)"
 
-            if success and not action_suffix.endswith("_success"): # Ensure success suffix is set if action succeeded
+                # Construct user-facing message based on results
+                if fm_message.startswith("IO error") or fm_message.startswith("Permission denied") or fm_message.startswith("Unexpected error"):
+                    success = False # Override success if file_manager reported read error
+                    action_suffix = "read_calendar_fail"
+                    message = f"Error reading calendar: {fm_message}" # Pass file_manager error message
+                elif not events:
+                    # Message could be "not found" or "found 0 events" - use fm_message
+                    message = fm_message
+                else:
+                    event_lines = []
+                    for e in sorted(events, key=lambda x: (x.get('event_date', ''), x.get('event_time', ''))): # Sort events
+                        event_lines.append(f"- {e.get('event_time', '?')}: {e.get('description', '?')} ({e.get('event_date', '?')})")
+                    message = f"Found {len(events)} event(s){date_str}:\n" + "\n".join(event_lines)
+
+            # --- NEW File Actions ---
+            elif action == "list_files":
+                file_list, message = self.list_files_wrapper()
+                if file_list is not None:
+                    success = True
+                    # Format the message for the user
+                    if file_list: message = f"Files in workspace:\n- " + "\n- ".join(file_list)
+                    else: message = "Workspace is empty."
+                else: # Error occurred
+                    success = False
+                    # message already contains the error from file_manager
+
+            elif action == "read_file":
+                filename = args.get("filename")
+                if filename:
+                    file_content, message = self.read_file_wrapper(filename)
+                    if file_content is not None:
+                        success = True
+                        # Truncate long content for the message?
+                        content_preview = file_content[:500] + ('...' if len(file_content) > 500 else '')
+                        message = f"Content of '{filename}':\n---\n{content_preview}\n---"
+                    else: # Error occurred
+                        success = False
+                        # message already contains the error from file_manager
+                else:
+                    message = "Error: Missing filename for read_file."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
+            elif action == "delete_file":
+                filename = args.get("filename")
+                if filename:
+                    # Add confirmation step? For now, execute directly.
+                    # Consider adding a config flag for delete confirmation later.
+                    logger.warning(f"Executing delete_file action for: {filename}")
+                    success, message = self.delete_file_wrapper(filename)
+                else:
+                    message = "Error: Missing filename for delete_file."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
+            # --- Unknown Action ---
+            else:
+                message = f"Error: The action '{action}' is not recognized or supported."
+                logger.error(message + f" Action data: {action_data}")
+                success = False
+                action_suffix = "unknown_action_fail"
+
+            # --- Update Suffix ---
+            # Ensure suffix reflects success/failure determined within this block
+            if action != "unknown_action_fail": # Don't override specific unknown suffix
                 action_suffix = f"{action}_success"
 
         except Exception as e:
