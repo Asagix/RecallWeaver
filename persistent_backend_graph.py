@@ -3522,7 +3522,8 @@ class GraphMemoryClient:
         self.time_since_last_interaction_hours = 0.0 # Reset before calculation
         if self.last_conversation_turns:
             try:
-                last_turn_timestamp_str = self.initial_history_turns[-1].get("timestamp")
+                # Use the last turn from the separately stored list
+                last_turn_timestamp_str = self.last_conversation_turns[-1].get("timestamp")
                 if last_turn_timestamp_str:
                     last_turn_dt = datetime.fromisoformat(last_turn_timestamp_str.replace('Z', '+00:00'))
                     now_dt = datetime.now(timezone.utc)
