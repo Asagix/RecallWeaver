@@ -5051,7 +5051,7 @@ class GraphMemoryClient:
         llm_response_str = self._call_configured_llm('consolidation_causal', prompt=causal_chain_prompt)
 
         extracted_chains = []
-        if llm_response_str:
+        if llm_response_str and not llm_response_str.startswith("Error:"): # Check for API errors first
             try:
                 logger.debug(f"Raw Causal Chain response: ```{llm_response_str}```")
                 # --- Improved JSON Extraction ---
@@ -5156,16 +5156,25 @@ class GraphMemoryClient:
         llm_response_str = self._call_configured_llm('consolidation_analogy', prompt=analogy_prompt)
 
         extracted_analogies = []
-        if llm_response_str:
+        if llm_response_str and not llm_response_str.startswith("Error:"): # Check for API errors first
             try:
                 logger.debug(f"Raw Analogy response: ```{llm_response_str}```")
-                # Extract JSON list
-                match = re.search(r'(\[.*?\])', llm_response_str, re.DOTALL)
-                if match:
-                    json_str = match.group(1)
-                    parsed_list = json.loads(json_str)
+                # --- Improved JSON Extraction ---
+                cleaned_response = llm_response_str.strip()
+                if cleaned_response.startswith("```json"): cleaned_response = cleaned_response[len("```json"):].strip()
+                if cleaned_response.startswith("```"): cleaned_response = cleaned_response[len("```"):].strip()
+                if cleaned_response.endswith("```"): cleaned_response = cleaned_response[:-len("```")].strip()
+
+                start_bracket = cleaned_response.find('[')
+                end_bracket = cleaned_response.rfind(']')
+
+                if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+                    json_str = cleaned_response[start_bracket:end_bracket + 1]
+                    logger.debug(f"Extracted potential JSON list string: {json_str}")
+                    parsed_list = json.loads(json_str) # Attempt to parse the extracted string
+
                     if isinstance(parsed_list, list):
-                        # Validate inner lists
+                        # Validate inner lists (Keep existing validation)
                         valid_analogies = []
                         for pair in parsed_list:
                             if isinstance(pair, list) and len(pair) == 2 and all(isinstance(item, str) for item in pair):
@@ -5354,9 +5363,17 @@ class GraphMemoryClient:
 
         logger.info("--- Inferring Second-Order Relationships ---")
         strength_factor = inference_cfg.get('strength_factor', 0.3)
+        min_inferred_strength_threshold = inference_cfg.get('min_strength_threshold', 0.1) # NEW: Minimum strength to add edge
         max_depth = 2 # Fixed for V1
         inferred_edge_count = 0
         current_time = time.time()
+
+        # Define stronger edge types to consider for inference paths
+        strong_relation_types = {
+            "MENTIONS_CONCEPT", "SUMMARY_OF", "CAUSES", "IS_A", "PART_OF",
+            "HIERARCHICAL", "SUPPORTS", "ENABLES"
+            # Exclude: ASSOCIATIVE, RELATED_TO, SPACY_*, ANALOGY, INFERRED_RELATED_TO, etc.
+        }
 
         # Consider only concept and summary nodes as start/end/intermediate points for V1
         candidate_nodes = [
@@ -5384,13 +5401,13 @@ class GraphMemoryClient:
                 path_strength_sum = 0.0
                 path_count = 0
 
-                # Check A -> B edges
+                # Check A -> B edges, ensuring edge type is strong
                 for _, node_b_uuid, edge_ab_data in self.graph.out_edges(node_a_uuid, data=True):
-                    if node_b_uuid in candidate_nodes: # Check if intermediate is concept/summary
-                        # Check B -> C edges
+                    if node_b_uuid in candidate_nodes and edge_ab_data.get('type') in strong_relation_types: # Check intermediate node AND edge type
+                        # Check B -> C edges, ensuring edge type is strong
                         if self.graph.has_edge(node_b_uuid, node_c_uuid):
                             edge_bc_data = self.graph.get_edge_data(node_b_uuid, node_c_uuid)
-                            if edge_bc_data:
+                            if edge_bc_data and edge_bc_data.get('type') in strong_relation_types: # Check second edge type
                                 found_path = True
                                 # Calculate path strength (e.g., product of edge strengths * factor)
                                 strength_ab = edge_ab_data.get('base_strength', 0.5) # Use base_strength for calculation
@@ -5398,25 +5415,31 @@ class GraphMemoryClient:
                                 path_strength = strength_ab * strength_bc * strength_factor
                                 path_strength_sum += path_strength
                                 path_count += 1
-                                logger.debug(f"  Found path: {node_a_uuid[:4]}->{node_b_uuid[:4]}->{node_c_uuid[:4]} (Strength: {path_strength:.3f})")
+                                logger.debug(f"  Found strong path: {node_a_uuid[:4]}({edge_ab_data.get('type')})->{node_b_uuid[:4]}({edge_bc_data.get('type')})->{node_c_uuid[:4]} (PathStrength: {path_strength:.3f})")
+                            # else: logger.debug(f"  Path {node_a_uuid[:4]}->{node_b_uuid[:4]}->{node_c_uuid[:4]} skipped (Edge B->C type '{edge_bc_data.get('type')}' not strong)")
+                        # else: logger.debug(f"  Path {node_a_uuid[:4]}->{node_b_uuid[:4]}->{node_c_uuid[:4]} skipped (No edge B->C)")
+                    # else: logger.debug(f"  Path starting {node_a_uuid[:4]}->{node_b_uuid[:4]} skipped (Edge A->B type '{edge_ab_data.get('type')}' not strong or B not candidate)")
 
                 if found_path:
-                    # Calculate average strength if multiple paths exist? Or max? Let's use average.
+                    # Calculate average strength if multiple strong paths exist
                     avg_strength = path_strength_sum / path_count if path_count > 0 else 0.0
-                    clamped_strength = max(0.01, min(1.0, avg_strength)) # Ensure minimum strength, clamp max
+                    clamped_strength = max(0.0, min(1.0, avg_strength)) # Clamp 0-1
 
-                    # Add the inferred edge
-                    try:
-                        self.graph.add_edge(
-                            node_a_uuid, node_c_uuid,
-                            type='INFERRED_RELATED_TO',
-                            base_strength=clamped_strength,
-                            last_traversed_ts=current_time # Set timestamp to now
-                        )
-                        inferred_edge_count += 1
-                        logger.info(f"Added inferred edge: {node_a_uuid[:8]} --[INFERRED_RELATED_TO ({clamped_strength:.3f})]--> {node_c_uuid[:8]}")
-                    except Exception as e:
-                        logger.error(f"Error adding inferred edge {node_a_uuid[:8]} -> {node_c_uuid[:8]}: {e}")
+                    # Add the inferred edge ONLY if strength meets threshold
+                    if clamped_strength >= min_inferred_strength_threshold:
+                        try:
+                            self.graph.add_edge(
+                                node_a_uuid, node_c_uuid,
+                                type='INFERRED_RELATED_TO',
+                                base_strength=clamped_strength, # Use calculated strength
+                                last_traversed_ts=current_time # Set timestamp to now
+                            )
+                            inferred_edge_count += 1
+                            logger.info(f"Added inferred edge: {node_a_uuid[:8]} --[INFERRED_RELATED_TO ({clamped_strength:.3f})]--> {node_c_uuid[:8]} (Threshold: {min_inferred_strength_threshold})")
+                        except Exception as e:
+                            logger.error(f"Error adding inferred edge {node_a_uuid[:8]} -> {node_c_uuid[:8]}: {e}")
+                    else:
+                         logger.debug(f"  Skipping inferred edge {node_a_uuid[:8]} -> {node_c_uuid[:8]} (Strength {clamped_strength:.3f} < Threshold {min_inferred_strength_threshold})")
 
         if inferred_edge_count > 0:
             logger.info(f"Added {inferred_edge_count} new inferred relationship edges.")
