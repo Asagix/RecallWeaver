@@ -1082,11 +1082,17 @@ class GraphMemoryClient:
 
     def retrieve_memory_chain(self, initial_node_uuids: list[str],
                               recent_concept_uuids: list[str] | None = None,
-                              current_mood: tuple[float, float] | None = None) -> list[dict]:
+                              current_mood: tuple[float, float] | None = None) -> tuple[list[dict], tuple[float, float] | None]:
         """
         Retrieves relevant memories using activation spreading.
         Considers memory strength, saliency, edge types, optionally boosts recently mentioned concepts,
         and optionally biases based on emotional context similarity to current_mood.
+        Also applies dynamic edge weighting based on current drive state.
+
+        Returns:
+            A tuple containing:
+            - list[dict]: The list of retrieved memory node data.
+            - tuple[float, float] | None: The effective mood (Valence, Arousal) used during retrieval (after drive influence).
         """
         # --- Config Access ---
         act_cfg = self.config.get('activation', {})
@@ -1148,16 +1154,17 @@ class GraphMemoryClient:
         context_focus_boost = act_cfg.get('context_focus_boost', 0.0) # Get boost factor, default 0 (no boost)
         recent_concept_uuids_set = set(recent_concept_uuids) if recent_concept_uuids else set() # Use set for faster lookup
 
-        # --- Drive State Influence on Mood ---
+        # --- Drive State Influence on Mood & Edge Weighting ---
         drive_cfg = self.config.get('subconscious_drives', {})
         mood_influence_cfg = drive_cfg.get('mood_influence', {})
         drives_enabled = drive_cfg.get('enabled', False)
         mood_before_drive_influence = current_mood if current_mood else (0.0, 0.1) # Store initial mood
         effective_mood = mood_before_drive_influence # Start with initial mood
+        drive_state_snapshot = self.drive_state.copy() # Get snapshot for this retrieval
 
         # Check if drives are enabled and we have state data
-        if drives_enabled and mood_influence_cfg and self.drive_state.get("short_term"): # Use .get for safety
-            logger.info(f"Calculating mood adjustment based on drive state: ShortTerm={self.drive_state.get('short_term')}, LongTerm={self.drive_state.get('long_term')}") # Changed level to INFO
+        if drives_enabled and mood_influence_cfg and drive_state_snapshot.get("short_term"): # Use snapshot
+            logger.info(f"Calculating mood adjustment based on drive state: ShortTerm={drive_state_snapshot.get('short_term')}, LongTerm={drive_state_snapshot.get('long_term')}") # Changed level to INFO
             base_valence, base_arousal = effective_mood
             valence_adjustment = 0.0
             arousal_adjustment = 0.0
@@ -1166,10 +1173,10 @@ class GraphMemoryClient:
             base_drives = drive_cfg.get('base_drives', {}) # Use base_drives config
             long_term_influence = drive_cfg.get('long_term_influence_on_baseline', 1.0)
 
-            for drive_name, current_activation in self.drive_state["short_term"].items():
+            for drive_name, current_activation in drive_state_snapshot["short_term"].items(): # Use snapshot
                 # Calculate the dynamic baseline for comparison
                 config_baseline = base_drives.get(drive_name, 0.0)
-                long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
+                long_term_level = drive_state_snapshot["long_term"].get(drive_name, 0.0) # Use snapshot
                 dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
 
                 # Calculate deviation from the *dynamic* baseline
@@ -1345,28 +1352,52 @@ class GraphMemoryClient:
                     edge_type = edge_data.get('type', 'UNKNOWN')
                     type_factor = prop_unknown # Default
 
-                    # --- Assign type_factor based on edge_type ---
-                    # Note: Directionality might matter more for some types than others.
-                    # For now, many new types use the same factor regardless of direction.
-                    if edge_type == 'TEMPORAL': type_factor = prop_temporal_fwd if is_forward else prop_temporal_bwd
-                    elif edge_type == 'SUMMARY_OF': type_factor = prop_summary_fwd if is_forward else prop_summary_bwd
-                    elif edge_type == 'MENTIONS_CONCEPT': type_factor = prop_concept_fwd if is_forward else prop_concept_bwd
-                    elif edge_type == 'ASSOCIATIVE': type_factor = prop_assoc
-                    elif edge_type == 'HIERARCHICAL': type_factor = prop_hier_fwd if is_forward else prop_hier_bwd
-                    elif edge_type == 'CAUSES': type_factor = prop_causes # Assume forward A->B means A causes B
-                    elif edge_type == 'PART_OF': type_factor = prop_part_of
-                    elif edge_type == 'HAS_PROPERTY': type_factor = prop_has_prop
+                    # --- Assign base type_factor based on edge_type ---
+                    base_type_factor = prop_unknown # Default
+                    if edge_type == 'TEMPORAL': base_type_factor = prop_temporal_fwd if is_forward else prop_temporal_bwd
+                    elif edge_type == 'SUMMARY_OF': base_type_factor = prop_summary_fwd if is_forward else prop_summary_bwd
+                    elif edge_type == 'MENTIONS_CONCEPT': base_type_factor = prop_concept_fwd if is_forward else prop_concept_bwd
+                    elif edge_type == 'ASSOCIATIVE': base_type_factor = prop_assoc
+                    elif edge_type == 'HIERARCHICAL': base_type_factor = prop_hier_fwd if is_forward else prop_hier_bwd
+                    elif edge_type == 'CAUSES': base_type_factor = prop_causes # Assume forward A->B means A causes B
+                    elif edge_type == 'PART_OF': base_type_factor = prop_part_of
+                    elif edge_type == 'HAS_PROPERTY': base_type_factor = prop_has_prop
                     elif edge_type == 'ENABLES': type_factor = prop_enables
                     elif edge_type == 'PREVENTS': type_factor = prop_prevents
                     elif edge_type == 'CONTRADICTS': type_factor = prop_contradicts
                     elif edge_type == 'SUPPORTS': type_factor = prop_supports
-                    elif edge_type == 'EXAMPLE_OF': type_factor = prop_example_of
-                    elif edge_type == 'MEASURES': type_factor = prop_measures
-                    elif edge_type == 'LOCATION_OF': type_factor = prop_location_of
-                    elif edge_type == 'ANALOGY': type_factor = prop_analogy
-                    elif edge_type == 'INFERRED_RELATED_TO': type_factor = prop_inferred
-                    elif edge_type.startswith('SPACY_'): type_factor = prop_spacy # Generic for all spaCy types
-                    # else: type_factor remains prop_unknown
+                    elif edge_type == 'EXAMPLE_OF': base_type_factor = prop_example_of
+                    elif edge_type == 'MEASURES': base_type_factor = prop_measures
+                    elif edge_type == 'LOCATION_OF': base_type_factor = prop_location_of
+                    elif edge_type == 'ANALOGY': base_type_factor = prop_analogy
+                    elif edge_type == 'INFERRED_RELATED_TO': base_type_factor = prop_inferred
+                    elif edge_type.startswith('SPACY_'): base_type_factor = prop_spacy # Generic for all spaCy types
+                    # else: base_type_factor remains prop_unknown
+
+                    # --- Dynamic Edge Weighting based on Drive State ---
+                    drive_weight_multiplier = 1.0 # Default: no change
+                    if drives_enabled and drive_state_snapshot.get("short_term"):
+                        # Example: Boost HIERARCHICAL/CAUSES if Understanding drive is high (low deviation = unmet need)
+                        understanding_level = drive_state_snapshot["short_term"].get("Understanding", 0.0)
+                        understanding_baseline = base_drives.get("Understanding", 0.0) + (drive_state_snapshot["long_term"].get("Understanding", 0.0) * long_term_influence)
+                        understanding_deviation = understanding_level - understanding_baseline
+                        if understanding_deviation < -0.1: # If Understanding need is unmet
+                            if edge_type in ['HIERARCHICAL', 'CAUSES', 'SUMMARY_OF']:
+                                drive_weight_multiplier = 1.2 # Boost these edge types by 20%
+                                logger.debug(f"    Drive Boost (Understanding Low): Edge {edge_type} mult={drive_weight_multiplier:.2f}")
+
+                        # Example: Boost CONNECTION if Connection drive is high (low deviation = unmet need)
+                        connection_level = drive_state_snapshot["short_term"].get("Connection", 0.0)
+                        connection_baseline = base_drives.get("Connection", 0.0) + (drive_state_snapshot["long_term"].get("Connection", 0.0) * long_term_influence)
+                        connection_deviation = connection_level - connection_baseline
+                        if connection_deviation < -0.1: # If Connection need is unmet
+                             if edge_type in ['ASSOCIATIVE', 'ANALOGY']: # Boost related concepts
+                                 drive_weight_multiplier = 1.15 # Boost by 15%
+                                 logger.debug(f"    Drive Boost (Connection Low): Edge {edge_type} mult={drive_weight_multiplier:.2f}")
+                        # Add more drive-based weighting rules here...
+
+                    # Apply drive multiplier to the base type factor
+                    type_factor = base_type_factor * drive_weight_multiplier
 
                     dyn_str = self._calculate_dynamic_edge_strength(edge_data, current_time)
                     saliency_boost = 1.0 + (source_saliency * activation_influence) if saliency_enabled else 1.0
@@ -1689,7 +1720,8 @@ class GraphMemoryClient:
             "final_retrieved_nodes": final_retrieved_data,
         })
 
-        return relevant_nodes
+        # Return both the nodes and the effective mood used
+        return relevant_nodes, effective_mood
 
 
     # --- Saliency & Forgetting ---
@@ -2171,10 +2203,13 @@ class GraphMemoryClient:
 
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
-    def _construct_prompt(self, user_input: str, conversation_history: list, memory_chain: list, tokenizer, max_context_tokens: int) -> str:
-        """Constructs the prompt for the LLM, incorporating time, memory, history."""
+    def _construct_prompt(self, user_input: str, conversation_history: list, memory_chain: list, tokenizer, max_context_tokens: int, current_mood: tuple[float, float] | None = None) -> str:
+        """
+        Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, and ASM.
+        Applies memory strength budgeting.
+        """
         # Use the correct logger name: 'logger'
-        logger.debug(f"_construct_prompt received user_input: '{user_input}'") # Corrected logger name
+        logger.debug(f"_construct_prompt received user_input: '{user_input}', Mood: {current_mood}") # Corrected logger name
 
         if tokenizer is None:
             logger.error("Tokenizer unavailable for prompt construction.") # Corrected logger name
@@ -2201,22 +2236,18 @@ class GraphMemoryClient:
         time_info_block = f"{model_tag}Current time is {time_str}.{end_turn}\n"
         asm_block = "" # Initialize ASM block
 
-        # --- Format Structured ASM Block ---
+        # --- Format Structured ASM Block (Using updated fields) ---
         if self.autobiographical_model:
             try:
                 # Format the structured data into a readable block
                 asm_parts = ["[My Self-Perception:]"]
-                if self.autobiographical_model.get("summary_statement"):
-                    asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
-                if self.autobiographical_model.get("core_traits"):
-                    asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
-                if self.autobiographical_model.get("recurring_themes"):
-                    asm_parts.append(f"- Often Discuss: {', '.join(self.autobiographical_model['recurring_themes'])}")
-                if self.autobiographical_model.get("values_beliefs"):
-                    asm_parts.append(f"- Beliefs/Values: {', '.join(self.autobiographical_model['values_beliefs'])}")
-                # Optionally add significant events if space allows or needed
-                # if self.autobiographical_model.get("significant_events"):
-                #     asm_parts.append(f"- Key Events: {'; '.join(self.autobiographical_model['significant_events'])}")
+                if self.autobiographical_model.get("summary_statement"): asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
+                if self.autobiographical_model.get("core_traits"): asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+                if self.autobiographical_model.get("recurring_themes"): asm_parts.append(f"- Often Discuss: {', '.join(self.autobiographical_model['recurring_themes'])}")
+                # Use new fields
+                if self.autobiographical_model.get("goals_motivations"): asm_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
+                if self.autobiographical_model.get("relational_stance"): asm_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
+                if self.autobiographical_model.get("emotional_profile"): asm_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
 
                 if len(asm_parts) > 1: # Only add block if there's content beyond the header
                     asm_text = "\n".join(asm_parts)
@@ -2233,14 +2264,44 @@ class GraphMemoryClient:
         # --- Token Budget Calculation ---
         prompt_cfg = self.config.get('prompting', {})
         context_headroom = prompt_cfg.get('context_headroom', 250)
-        mem_budget_ratio = prompt_cfg.get('memory_budget_ratio', 0.45)
-        hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.55)
+        mem_budget_ratio = prompt_cfg.get('memory_budget_ratio', 0.40) # Slightly reduced default for memory
+        hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.45) # Slightly reduced default for history
+        # Workspace budget is calculated later
         # Add the system note to fixed parts
         system_note_block = f"{model_tag}[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]{end_turn}\n"
+        # --- Format Drive State Block ---
+        drive_block = ""
+        if self.config.get('subconscious_drives', {}).get('enabled', False) and self.drive_state:
+            try:
+                drive_parts = ["[Current Drive State (Internal Motivations - Use to inform response style):]"]
+                st_drives = self.drive_state.get("short_term", {})
+                lt_drives = self.drive_state.get("long_term", {})
+                base_drives = self.config.get('subconscious_drives', {}).get('base_drives', {})
+                lt_influence = self.config.get('subconscious_drives', {}).get('long_term_influence_on_baseline', 1.0)
+
+                for drive, st_level in st_drives.items():
+                    config_baseline = base_drives.get(drive, 0.0)
+                    lt_level = lt_drives.get(drive, 0.0)
+                    dynamic_baseline = config_baseline + (lt_level * lt_influence)
+                    deviation = st_level - dynamic_baseline
+                    state_desc = "Neutral"
+                    if deviation > 0.2: state_desc = "High"
+                    elif deviation < -0.2: state_desc = "Low"
+                    drive_parts.append(f"- {drive}: {state_desc} (Deviation: {deviation:+.2f})")
+
+                if len(drive_parts) > 1:
+                    drive_text = "\n".join(drive_parts)
+                    drive_block = f"{model_tag}{drive_text}{end_turn}\n"
+                    logger.debug("Formatted drive state block created for prompt.")
+            except Exception as e:
+                logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
+                drive_block = ""
+
         try:
             fixed_tokens = (len(tokenizer.encode(time_info_block)) +
                             len(tokenizer.encode(system_note_block)) + # Add system note tokens
                             len(tokenizer.encode(asm_block)) + # Add ASM block tokens
+                            len(tokenizer.encode(drive_block)) + # Add Drive block tokens
                             len(tokenizer.encode(user_input_fmt)) +
                             len(tokenizer.encode(final_model_tag)))
         except Exception as e:
@@ -2348,8 +2409,7 @@ class GraphMemoryClient:
             "history_budget": hist_budget,
         })
 
-        # --- Memory Context Construction ---
-        # (This part remains the same - assumes it uses 'logger' correctly if needed internally)
+        # --- Memory Context Construction (with Strength Budgeting) ---
         mem_ctx_str = ""
         cur_mem_tokens = 0
         mem_header = "---\n[Relevant Past Information - Use this to recall facts (like names) and context]:\n"
@@ -2361,29 +2421,38 @@ class GraphMemoryClient:
         included_mem_uuids = []
 
         if memory_chain and mem_budget > 0:
-            # Sort by timestamp before processing for budget
-            mem_chain_sorted = sorted(memory_chain, key=lambda x: x.get('timestamp', ''))
+            # Sort memories by strength (desc) then timestamp (desc) for prioritization
+            mem_chain_sorted = sorted(memory_chain, key=lambda x: (x.get('memory_strength', 0.0), x.get('timestamp', '')), reverse=True)
             mem_parts = []
             tmp_tokens = 0
             try:
-                # Estimate tokens for header/footer/tags
                 format_tokens = len(tokenizer.encode(f"{model_tag}{mem_header}{mem_footer}{end_turn}\n"))
             except Exception:
-                 format_tokens = 50 # Rough estimate if tokenization fails
+                format_tokens = 50
             effective_mem_budget = mem_budget - format_tokens
 
             for node in mem_chain_sorted:
                 spk = node.get('speaker','?')
                 txt = node.get('text','')
                 ts = node.get('timestamp','')
-                # --- Use new helper for relative time ---
+                strength = node.get('memory_strength', 0.0)
                 relative_time_desc = self._get_relative_time_desc(ts)
 
-                fmt_mem = f"{spk} ({relative_time_desc}): {txt}\n"
+                # --- Memory Strength Budgeting ---
+                # Reduce detail for weaker memories (e.g., truncate text)
+                max_chars_for_node = 1000 # Default max chars
+                if strength < 0.3: max_chars_for_node = 80 # Very weak, very short preview
+                elif strength < 0.6: max_chars_for_node = 200 # Weak, short preview
+
+                truncated_txt = txt[:max_chars_for_node]
+                if len(txt) > max_chars_for_node: truncated_txt += "..."
+
+                # Format memory entry (include strength indicator?)
+                fmt_mem = f"{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
                 try:
                     mem_tok_len = len(tokenizer.encode(fmt_mem))
                 except Exception as e:
-                    logger.warning(f"Tokenization error for memory item: {e}. Skipping memory item.") # Corrected logger name
+                    logger.warning(f"Tokenization error for memory item: {e}. Skipping memory item.")
                     continue
 
                 if tmp_tokens + mem_tok_len <= effective_mem_budget:
@@ -2391,11 +2460,31 @@ class GraphMemoryClient:
                     tmp_tokens += mem_tok_len
                     included_mem_uuids.append(node['uuid'][:8])
                 else:
-                    logger.debug("Memory budget reached during context construction.") # Corrected logger name
-                    break # Stop adding memories
+                    logger.debug("Memory budget reached during context construction.")
+                    break
 
             if mem_parts:
-                mem_content = mem_header + "".join(mem_parts) + mem_footer
+                # Re-sort the *included* parts chronologically for the final prompt
+                # This requires storing timestamp along with fmt_mem temporarily
+                mem_parts_with_ts = []
+                for node in mem_chain_sorted:
+                     if node['uuid'][:8] in included_mem_uuids: # Check if this node was included
+                         spk = node.get('speaker','?')
+                         txt = node.get('text','')
+                         ts = node.get('timestamp','')
+                         strength = node.get('memory_strength', 0.0)
+                         relative_time_desc = self._get_relative_time_desc(ts)
+                         max_chars_for_node = 1000
+                         if strength < 0.3: max_chars_for_node = 80
+                         elif strength < 0.6: max_chars_for_node = 200
+                         truncated_txt = txt[:max_chars_for_node]
+                         if len(txt) > max_chars_for_node: truncated_txt += "..."
+                         fmt_mem = f"{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
+                         mem_parts_with_ts.append((ts, fmt_mem))
+
+                mem_parts_with_ts.sort(key=lambda item: item[0]) # Sort by timestamp (ascending)
+                sorted_mem_parts = [item[1] for item in mem_parts_with_ts] # Extract sorted strings
+                mem_content = mem_header + "".join(sorted_mem_parts) + mem_footer
 
         # Format the final memory block (or placeholder)
         if mem_content != mem_placeholder_no_mem:
@@ -2465,12 +2554,16 @@ class GraphMemoryClient:
             "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
             "[System Note: **Synthesize** the information from the 'Relevant Past Information' (memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
-            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]", # Added resumption instruction
+            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
+            # --- Mood/Drive Tone Instruction ---
+            f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). Let this subtly influence your response tone. For example, high Valence might lead to warmer language, high Arousal might lead to more energetic phrasing, low Safety might lead to more cautious language.]" if current_mood else "[System Note: Current mood unavailable.]",
+            # --- ASM Integration Instruction ---
+            "[System Note: Consider your 'Self-Perception' summary (Traits, Goals, Role, Emotional Profile) when formulating your response and deciding on actions. Align your behavior with this self-model.]",
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
-            "  **Available Actions:** `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `add_calendar_event`, `read_calendar`.",
-            "  **CRITICAL: `edit_file` is NOT a valid action.**",
+            "  **Available Actions:** `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `consolidate_files`, `add_calendar_event`, `read_calendar`.",
+            "  **CRITICAL: `edit_file` is NOT a valid action.** Use `read_file` then `create_file` (overwrites).",
             "  **To Edit a File:** Use `read_file` then `create_file` (overwrites).",
             "  **Using Actions:**",
             "    - For `list_files`, `read_calendar`: Use `[ACTION: {\"action\": \"action_name\", \"args\": {}}]` (or add optional 'date' arg for read_calendar).",
@@ -2480,53 +2573,18 @@ class GraphMemoryClient:
             "    - **For `create_file`:** Signal your *intent* by providing a brief description. The system will handle filename/content generation separately. Use `[ACTION: {\"action\": \"create_file\", \"args\": {\"description\": \"Brief description of what to save, e.g., 'List of project ideas'\"}}]`.",
             "  Only use the ACTION tag if you decide an action is necessary based on the context.]",
             # --- NEW: Instruction for handling retrieved intentions ---
-            "[System Note: If you see a retrieved memory starting with 'Remember:', check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]"
+            "[System Note: If you see a retrieved memory starting with 'Remember:' (indicating a stored intention), check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]"
         ]
         # Add each instruction line as a separate system turn for clarity
         for instruction in system_instructions:
              final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
 
-        # --- Format Drive State Block ---
-        drive_block = ""
-        if self.config.get('subconscious_drives', {}).get('enabled', False) and self.drive_state:
-            try:
-                drive_parts = ["[Current Drive State (Internal Motivations):]"]
-                # Format short-term drives (relative to baseline)
-                st_drives = self.drive_state.get("short_term", {})
-                lt_drives = self.drive_state.get("long_term", {})
-                base_drives = self.config.get('subconscious_drives', {}).get('base_drives', {})
-                lt_influence = self.config.get('subconscious_drives', {}).get('long_term_influence_on_baseline', 1.0)
-
-                for drive, st_level in st_drives.items():
-                    config_baseline = base_drives.get(drive, 0.0)
-                    lt_level = lt_drives.get(drive, 0.0)
-                    dynamic_baseline = config_baseline + (lt_level * lt_influence)
-                    deviation = st_level - dynamic_baseline
-                    # Describe the state qualitatively
-                    state_desc = "Neutral"
-                    if deviation > 0.2: state_desc = "High" # Need potentially met/overshot
-                    elif deviation < -0.2: state_desc = "Low" # Need potentially unmet
-                    drive_parts.append(f"- {drive}: {state_desc} (Level: {st_level:.2f}, Baseline: {dynamic_baseline:.2f})")
-
-                # Optionally add long-term summary if needed/space allows
-                # drive_parts.append("[Long-Term Tendencies:]")
-                # for drive, lt_level in lt_drives.items():
-                #     drive_parts.append(f"- {drive}: {lt_level:.2f}")
-
-                if len(drive_parts) > 1:
-                    drive_text = "\n".join(drive_parts)
-                    drive_block = f"{model_tag}{drive_text}{end_turn}\n"
-                    logger.debug("Formatted drive state block created.")
-            except Exception as e:
-                logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
-                drive_block = ""
-
-        if asm_block: final_parts.append(asm_block) # Add ASM block after time/system note
-        # --- Drive block is intentionally NOT added to final_parts to keep it subconscious ---
-        # if drive_block: final_parts.append(drive_block) # Add Drive block after ASM
-        if mem_ctx_str: final_parts.append(mem_ctx_str)
-        final_parts.extend(hist_parts)
-        final_parts.append(user_input_fmt) # Crucial: Adds current user input (potentially with tag)
+        # --- Add Context Blocks ---
+        if asm_block: final_parts.append(asm_block) # Add ASM block after time/system notes
+        if drive_block: final_parts.append(drive_block) # Add Drive block after ASM
+        if mem_ctx_str: final_parts.append(mem_ctx_str) # Add Memories after internal state
+        final_parts.extend(hist_parts) # Add History
+        final_parts.append(user_input_fmt) # Crucial: Adds current user input
         final_parts.append(final_model_tag)
         final_prompt = "".join(final_parts)
 
@@ -3280,37 +3338,54 @@ class GraphMemoryClient:
                         mood_for_retrieval = self.last_interaction_mood
                         logger.info(f"Using previous interaction context for retrieval: Concepts={len(concepts_for_retrieval)}, Mood={mood_for_retrieval}")
 
-                        # --- Get UUIDs of immediately preceding turns for priming ---
-                        last_turn_uuids_for_priming = []
-                        if conversation_history:
-                            # Get the last turn (which should be the user's input just added)
-                            last_user_turn_uuid = conversation_history[-1].get("uuid") # Assuming UUID is added to history dict
-                            if last_user_turn_uuid: last_turn_uuids_for_priming.append(last_user_turn_uuid)
-                            # Get the turn before that (likely the AI's previous response)
-                            if len(conversation_history) > 1:
-                                 prev_ai_turn_uuid = conversation_history[-2].get("uuid")
-                                 if prev_ai_turn_uuid: last_turn_uuids_for_priming.append(prev_ai_turn_uuid)
-                        logger.debug(f"Priming UUIDs identified: {last_turn_uuids_for_priming}")
-
+                        # --- Retrieve Active Intentions ---
+                        active_intentions = []
+                        try:
+                             # Simple retrieval: Get all nodes of type 'intention'
+                             # A more sophisticated approach might filter by trigger proximity or relevance.
+                             intention_nodes = [
+                                 data for uuid, data in self.graph.nodes(data=True)
+                                 if data.get('node_type') == 'intention'
+                             ]
+                             # Sort by timestamp? Or keep unsorted for now? Let's sort by timestamp desc.
+                             intention_nodes.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                             active_intentions = intention_nodes[:5] # Limit number of intentions passed to prompt
+                             logger.info(f"Retrieved {len(active_intentions)} active intention nodes.")
+                        except Exception as intent_e:
+                             logger.error(f"Error retrieving intention nodes: {intent_e}", exc_info=True)
 
                         # --- Now call retrieval ---
                         logger.info("Retrieving memory chain...")
-                        memory_chain_data = self.retrieve_memory_chain(
+                        # retrieve_memory_chain now returns (nodes, effective_mood)
+                        retrieved_nodes, effective_mood_used = self.retrieve_memory_chain(
                             initial_node_uuids=initial_uuids,
                             recent_concept_uuids=list(concepts_for_retrieval), # Pass previous concepts
                             current_mood=mood_for_retrieval # Pass previous mood
-                            # last_turn_uuids argument removed
                         )
-                        logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
+                        # Combine regular memories and intentions for the prompt context
+                        memory_chain_data = retrieved_nodes + active_intentions
+                        logger.info(f"Retrieved memory chain size (incl. intentions): {len(memory_chain_data)}")
                     else:
                         logger.info("No relevant initial nodes found.")
+                        # Still retrieve intentions even if no initial nodes found? Yes.
+                        # --- Retrieve Active Intentions (Duplicate logic for now) ---
+                        active_intentions = []
+                        try:
+                             intention_nodes = [data for uuid, data in self.graph.nodes(data=True) if data.get('node_type') == 'intention']
+                             intention_nodes.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                             active_intentions = intention_nodes[:5]
+                             logger.info(f"Retrieved {len(active_intentions)} active intention nodes (no initial search results).")
+                        except Exception as intent_e: logger.error(f"Error retrieving intention nodes: {intent_e}", exc_info=True)
+                        memory_chain_data = active_intentions # Only intentions if no other memories
+                        effective_mood_used = mood_for_retrieval # Use the mood passed in if retrieval didn't run fully
                 else:
                     logger.warning("Input started with [Image:] but wasn't handled as attachment? Proceeding without memory.")
 
                 # Construct and call standard API
                 logger.info("Constructing prompt string...")
                 max_tokens = self.config.get('prompting', {}).get('max_context_tokens', 4096)
-                prompt = self._construct_prompt(user_input, conversation_history, memory_chain_data, self.tokenizer, max_tokens)
+                # Pass the effective mood used during retrieval to the prompt constructor
+                prompt = self._construct_prompt(user_input, conversation_history, memory_chain_data, self.tokenizer, max_tokens, current_mood=effective_mood_used)
 
                 logger.info("Calling standard LLM Generate API...")
                 # Call standard Generate API using configured helper
@@ -3472,6 +3547,18 @@ class GraphMemoryClient:
 
             # --- Calculate and Store context for NEXT interaction's retrieval bias ---
             self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
+
+            # --- Trigger Drive Update if High Impact Emotion Occurred ---
+            drive_cfg = self.config.get('subconscious_drives', {})
+            trigger_on_high_impact = drive_cfg.get('trigger_drive_update_on_high_impact', False)
+            if trigger_on_high_impact and self.high_impact_nodes_this_interaction:
+                 logger.info("High emotional impact detected. Triggering immediate drive state update.")
+                 # Prepare context for the update (e.g., last few turns)
+                 context_turns = self.current_conversation[-3:] # Get last few turns including current
+                 context_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in context_turns])
+                 self._update_drive_state(context_text=context_text)
+                 # Clear the high impact tracker after processing
+                 self.high_impact_nodes_this_interaction.clear()
 
             # --- Check for Intention Request (if not handled as action/mod) ---
             # This check happens *after* adding the user/AI nodes, using the original user_input
@@ -3837,9 +3924,27 @@ class GraphMemoryClient:
                 })
 
         # --- LLM Analysis for Short-Term Drive Satisfaction/Frustration ---
-        update_interval = drive_cfg.get('short_term_update_interval_interactions', 0) # Get interval from config
-        # Check if LLM update should run based on interval AND if context_text is provided
-        if context_text and update_interval > 0: # Check if context_text is non-empty
+        # LLM analysis is now triggered either by interval OR by high emotional impact event
+        update_interval = drive_cfg.get('short_term_update_interval_interactions', 0)
+        trigger_on_high_impact = drive_cfg.get('trigger_drive_update_on_high_impact', False)
+        # Determine if LLM analysis should run for this update cycle
+        run_llm_analysis = False
+        if context_text and update_interval > 0: # Check interval trigger
+            # Need interaction counter - assume it's passed or accessible (e.g., self.interaction_count)
+            # This logic needs refinement based on where interaction count is tracked.
+            # For now, let's assume it runs if context is provided and interval > 0.
+            # A better approach would be to pass an 'is_interval_trigger' flag.
+            # Let's simplify: Run if context_text is provided (meaning it's likely an interval or event trigger)
+            run_llm_analysis = True
+            logger.info("Attempting LLM analysis for drive state update (context provided)...")
+        elif trigger_on_high_impact and self.high_impact_nodes_this_interaction:
+            # Triggered by high impact event, even without explicit context_text here?
+            # This implies _update_drive_state needs to be called immediately after such an interaction.
+            # Let's assume the calling function provides context_text if triggering based on event.
+            # So, the check `if context_text:` below handles both cases if called correctly.
+            pass # Logic handled by context_text check below
+
+        if context_text: # Run if context is provided (for interval or event trigger)
             logger.info("Attempting LLM analysis for drive state update...")
             try:
                 # 1. Context is already provided as context_text
@@ -3895,13 +4000,12 @@ class GraphMemoryClient:
                                         "parsed_adjustments": drive_adjustments,
                                     })
 
-                                    # 5. Adjust short_term drive_state based on satisfaction/frustration factors
-                                    base_satisfaction_factor = drive_cfg.get('llm_satisfaction_factor', 0.1)
-                                    base_frustration_factor = drive_cfg.get('llm_frustration_factor', 0.15)
+                                    # 5. Adjust short_term drive_state based on LLM score
+                                    base_adjustment_factor = drive_cfg.get('llm_score_adjustment_factor', 0.15)
 
-                                    # --- Amplify factors if high-impact nodes were involved ---
+                                    # --- Amplify adjustment factor if high-impact nodes were involved ---
                                     amplification_factor = 1.0 # Default: no amplification
-                                    if self.high_impact_nodes_this_interaction:
+                                    if self.high_impact_nodes_this_interaction: # Check if the dictionary is non-empty
                                         max_magnitude = max(self.high_impact_nodes_this_interaction.values()) if self.high_impact_nodes_this_interaction else 0.0
                                         amp_config_factor = drive_cfg.get('emotional_impact_amplification_factor', 1.5) # How much to amplify by
                                         # Simple amplification: scale based on max magnitude relative to threshold
@@ -3921,34 +4025,34 @@ class GraphMemoryClient:
                                                  "impact_threshold": impact_threshold,
                                                  "high_impact_nodes": list(self.high_impact_nodes_this_interaction.keys())
                                              })
+                                        else:
+                                             # Log that no amplification occurred if dict was empty
+                                             logger.debug("No high-impact nodes detected in this interaction, no amplification applied.")
 
-                                    # Use amplified factors for this update cycle
-                                    satisfaction_factor = base_satisfaction_factor * amplification_factor
-                                    frustration_factor = base_frustration_factor * amplification_factor
-                                    logger.debug(f"Using Adjustment Factors: Satisfaction={satisfaction_factor:.4f}, Frustration={frustration_factor:.4f}")
+
+                                    # Use amplified adjustment factor for this update cycle
+                                    adjustment_factor = base_adjustment_factor * amplification_factor
+                                    logger.debug(f"Using LLM Score Adjustment Factor: {adjustment_factor:.4f} (Base: {base_adjustment_factor:.4f}, Amp: {amplification_factor:.3f})")
                                     # --- End amplification ---
 
-                                    for drive_name, status in drive_adjustments.items():
+                                    for drive_name, score in drive_adjustments.items():
                                         if drive_name in self.drive_state["short_term"]:
                                             current_activation = self.drive_state["short_term"][drive_name]
-                                            # Calculate dynamic baseline for comparison (needed for satisfaction logic)
-                                            config_baseline = base_drives.get(drive_name, 0.0)
-                                            long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
-                                            dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
-                                            adjustment = 0.0
+                                            # Validate score is a number between -1 and 1
+                                            if not isinstance(score, (int, float)) or not (-1.0 <= score <= 1.0):
+                                                logger.warning(f"LLM returned invalid score '{score}' for drive '{drive_name}'. Skipping adjustment.")
+                                                continue
 
-                                            if status == "satisfied":
-                                                # Reduce activation towards dynamic baseline (multiplicative adjustment on deviation)
-                                                deviation = current_activation - dynamic_baseline
-                                                if deviation > 0: # Only reduce if above baseline
-                                                     adjustment = -deviation * satisfaction_factor # Adjustment is negative
-                                                logger.debug(f"  Drive '{drive_name}' satisfied. Adjustment: {adjustment:.3f}")
-                                            elif status == "frustrated":
-                                                # Increase activation (additive adjustment)
-                                                adjustment = frustration_factor # Adjustment is positive
-                                                logger.debug(f"  Drive '{drive_name}' frustrated. Adjustment: {adjustment:.3f}")
-                                            # else: status is neutral/unclear, no adjustment
-                                            logger.debug(f"  Drive '{drive_name}' LLM Status: '{status}'. Calculated Adjustment: {adjustment:.4f}") # Log status and adjustment even if zero
+                                            # Calculate adjustment based on score and factor
+                                            # Positive score (satisfied) should decrease drive if above baseline, increase if below? No, simplify:
+                                            # Positive score -> move towards baseline (negative adjustment if above, positive if below)
+                                            # Negative score -> move away from baseline (positive adjustment if above, negative if below) - This seems complex.
+                                            # Let's try: Adjustment = -score * factor (Simple inverse relationship)
+                                            # Satisfied (score=1) -> adj = -factor (reduces drive)
+                                            # Frustrated (score=-1) -> adj = +factor (increases drive)
+                                            # Neutral (score=0) -> adj = 0
+                                            adjustment = -score * adjustment_factor
+                                            logger.debug(f"  Drive '{drive_name}' LLM Score: {score:.2f}. Calculated Adjustment: {adjustment:.4f}")
 
                                             if abs(adjustment) > 1e-4:
                                                 # Apply adjustment to short-term state
@@ -5918,6 +6022,22 @@ class GraphMemoryClient:
                 workspace_files_list_str = "\n".join([f"- {fname}" for fname in sorted(workspace_files)])
             logger.debug(f"Workspace files for planning prompt:\n{workspace_files_list_str}")
 
+            # --- Format ASM Context for Planning Prompt ---
+            asm_context_str = "[AI Self-Model: Not Available]"
+            if self.autobiographical_model:
+                try:
+                    asm_parts = []
+                    if self.autobiographical_model.get("summary_statement"): asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
+                    if self.autobiographical_model.get("core_traits"): asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+                    if self.autobiographical_model.get("goals_motivations"): asm_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
+                    if self.autobiographical_model.get("relational_stance"): asm_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
+                    if self.autobiographical_model.get("emotional_profile"): asm_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
+                    if asm_parts: asm_context_str = "\n".join(asm_parts)
+                except Exception as asm_fmt_e:
+                    logger.error(f"Error formatting ASM for planning prompt: {asm_fmt_e}")
+                    asm_context_str = "[AI Self-Model: Error Formatting]"
+            logger.debug(f"ASM context for planning prompt:\n{asm_context_str}")
+
             planning_prompt_template = self._load_prompt("workspace_planning_prompt.txt")
             if not planning_prompt_template:
                 logger.error("Workspace planning prompt template missing. Cannot generate plan.")
@@ -5928,9 +6048,10 @@ class GraphMemoryClient:
                 user_request=user_input,
                 history_text=planning_history_text,
                 memory_text=planning_memory_text,
-                workspace_files_list=workspace_files_list_str # Add file list here
+                workspace_files_list=workspace_files_list_str,
+                asm_context=asm_context_str # Add formatted ASM context
             )
-            logger.debug(f"Sending workspace planning prompt (with file list):\n{planning_prompt[:400]}...")
+            logger.debug(f"Sending workspace planning prompt (with file list and ASM):\n{planning_prompt[:400]}...")
 
             # 3. Call Planning LLM
             plan_response_str = self._call_configured_llm('workspace_planning', prompt=planning_prompt)

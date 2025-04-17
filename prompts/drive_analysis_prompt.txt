@@ -17,18 +17,22 @@ Analyze the following conversation excerpt. Consider the underlying needs and mo
 {current_drive_state}
 
 **Task:**
-Based *only* on the **Conversation Excerpt** and considering the **AI's Current Drive State**, determine if the excerpt suggests each core drive was primarily **satisfied**, **frustrated**, or **neutral/unclear** for the AI participant *during this excerpt*. Consider both explicit statements and subtle implications (e.g., expressions of confusion might relate to 'Understanding', seeking praise to 'Connection' or 'Control').
+Based *only* on the **Conversation Excerpt** and considering the **AI's Current Drive State**, estimate the degree to which each core drive was satisfied or frustrated for the AI participant *during this excerpt*. Consider both explicit statements and subtle implications (e.g., expressions of confusion might relate to 'Understanding', seeking praise to 'Connection' or 'Control').
 
-**Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be ONLY one of the strings: "satisfied", "frustrated", or "neutral".
+**Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be a numerical score between -1.0 and 1.0.
+- **-1.0:** Represents maximum frustration of the drive.
+- **0.0:** Represents a neutral state or unclear impact on the drive.
+- **1.0:** Represents maximum satisfaction of the drive.
+- Use intermediate values (e.g., 0.5, -0.2) to indicate varying degrees.
 
 **Example Output:**
 ```json
 {{
-  "Connection": "satisfied",
-  "Safety": "neutral",
-  "Understanding": "satisfied",
-  "Novelty": "frustrated",
-  "Control": "neutral"
+  "Connection": 0.8,
+  "Safety": 0.1,
+  "Understanding": 0.9,
+  "Novelty": -0.6,
+  "Control": 0.0
 }}
 ```
 
