@@ -930,7 +930,7 @@ class PasteLineEdit(QLineEdit):
                 # Let the main window handler decide if it's an image or generic file
                 gui_logger.debug("Calling chat_window.handle_attach_file_path (from pasted URL).")
                 self.chat_window.handle_attach_file_path(file_path)  # Call using reference
-                return True  # Success
+                return True # Success # Corrected indentation
             else:
                 gui_logger.debug("Pasted URL path is not a valid file.")
         else:
