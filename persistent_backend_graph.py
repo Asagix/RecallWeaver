@@ -171,7 +171,8 @@ class GraphMemoryClient:
         self.embeddings_file = os.path.join(self.data_dir, "memory_embeddings.npy")
         self.mapping_file = os.path.join(self.data_dir, "memory_mapping.json")
         self.asm_file = os.path.join(self.data_dir, "asm.json")
-        self.drives_file = os.path.join(self.data_dir, "drives.json") # NEW: Drives file path
+        self.drives_file = os.path.join(self.data_dir, "drives.json")
+        self.last_conversation_file = os.path.join(self.data_dir, "last_conversation.json") # NEW: Last conversation file path
 
         # API URLs
         self.kobold_api_url = self.config.get('kobold_api_url', "http://localhost:5001/api/v1/generate")
@@ -201,7 +202,8 @@ class GraphMemoryClient:
             "short_term": {}, # {drive_name: activation_level} - Fluctuates based on recent events
             "long_term": {}   # {drive_name: level} - Stable, reflects core tendencies
         }
-        self.initial_history_turns = [] # Store last N turns from previous session
+        self.initial_history_turns = [] # DEPRECATED: Will use last_conversation_turns instead
+        self.last_conversation_turns = [] # NEW: Store actual last N turns separately
         self.time_since_last_interaction_hours = 0.0 # Store time gap
         self.pending_re_greeting = None # Store generated re-greeting message
 
@@ -321,6 +323,15 @@ class GraphMemoryClient:
              logger.debug(f"INIT END: Embedder type: {type(self.embedder)}, Dim: {getattr(self, 'embedding_dim', 'Not Set')}")
         else:
              logger.error("INIT END: EMBEDDER ATTRIBUTE IS MISSING OR NONE!")
+
+        # --- Load Last Conversation Turns ---
+        self._load_last_conversation() # Load before calculating time gap
+
+        # --- Calculate Time Gap (using last_conversation_turns) ---
+        self._calculate_time_since_last_interaction() # Use helper
+
+        # --- Check for Re-Greeting (using last_conversation_turns) ---
+        self._check_and_generate_re_greeting() # Check and generate re-greeting
 
         # --- Log Key Config Parameters for Tuning ---
         try:
@@ -657,9 +668,43 @@ class GraphMemoryClient:
             except Exception as e: logger.error(f"Failed saving ASM: {e}")
             # --- Save Drive State ---
             self._save_drive_state()
+            # --- Save Last Conversation Turns ---
+            try:
+                with open(self.last_conversation_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.last_conversation_turns, f, indent=2) # Save the list directly
+                logger.debug(f"Last conversation turns saved to {self.last_conversation_file}.")
+            except Exception as e:
+                logger.error(f"Failed saving last conversation turns: {e}", exc_info=True)
 
             logger.info(f"Memory saving done ({time.time() - start_time:.2f}s).")
         except Exception as e: logger.error(f"Unexpected save error: {e}", exc_info=True)
+
+    def _load_last_conversation(self, max_turns=6):
+        """Loads the last N conversation turns from a separate JSON file."""
+        self.last_conversation_turns = [] # Reset before loading
+        if os.path.exists(self.last_conversation_file):
+            try:
+                with open(self.last_conversation_file, 'r', encoding='utf-8') as f:
+                    loaded_turns = json.load(f)
+                if isinstance(loaded_turns, list):
+                    # Basic validation of structure (optional but recommended)
+                    validated_turns = []
+                    for turn in loaded_turns:
+                        if isinstance(turn, dict) and all(k in turn for k in ["speaker", "text", "timestamp"]):
+                            validated_turns.append(turn)
+                        else:
+                            logger.warning(f"Skipping invalid turn structure in {self.last_conversation_file}: {turn}")
+                    # Ensure we only keep the last max_turns
+                    self.last_conversation_turns = validated_turns[-max_turns:]
+                    logger.info(f"Loaded {len(self.last_conversation_turns)} turns from {self.last_conversation_file}.")
+                else:
+                    logger.error(f"Invalid format in {self.last_conversation_file} (expected list). Initializing empty.")
+            except json.JSONDecodeError as e:
+                logger.error(f"Error decoding JSON from {self.last_conversation_file}: {e}. Initializing empty.")
+            except Exception as e:
+                logger.error(f"Unexpected error loading {self.last_conversation_file}: {e}. Initializing empty.", exc_info=True)
+        else:
+            logger.info(f"Last conversation file not found ({self.last_conversation_file}). Starting fresh.")
 
     # --- Memory Node Management ---
     # (Keep add_memory_node, _rollback_add, delete_memory_entry, _find_latest_node_uuid, edit_memory_entry, forget_topic)
@@ -776,6 +821,25 @@ class GraphMemoryClient:
                  logger.error(f"Failed adding T-edge: {e}")
 
         self.last_added_node_uuid = node_uuid
+
+        # --- Update Last Conversation Turns (if it's a turn node) ---
+        if node_type == 'turn':
+            try:
+                turn_data = {
+                    "speaker": speaker,
+                    "text": text,
+                    "timestamp": timestamp,
+                    "uuid": node_uuid # Include UUID for potential future use
+                }
+                self.last_conversation_turns.append(turn_data)
+                # Keep only the last N turns (e.g., 6)
+                max_turns_to_keep = 6
+                if len(self.last_conversation_turns) > max_turns_to_keep:
+                    self.last_conversation_turns = self.last_conversation_turns[-max_turns_to_keep:]
+                logger.debug(f"Updated last_conversation_turns. Current count: {len(self.last_conversation_turns)}")
+            except Exception as e:
+                logger.error(f"Error updating last_conversation_turns: {e}", exc_info=True)
+
         logger.info(f"Successfully added node {node_uuid}.")
         return node_uuid
 
@@ -3426,64 +3490,37 @@ class GraphMemoryClient:
             if self.index is not None: self.index.reset(); logger.debug("FAISS index reset.")
             else: self.index = faiss.IndexFlatL2(self.embedding_dim); logger.debug("FAISS index initialized.")
             logger.info("In-memory structures cleared.")
-            files_to_delete = [self.graph_file, self.index_file, self.embeddings_file, self.mapping_file]
-            files_to_delete.append(self.asm_file) # Also delete ASM file
-            files_to_delete.append(self.drives_file) # Also delete drives file
+            files_to_delete = [
+                self.graph_file, self.index_file, self.embeddings_file, self.mapping_file,
+                self.asm_file, self.drives_file, self.last_conversation_file # Add last conversation file
+            ]
             for file_path in files_to_delete:
                 if os.path.exists(file_path):
                     try: os.remove(file_path); logger.info(f"Deleted: {file_path}")
                     except OSError as e: logger.error(f"Error deleting {file_path}: {e}")
                 else: logger.debug(f"Not found, skip delete: {file_path}")
-            # Re-initialize drive state to defaults after deleting file
+            # Re-initialize drive state and last conversation turns after deleting files
             self._initialize_drive_state()
+            self.last_conversation_turns = [] # Clear the list
             logger.info("--- MEMORY RESET COMPLETE ---"); return True
         except Exception as e:
             logger.error(f"Error during memory reset: {e}", exc_info=True)
-            # Ensure drive state is also reset in case of error
-            self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); self._initialize_drive_state(); self.initial_history_turns = []; logger.warning("Reset failed, re-initialized empty state.") # Clear initial history on reset
+            # Ensure drive state and last conversation are also reset in case of error
+            self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); self._initialize_drive_state(); self.last_conversation_turns = []; logger.warning("Reset failed, re-initialized empty state.")
             return False
 
     def _load_initial_history(self, count=3):
-        """Loads the last 'count' turn nodes to show as initial context."""
-        logger.info(f"Loading initial history (last {count} turns)...")
-        self.initial_history_turns = []
-        try:
-            turn_nodes = [
-                (uuid, data) for uuid, data in self.graph.nodes(data=True)
-                if data.get('node_type') == 'turn' and data.get('timestamp')
-            ]
-            if not turn_nodes:
-                logger.info("No 'turn' nodes found in graph for initial history.")
-                return
+        """DEPRECATED: Initial history is now loaded from self.last_conversation_turns."""
+        # This method is now effectively a no-op, as the data is loaded
+        # by _load_last_conversation() during __init__.
+        # The time gap calculation and re-greeting check are also moved to __init__.
+        logger.debug("_load_initial_history called, but logic moved to __init__ / _load_last_conversation.")
+        pass # Keep the method signature but do nothing here.
 
-            # Sort ALL turn nodes by timestamp first (most recent first)
-            turn_nodes.sort(key=lambda x: x[1].get('timestamp', ''), reverse=True)
-
-            # THEN take the top 'count' nodes from the sorted list
-            latest_turn_nodes = turn_nodes[:count]
-
-            # Get the data for these latest nodes
-            initial_nodes_data = [data for uuid, data in latest_turn_nodes]
-
-            # Sort them back into chronological order for display/context
-            initial_nodes_data.sort(key=lambda x: x.get('timestamp', ''))
-
-            # Format for conversation history list
-            self.initial_history_turns = [
-                {"speaker": d.get("speaker"), "text": d.get("text"), "timestamp": d.get("timestamp"), "uuid": d.get("uuid")}
-                for d in initial_nodes_data
-            ]
-            logger.info(f"Loaded {len(self.initial_history_turns)} initial history turns.")
-            # Log the actual loaded history data for debugging timestamps
-            logger.debug(f"Initial history turns data (after sorting chrono): {json.dumps(self.initial_history_turns, indent=2)}")
-
-        except Exception as e:
-            logger.error(f"Error loading initial history: {e}", exc_info=True)
-            self.initial_history_turns = [] # Ensure it's empty on error
-            self.time_since_last_interaction_hours = 0.0 # Reset time gap on error
-
-        # --- Calculate time since last interaction ---
-        if self.initial_history_turns:
+    def _calculate_time_since_last_interaction(self):
+        """Calculates time gap based on self.last_conversation_turns."""
+        self.time_since_last_interaction_hours = 0.0 # Reset before calculation
+        if self.last_conversation_turns:
             try:
                 last_turn_timestamp_str = self.initial_history_turns[-1].get("timestamp")
                 if last_turn_timestamp_str:
@@ -3501,9 +3538,10 @@ class GraphMemoryClient:
         else:
             self.time_since_last_interaction_hours = 0.0 # No history, so no gap
 
-    def get_initial_history(self) -> list:
-        """Returns the loaded initial history turns."""
-        return self.initial_history_turns
+    def get_initial_history(self, count=3) -> list:
+        """Returns the last 'count' turns from the separately stored conversation history."""
+        # Return a copy of the relevant slice to prevent external modification
+        return self.last_conversation_turns[-count:].copy() if self.last_conversation_turns else []
 
     def _check_and_generate_re_greeting(self):
         """Checks time gap and generates re-greeting if needed during initialization."""
@@ -3520,8 +3558,8 @@ class GraphMemoryClient:
                 "threshold_hours": re_greeting_threshold,
             })
 
-            # Prepare context for re-greeting prompt
-            last_messages_context = "\n".join([f"- {turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in self.initial_history_turns[-3:]]) # Strip emojis
+            # Prepare context for re-greeting prompt using last_conversation_turns
+            last_messages_context = "\n".join([f"- {turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in self.last_conversation_turns[-3:]]) # Use last_conversation_turns
             asm_summary = self.autobiographical_model.get("summary_statement", "[No self-summary available]")
 
             re_greeting_prompt_template = self._load_prompt("re_greeting_prompt.txt")
