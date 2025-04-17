@@ -674,6 +674,7 @@ class GraphMemoryClient:
         current_time = time.time()
         node_uuid = str(uuid.uuid4())
         timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+        logger.debug(f"Assigning timestamp to node {node_uuid[:8]}: {timestamp}") # Add logging
 
         # --- Get config values safely ---
         features_cfg = self.config.get('features', {})

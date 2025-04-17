@@ -1109,8 +1109,8 @@ class CollapsibleDriveWidget(QWidget):
 
             # Color coding (example) - Green for High (met), Red for Low (unmet)
             color = "#CCCCCC" # Neutral grey
-            if state_desc == "High": color = "#8FBC8F" # Greenish
-            elif state_desc == "Low": color = "#F08080" # Reddish
+            if state_desc == "High": color = "#8FBC8F" # Greenish for High/Met
+            elif state_desc == "Low": color = "#F08080" # Reddish for Low/Unmet
 
             html_content += (
                 f"<div style='margin-bottom: 3px;'>"
