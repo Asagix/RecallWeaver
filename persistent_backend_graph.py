@@ -2017,19 +2017,15 @@ class GraphMemoryClient:
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
-            "  **Available Actions:** `create_file` (overwrites existing), `append_file`, `list_files`, `read_file`, `delete_file`, `add_calendar_event`, `read_calendar`.",
+            "  **Available Actions:** `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `add_calendar_event`, `read_calendar`.",
             "  **CRITICAL: `edit_file` is NOT a valid action.**",
-            "  **To Edit a File:**",
-            "    1. Use `read_file` to get the current content.",
-            "    2. In your *next* response, use `create_file` with the *full modified content*.",
-            "  **File Naming:** Generate descriptive filenames based on the content, ending with `.txt` (e.g., `project_ideas.txt`, `summary_of_conversation_2025-04-17.txt`).",
-            "  **File Content Generation:**", # Emphasize generation
-            "    - For `create_file`/`append_file`, the `content` argument MUST contain the *actual information* requested or that you want to save.",
-            "    - **DO NOT** put the user's request or instructions into the `content` field.",
-            "    - **DO NOT** just repeat keywords.",
-            "    - Generate the list, notes, summary, or text that fulfills the request.",
-            "  **Example Autonomous Creation:** If asked 'Summarize our talk about memory and save it', you might respond conversationally and end with:",
-            "    `[ACTION: {\"action\": \"create_file\", \"args\": {\"filename\": \"memory_discussion_summary.txt\", \"content\": \"Summary: We discussed the graph memory system, its components like nodes and edges, the consolidation process involving summarization and concept extraction, and the mechanisms for forgetting based on activation and saliency.\"}}]`", # Improved example content
+            "  **To Edit a File:** Use `read_file` then `create_file` (overwrites).",
+            "  **Using Actions:**",
+            "    - For `list_files`, `read_calendar`: Use `[ACTION: {\"action\": \"action_name\", \"args\": {}}]` (or add optional 'date' arg for read_calendar).",
+            "    - For `read_file`, `delete_file`: Use `[ACTION: {\"action\": \"action_name\", \"args\": {\"filename\": \"target_file.txt\"}}]`.",
+            "    - For `append_file`: Use `[ACTION: {\"action\": \"append_file\", \"args\": {\"filename\": \"target_file.txt\", \"content\": \"Text to append...\"}}]` (Generate the actual content to append).",
+            "    - For `add_calendar_event`: Use `[ACTION: {\"action\": \"add_calendar_event\", \"args\": {\"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"description\": \"Event details...\"}}]`.",
+            "    - **For `create_file`:** Signal your *intent* by providing a brief description. The system will handle filename/content generation separately. Use `[ACTION: {\"action\": \"create_file\", \"args\": {\"description\": \"Brief description of what to save, e.g., 'List of project ideas'\"}}]`.",
             "  Only use the ACTION tag if you decide an action is necessary based on the context.]"
         ]
         # Add each instruction line as a separate system turn for clarity
@@ -2796,14 +2792,67 @@ class GraphMemoryClient:
 
                     try:
                         action_data = json.loads(action_json_str)
-                        # Basic validation of the parsed action data
-                        if isinstance(action_data, dict) and "action" in action_data and "args" in action_data:
-                            # TODO: Add more robust validation similar to analyze_action_request?
-                            # For now, assume AI generates valid structure if tag is present.
+                        # --- Handle Autonomous Create File Intent ---
+                        if action_data.get("action") == "create_file" and "description" in action_data.get("args", {}):
+                            ai_description = action_data["args"]["description"]
+                            logger.info(f"AI signaled intent to create file: '{ai_description}'")
+
+                            # Call the dedicated generation prompt
+                            gen_prompt_template = self._load_prompt("generate_file_content_prompt.txt")
+                            if gen_prompt_template:
+                                # Use the original user input as context for generation
+                                gen_prompt = gen_prompt_template.format(
+                                    user_request_context=user_input, # Pass original user input
+                                    ai_description=ai_description
+                                )
+                                logger.debug(f"Sending file content generation prompt:\n{gen_prompt}")
+                                # Use higher temperature for creative generation
+                                gen_response = self._call_kobold_api(gen_prompt, max_length=1024, temperature=0.7)
+
+                                # Parse the generated filename and content
+                                try:
+                                    gen_match = re.search(r'(\{.*?\})', gen_response, re.DOTALL)
+                                    if gen_match:
+                                        gen_json_str = gen_match.group(0)
+                                        gen_data = json.loads(gen_json_str)
+                                        generated_filename = gen_data.get("filename")
+                                        generated_content = gen_data.get("content")
+
+                                        if generated_filename and generated_content is not None:
+                                            # Ensure .txt extension (basic check)
+                                            if not generated_filename.lower().endswith(".txt"):
+                                                generated_filename += ".txt"
+                                                logger.info(f"Appended .txt extension to generated filename: {generated_filename}")
+
+                                            # Execute the create_file action with generated data
+                                            logger.info(f"Executing create_file with generated data: Filename='{generated_filename}', Content Length={len(generated_content)}")
+                                            create_action_data = {
+                                                "action": "create_file",
+                                                "args": {"filename": generated_filename, "content": generated_content}
+                                            }
+                                            action_success, action_message, _ = self.execute_action(create_action_data)
+                                            action_result_message = f"[System: Action 'create_file' ({generated_filename}) {'succeeded' if action_success else 'failed'}. {action_message}]"
+                                        else:
+                                            logger.error("Generated file content JSON missing filename or content.")
+                                            action_result_message = "[System: Error - Failed to generate valid filename/content for file creation.]"
+                                    else:
+                                         logger.error(f"Could not extract JSON from file generation response: {gen_response}")
+                                         action_result_message = "[System: Error - Invalid response format from file generation.]"
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Failed to parse JSON from file generation response: {e}. String: '{gen_json_str if 'gen_json_str' in locals() else gen_response}'")
+                                    action_result_message = "[System: Error - Failed to parse file generation response.]"
+                                except Exception as e:
+                                     logger.error(f"Error during file content generation/execution: {e}", exc_info=True)
+                                     action_result_message = f"[System: Error during file generation - {e}]"
+                            else:
+                                logger.error("Failed to load generate_file_content_prompt.txt")
+                                action_result_message = "[System: Error - Cannot generate file content, prompt missing.]"
+
+                        # --- Handle Other AI-Requested Actions ---
+                        elif isinstance(action_data, dict) and "action" in action_data and "args" in action_data:
+                            # Execute other actions directly as before
                             logger.info(f"Executing AI-requested action: {action_data.get('action')} with args: {action_data.get('args')}")
-                            # Execute the action
                             action_success, action_message, _ = self.execute_action(action_data)
-                            # Prepare feedback message
                             action_result_message = f"[System: Action '{action_data.get('action')}' {'succeeded' if action_success else 'failed'}. {action_message}]"
                             logger.info(f"AI Action Result: {action_result_message}")
                         else:

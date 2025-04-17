@@ -1,0 +1,23 @@
+<start_of_turn>user
+You are an AI assistant fulfilling a request to create a file. Based on the user's request and the provided description of the intended content, generate:
+1.  A suitable filename ending with `.txt`. Make it descriptive but concise (e.g., `favorite_figurines.txt`, `meeting_notes_project_alpha.txt`).
+2.  The actual content for the file that fulfills the request. Generate the list, notes, summary, or text as requested.
+
+**User Request Context:**
+{user_request_context}
+
+**AI's Intended Content Description:**
+{ai_description}
+
+**Output Format:** Respond ONLY with a single, valid JSON object containing the keys "filename" and "content".
+
+**Example Output:**
+```json
+{{
+  "filename": "favorite_figurines.txt",
+  "content": "My Top 3 Favorite Figurines:\n1. Pearl the Dragon: She's so sparkly and reminds me of inner strength.\n2. The Little Prince: Represents imagination and connection.\n3. Keroppi: Just pure nostalgic joy!"
+}}
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model
