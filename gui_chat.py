@@ -2448,14 +2448,14 @@ class ChatWindow(QMainWindow):
             timestamp_label = QLabel(time_str_display)
             ts_object_name = "TimestampLabel" # Default object name
             if speaker == "User":
-                    ts_object_name = "UserTimestampLabel"
-                elif speaker == "AI":
-                    ts_object_name = "AITimestampLabel"
-                elif speaker == "System":
-                    ts_object_name = "SystemTimestampLabel"
-                elif speaker == "Error":
-                    ts_object_name = "ErrorTimestampLabel"
-                timestamp_label.setObjectName(ts_object_name)
+                ts_object_name = "UserTimestampLabel"
+            elif speaker == "AI":
+                ts_object_name = "AITimestampLabel"
+            elif speaker == "System":
+                ts_object_name = "SystemTimestampLabel"
+            elif speaker == "Error":
+                ts_object_name = "ErrorTimestampLabel"
+            timestamp_label.setObjectName(ts_object_name)
                 timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         except Exception as e:
             gui_logger.warning(f"Timestamp error: {e}")
