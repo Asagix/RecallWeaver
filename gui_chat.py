@@ -1529,15 +1529,14 @@ class ChatWindow(QMainWindow):
         self.input_layout.addWidget(self.input_field, 1);
         self.input_layout.addWidget(self.attach_button);
         # --- Add Emoji Button ---
-        self.emoji_button = QPushButton(":)") # Use simple text smiley
+        self.emoji_button = QPushButton("\U0001F600") # Use simple text smiley
         self.emoji_button.setObjectName("EmojiButton") # For styling
         self.emoji_button.setToolTip("Insert Emoji")
-        # --- Remove Font Setting ---
-        # emoji_font = QFont("Segoe UI Emoji", 12) # No longer needed for text smiley
-        # self.emoji_button.setFont(emoji_font)
+        emoji_font = QFont("Segoe UI Emoji", 14)
+        self.emoji_button.setFont(emoji_font)
         # --- Adjust size based on text/attach button ---
         # Make it roughly the same size as the attach button for consistency
-        self.emoji_button.setFixedSize(self.attach_button.sizeHint().height(), self.attach_button.sizeHint().height())
+        #self.emoji_button.setFixedSize(self.attach_button.sizeHint().height(), self.attach_button.sizeHint().height())
         self.emoji_button.clicked.connect(self.open_emoji_picker)
         self.input_layout.addWidget(self.emoji_button) # Add before send button
         # --- End Add Emoji Button ---
