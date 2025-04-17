@@ -1702,7 +1702,9 @@ class ChatWindow(QMainWindow):
             uuid = turn.get("uuid") # Get UUID if available
             # Call display_message, passing UUID only if it's an AI turn
             ai_node_uuid = uuid if speaker == "AI" else None
-            self.display_message(speaker, text, ai_node_uuid=ai_node_uuid)
+            timestamp_str = turn.get("timestamp") # Get the original timestamp
+            # Call display_message with show_full_timestamp=True and the original timestamp
+            self.display_message(speaker, text, ai_node_uuid=ai_node_uuid, show_full_timestamp=True, timestamp_override=timestamp_str)
 
         # Scroll to bottom after adding initial history
         QTimer.singleShot(100, self._scroll_to_bottom)
@@ -2306,13 +2308,23 @@ class ChatWindow(QMainWindow):
 
 
 
-        # --- Signature updated to accept attachment_info and ai_node_uuid ---
+        # --- Signature updated to accept attachment_info, ai_node_uuid, and show_full_timestamp ---
 
 
     def display_message(self, speaker, text, attachment_info: dict | None = None, object_name_suffix="Message",
-                        ai_node_uuid: str | None = None):
-        """Adds a message bubble with optional text, image thumbnail or file placeholder, and timestamp."""
+                        ai_node_uuid: str | None = None, show_full_timestamp: bool = False, timestamp_override: str | None = None):
+        """
+        Adds a message bubble with optional text, image thumbnail or file placeholder, and timestamp.
 
+        Args:
+            speaker (str): The speaker ("User", "AI", "System", "Error").
+            text (str): The message text.
+            attachment_info (dict | None): Information about any attachment.
+            object_name_suffix (str): Suffix for object names (styling).
+            ai_node_uuid (str | None): UUID of the AI node for feedback buttons.
+            show_full_timestamp (bool): If True, display date and time; otherwise, just time.
+            timestamp_override (str | None): If provided, use this ISO timestamp instead of generating 'now'.
+        """
         # --- Initialize variables ---
         attachment_label = None
         file_type = None # Initialize file_type
@@ -2402,29 +2414,40 @@ class ChatWindow(QMainWindow):
             # Set object name for potential styling (needed for text color from main bubble style)
             message_label.setObjectName(f"{speaker}MessageLabel")
 
-        # --- Create Timestamp Label (Generated Locally) ---
+        # --- Create Timestamp Label ---
         timestamp_label = None
-        # (Timestamp generation/conversion logic remains the same...)
         time_str_display = ""
         try:
-            dt_obj_utc = datetime.now(timezone.utc)
+            # Use timestamp_override if provided, otherwise use 'now'
+            if timestamp_override:
+                dt_obj_utc = datetime.fromisoformat(timestamp_override.replace('Z', '+00:00'))
+                # Ensure it's timezone-aware (UTC)
+                if dt_obj_utc.tzinfo is None:
+                    dt_obj_utc = dt_obj_utc.replace(tzinfo=timezone.utc)
+            else:
+                dt_obj_utc = datetime.now(timezone.utc)
+
+            # Convert to local time (Europe/Berlin)
+            local_dt = dt_obj_utc # Default to UTC if conversion fails
             if ZoneInfo:
                 try:
                     german_tz = ZoneInfo("Europe/Berlin")
                     local_dt = dt_obj_utc.astimezone(german_tz)
-                    time_str_display = local_dt.strftime("%H:%M")
                 except ZoneInfoNotFoundError:
-                    gui_logger.warning("TZ 'Europe/Berlin' not found.")
-                    time_str_display = dt_obj_utc.strftime("%H:%M UTC")
+                    gui_logger.warning("TZ 'Europe/Berlin' not found. Using UTC for display.")
                 except Exception as tz_err:
-                    gui_logger.warning(f"TZ conversion error: {tz_err}")
-                    time_str_display = dt_obj_utc.strftime("%H:%M UTC")
+                    gui_logger.warning(f"TZ conversion error: {tz_err}. Using UTC for display.")
+
+            # Format based on show_full_timestamp flag
+            if show_full_timestamp:
+                time_str_display = local_dt.strftime("%Y-%m-%d %H:%M") # Date and Time
             else:
-                time_str_display = dt_obj_utc.strftime("%H:%M UTC")
-            if time_str_display:
-                timestamp_label = QLabel(time_str_display)
-                ts_object_name = "TimestampLabel"
-                if speaker == "User":
+                time_str_display = local_dt.strftime("%H:%M") # Only Time
+
+            # Create the label
+            timestamp_label = QLabel(time_str_display)
+            ts_object_name = "TimestampLabel" # Default object name
+            if speaker == "User":
                     ts_object_name = "UserTimestampLabel"
                 elif speaker == "AI":
                     ts_object_name = "AITimestampLabel"
