@@ -1527,7 +1527,7 @@ class ChatWindow(QMainWindow):
         self.input_layout.addWidget(self.input_field, 1);
         self.input_layout.addWidget(self.attach_button);
         # --- Add Emoji Button ---
-        self.emoji_button = QPushButton("😀") # Use an emoji as the button icon/text
+        self.emoji_button = QPushButton("😊") # Use standard smiley emoji icon
         self.emoji_button.setObjectName("EmojiButton") # For styling
         self.emoji_button.setToolTip("Insert Emoji")
         self.emoji_button.setFixedSize(self.attach_button.sizeHint().height(), self.attach_button.sizeHint().height()) # Make it square like attach
@@ -2700,17 +2700,27 @@ class ChatWindow(QMainWindow):
         timestamp_label = None
         time_str_display = ""
         try:
-            # Use timestamp_override if provided, otherwise use 'now'
+            dt_obj_utc = None # Initialize
+            # Determine the base UTC datetime object
             if timestamp_override:
-                dt_obj_utc = datetime.fromisoformat(timestamp_override.replace('Z', '+00:00'))
-                # Ensure it's timezone-aware (UTC)
-                if dt_obj_utc.tzinfo is None:
-                    dt_obj_utc = dt_obj_utc.replace(tzinfo=timezone.utc)
+                try:
+                    # Attempt to parse the provided timestamp string
+                    dt_obj_utc = datetime.fromisoformat(timestamp_override.replace('Z', '+00:00'))
+                    # Ensure it's timezone-aware (UTC) after parsing
+                    if dt_obj_utc.tzinfo is None:
+                        dt_obj_utc = dt_obj_utc.replace(tzinfo=timezone.utc)
+                    gui_logger.debug(f"Using timestamp_override: {timestamp_override} -> {dt_obj_utc}")
+                except ValueError as parse_err:
+                    # Log error and fallback to current time if parsing fails
+                    gui_logger.error(f"Failed to parse timestamp_override '{timestamp_override}': {parse_err}. Falling back to 'now'.")
+                    dt_obj_utc = datetime.now(timezone.utc) # Fallback on parse error
             else:
+                # If no override provided, use current time
                 dt_obj_utc = datetime.now(timezone.utc)
+                gui_logger.debug(f"Using current time: {dt_obj_utc}")
 
-            # Convert to local time (Europe/Berlin)
-            local_dt = dt_obj_utc # Default to UTC if conversion fails
+            # Convert to local time (Europe/Berlin) - dt_obj_utc is guaranteed to be set here
+            local_dt = dt_obj_utc # Default to UTC if conversion fails below
             if ZoneInfo:
                 try:
                     german_tz = ZoneInfo("Europe/Berlin")
@@ -2740,7 +2750,8 @@ class ChatWindow(QMainWindow):
             timestamp_label.setObjectName(ts_object_name)
             timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         except Exception as e:
-            gui_logger.warning(f"Timestamp error: {e}")
+            # Log full traceback for timestamp errors
+            gui_logger.warning(f"Timestamp error: {e}", exc_info=True)
             timestamp_label = None
 
         # --- Create Feedback Buttons (only for AI messages with UUID) ---
