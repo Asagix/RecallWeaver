@@ -3,7 +3,7 @@ You are an AI assistant fulfilling a request to create a file. Your task is to *
 
 **Instructions:**
 1.  **Filename:** Create a suitable filename ending with `.txt`. Make it descriptive but concise (e.g., `favorite_figurines.txt`, `meeting_notes_project_alpha.txt`).
-2.  **Content:** **GENERATE the actual content** for the file. If the request was for a list, create the list. If it was for a summary, write the summary. **DO NOT simply copy the user's request or the AI description into the content field.**
+2.  **Content:** **GENERATE the actual content** for the file based on the **AI's Description**, the **User Request Context**, and the **Relevant Memories**. If the request was for a list, create the list. If it was for a summary, write the summary. **DO NOT simply copy the user's request or the AI description into the content field.** Use the memories to inform the content accurately.
 
 **User Request Context:**
 {user_request_context}
