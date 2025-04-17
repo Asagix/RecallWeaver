@@ -5404,8 +5404,9 @@ class GraphMemoryClient:
         # For simplicity, let's assume prompts are relative to the main script dir
         # If base_memory_path is reliable, maybe put prompts there?
         # Let's assume relative to the script for now.
-        script_dir = os.path.dirname(__file__)
+        script_dir = os.path.dirname(os.path.abspath(__file__)) # Use absolute path for script dir
         prompt_path = os.path.join(script_dir, "prompts", filename)
+        logger.debug(f"Attempting to load prompt from: {prompt_path}") # Add debug log
         try:
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 return f.read()
