@@ -3240,31 +3240,31 @@ class GraphMemoryClient:
         # except Exception as plan_e:
         #      logger.error(f"Unexpected error during workspace planning phase: {plan_e}", exc_info=True)
 
-        # --- Tuning Log: Interaction End ---
-        log_tuning_event("INTERACTION_END", {
-            "interaction_id": interaction_id,
-            "personality": self.personality,
-            "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
-            "retrieved_memory_count": len(memory_chain_data),
-            "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
-            "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
-            # "workspace_actions_attempted": len(workspace_action_results), # Removed
-        })
+            # --- Tuning Log: Interaction End ---
+            log_tuning_event("INTERACTION_END", {
+                "interaction_id": interaction_id,
+                "personality": self.personality,
+                "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
+                "retrieved_memory_count": len(memory_chain_data),
+                "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
+                "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
+                # "workspace_actions_attempted": len(workspace_action_results), # Removed
+            })
 
-        # --- Determine if workspace planning might be needed ---
-        needs_planning = False
-        user_input_lower = user_input.lower()
-        # Simple keyword check - refine later if too broad/narrow
-        if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
-            needs_planning = True
-            logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
+            # --- Determine if workspace planning might be needed ---
+            needs_planning = False
+            user_input_lower = user_input.lower()
+            # Simple keyword check - refine later if too broad/narrow
+            if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
+                needs_planning = True
+                logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
 
-        # Return conversational response, memories, AI node UUID, and the planning flag
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
+            # Return conversational response, memories, AI node UUID, and the planning flag
+            return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
 
-    except Exception as e:
-        # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
-        logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
+        except Exception as e:
+            # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
+            logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
         # Assign error message to both ai_response and parsed_response
         ai_response = f"Error during processing: {e}"
         parsed_response = ai_response # Ensure parsed_response has a value
