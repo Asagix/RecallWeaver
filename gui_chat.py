@@ -1388,7 +1388,8 @@ class ChatWindow(QMainWindow):
 
                 self.is_processing = True
                 self.set_input_enabled(False)
-                self.statusBar().showMessage("Processing...")
+                self.update_status_light("processing") # Orange light
+                self.statusBar().showMessage("Processing...", 0) # Persistent message
 
                 # --- Display user message (potentially with attachment info) ---
                 display_text = user_input_text # Text part
