@@ -6,7 +6,6 @@ from datetime import datetime, timezone, timedelta
 import re
 import logging
 import yaml
-import requests
 import mimetypes  # <<< Add mimetypes
 
 # Removed incorrect import: from pip._internal.utils import urls
@@ -21,14 +20,13 @@ except ImportError:
     ZoneInfoNotFoundError = Exception  # Placeholder
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QTextBrowser, QLineEdit,  # Added QTextBrowser
-    QPushButton, QScrollArea, QLabel, QHBoxLayout, QFrame, QSplitter,
-    QSizePolicy, QSpacerItem, QMessageBox, QInputDialog, QComboBox,
-    QMenuBar, QMenu, QFileDialog
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextBrowser, QLineEdit,  # Added QTextBrowser
+    QPushButton, QScrollArea, QLabel, QHBoxLayout, QFrame,
+    QSizePolicy, QSpacerItem, QMessageBox, QInputDialog,QFileDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMimeData, QUrl, QBuffer, QByteArray, \
     QIODevice
-from PyQt6.QtGui import QTextCursor, QColor, QPalette, QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
+from PyQt6.QtGui import QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
     QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices  # Added QDesktopServices
 
 from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis # <<< Import strip_emojis
