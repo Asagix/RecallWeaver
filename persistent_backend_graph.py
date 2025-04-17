@@ -5221,7 +5221,9 @@ class GraphMemoryClient:
                 else:
                     logger.warning(f"Could not extract valid JSON list '[]' from analogy response. Raw: '{llm_response_str}'")
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response for analogies: {e}. Raw: '{llm_response_str}'")
+                # Log the specific string that failed to parse
+                problematic_json_string = json_str if 'json_str' in locals() and json_str else cleaned_response
+                logger.error(f"Failed to parse JSON response for analogies: {e}. String Attempted: ```{problematic_json_string}``` Raw: ```{llm_response_str}```")
             except Exception as e:
                 logger.error(f"Unexpected error processing analogies response: {e}", exc_info=True)
 
