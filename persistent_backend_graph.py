@@ -3591,8 +3591,8 @@ class GraphMemoryClient:
             trigger_on_high_impact = drive_cfg.get('trigger_drive_update_on_high_impact', False)
             if trigger_on_high_impact and self.high_impact_nodes_this_interaction:
                  logger.info("High emotional impact detected. Triggering immediate drive state update.")
-                 # Prepare context for the update (e.g., last few turns)
-                 context_turns = self.current_conversation[-3:] # Get last few turns including current
+                 # Prepare context for the update (e.g., last few turns) using the passed conversation_history
+                 context_turns = conversation_history[-3:] # Use the argument, not self.current_conversation
                  context_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in context_turns])
                  self._update_drive_state(context_text=context_text)
                  # --- Also trigger potential long-term nudge ---
