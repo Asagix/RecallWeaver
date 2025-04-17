@@ -2915,7 +2915,7 @@ class GraphMemoryClient:
              # Return the expected 4-tuple format on embedder error
              return "Error: Backend embedder not initialized correctly.", [], None, False
 
-        logger.info(f"Processing interaction (ID: {interaction_id[:8]}): Input='{user_input[:50]}...' Has Attachment: {bool(attachment_data)}")
+        logger.info(f"Processing interaction (ID: {interaction_id[:8]}): Input='{strip_emojis(user_input[:50])}...' Has Attachment: {bool(attachment_data)}") # Strip emojis
         if attachment_data: logger.debug(f"Attachment details: type={attachment_data.get('type')}, filename={attachment_data.get('filename')}")
 
         # Initialize variables that might not be assigned in all paths
@@ -3278,18 +3278,13 @@ class GraphMemoryClient:
                     else:
                         logger.error("Failed to add intention node to graph.")
             except Exception as intent_e:
-                # --- Workspace Planning & Execution ---
-                # This is now handled separately by plan_and_execute, triggered by the needs_planning flag.
-                # The code block below is removed as it duplicates logic and is called separately.
-                # workspace_action_results = [] # Initialize list for results
-                # try:
-                #     logger.info("Checking for workspace plan generation...")
-                #     # ... (rest of the planning/execution logic within process_interaction was here) ...
-                # except Exception as plan_e:
-                #      logger.error(f"Unexpected error during workspace planning phase: {plan_e}", exc_info=True)
+                 logger.error(f"Error during intention analysis: {intent_e}", exc_info=True)
 
-                # --- Tuning Log: Interaction End ---
-                log_tuning_event("INTERACTION_END", {
+            # --- Workspace Planning & Execution ---
+            # This is now handled separately by plan_and_execute, triggered by the needs_planning flag.
+
+            # --- Tuning Log: Interaction End ---
+            log_tuning_event("INTERACTION_END", {
                     "interaction_id": interaction_id,
                     "personality": self.personality,
                     "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
