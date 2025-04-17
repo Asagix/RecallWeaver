@@ -427,19 +427,19 @@ class GraphMemoryClient:
             valence += emotion_scores.get('Happy', 0.0) * 0.8
             valence += emotion_scores.get('Surprise', 0.0) * 0.2 # Surprise can be +/-
 
-            # Negative Valence
-            valence -= emotion_scores.get('Sad', 0.0) * 0.9
+            # Negative Valence (Reduced impact of Sad/Fear)
+            valence -= emotion_scores.get('Sad', 0.0) * 0.7 # Reduced from 0.9
             valence -= emotion_scores.get('Angry', 0.0) * 0.7
-            valence -= emotion_scores.get('Fear', 0.0) * 0.8
+            valence -= emotion_scores.get('Fear', 0.0) * 0.6 # Reduced from 0.8
 
-            # Arousal
+            # Arousal (Reduced impact of Fear, slightly increased Happy)
             arousal += emotion_scores.get('Angry', 0.0) * 0.8
-            arousal += emotion_scores.get('Fear', 0.0) * 0.9
+            arousal += emotion_scores.get('Fear', 0.0) * 0.6 # Reduced from 0.9
             arousal += emotion_scores.get('Surprise', 0.0) * 0.7
-            # Sadness can lower arousal slightly?
+            # Sadness still lowers arousal
             arousal -= emotion_scores.get('Sad', 0.0) * 0.3
-            # Happy can have moderate arousal
-            arousal += emotion_scores.get('Happy', 0.0) * 0.4
+            # Happy contributes slightly more to arousal
+            arousal += emotion_scores.get('Happy', 0.0) * 0.5 # Increased from 0.4
 
             # --- Log raw calculated values before clamping ---
             log_tuning_event("EMOTION_ANALYSIS_RAW", {
