@@ -90,7 +90,8 @@ def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
 class WorkerSignals(QObject):
     # Added backend_ready signal
     backend_ready = pyqtSignal(bool, str)  # success_flag, personality_name
-    response_ready = pyqtSignal(str, str, list, str)  # Added ai_node_uuid (str or None)
+    # Signature changed: Added object for optional action_result_info dict
+    response_ready = pyqtSignal(str, str, list, str, object)
     modification_response_ready = pyqtSignal(str, str, str, str)
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
@@ -233,10 +234,10 @@ class Worker(QThread):
         interaction_successful = False  # Flag to track if LLM call succeeded
 
         try:
-            # process_interaction now returns (response, memories, ai_node_uuid)
-            ai_response_text, memory_chain_data, ai_node_uuid = self.client.process_interaction(
+            # process_interaction now returns (response, memories, ai_node_uuid, action_result_info)
+            ai_response_text, memory_chain_data, ai_node_uuid, action_result_info = self.client.process_interaction(
                 user_input=user_input_text,
-                conversation_history=self.current_conversation,
+                conversation_history=self.current_conversation, # Pass only history up to user turn
                 attachment_data=attachment
             )
 
@@ -258,8 +259,21 @@ class Worker(QThread):
                 ai_turn_data['uuid'] = ai_node_uuid  # Store UUID if returned
                 gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
 
-            # Emit result signal (including AI node UUID)
-            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid)
+            # Emit result signal (including AI node UUID and potential action result)
+            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid, action_result_info)
+
+            # If an action was executed, ALSO emit the modification signal for its result message
+            if action_result_info:
+                gui_logger.info("Action result detected, emitting modification_response_ready signal.")
+                # Use placeholder for user_input in this context
+                user_input_placeholder = f"AI Action: {action_result_info.get('action_type', '?').split('_')[0]}"
+                self.signals.modification_response_ready.emit(
+                    user_input_placeholder,
+                    action_result_info.get('message', 'Action result message missing.'),
+                    action_result_info.get('action_type', 'unknown_action'),
+                    action_result_info.get('target_info', '')
+                )
+
             interaction_successful = True  # Mark as successful
 
         except Exception as e:
@@ -1767,12 +1781,13 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.debug("No memories received for this interaction.")
 
-    # --- Removed duplicate @pyqtSlot decorator ---
-    @pyqtSlot(str, str, list, str)
-    def display_response(self, user_input, ai_response, memories, ai_node_uuid):
-        # (Implementation remains the same - calls display_message, re-enables via _finalize_display)
-        gui_logger.debug(f"GUI received AI response: {ai_response[:50]}... (UUID: {ai_node_uuid})")
-        # --- Pass ai_node_uuid to display_message ---
+    # --- Slot signature updated to accept 5th argument (action_result_info), but it's ignored here ---
+    @pyqtSlot(str, str, list, str, object)
+    def display_response(self, user_input, ai_response, memories, ai_node_uuid, action_result_info):
+        # This slot now ONLY displays the AI's conversational response and memories.
+        # The action_result_info (if any) is handled by display_modification_confirmation.
+        gui_logger.debug(f"GUI received AI response: '{ai_response[:50]}...' (UUID: {ai_node_uuid})")
+        # --- Pass ai_node_uuid to display_message for the AI bubble ---
         self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
         if memories:
             gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
@@ -1831,11 +1846,13 @@ class ChatWindow(QMainWindow):
         filename_to_link = None
         # *** MODIFIED: Don't link for delete_file_success ***
         if is_success and is_file_action and action_type != "list_files_success" and action_type != "delete_file_success":
-            # Extract filename from target_info or message if possible
-            # target_info might be args dict string or just filename
-            filename_match = re.search(r"'(.*?)'", target_info)  # Try to find quoted filename in target_info
+            # Extract filename from target_info (which is likely args dict string repr)
+            # Example target_info: "{'filename': 'notes.txt', 'content': '...'}"; "{'filename': 'report.txt'}"
+            filename_match = re.search(r"'filename':\s*'([^']+)'", target_info) # Look for 'filename': '...'
             if filename_match:
                 filename_to_link = filename_match.group(1)
+                logger.debug(f"Extracted filename '{filename_to_link}' from target_info using regex.")
+            # Fallback: Try extracting from the success message itself (less reliable)
             elif action_type in ["create_file_success", "append_file_success", "read_file_success"]:
                 # Try extracting from the success message itself (less reliable)
                 msg_match = re.search(r"'(.*?)'", confirmation_message)

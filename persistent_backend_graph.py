@@ -3168,15 +3168,26 @@ class GraphMemoryClient:
             "action_executed": action_result_message is not None,
         })
 
-        # Combine conversational response and action result message
-        final_response_to_gui = parsed_response
+        # --- Prepare Action Result Info (if any) ---
+        action_result_info = None
         if action_result_message:
-            # Add a newline if both parts exist
-            separator = "\n\n" if final_response_to_gui else ""
-            final_response_to_gui += separator + action_result_message
+            # Need action_type (suffix) and target_info for the signal
+            # These should be available from the execute_action call context
+            # Let's reconstruct target_info placeholder as used in the worker
+            action_executed = action_data.get("action", "unknown") if 'action_data' in locals() else "unknown"
+            args_executed = action_data.get("args", {}) if 'action_data' in locals() else {}
+            target_info_placeholder = str(args_executed)[:100] # Use args dict string representation
 
-        # Return the combined response, memory chain, and AI node UUID
-        return final_response_to_gui, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None
+            action_result_info = {
+                "message": action_result_message, # The user-facing message generated earlier
+                "action_type": action_suffix if 'action_suffix' in locals() else f"{action_executed}_unknown", # The success/fail suffix
+                "target_info": target_info_placeholder
+            }
+            logger.debug(f"Prepared action_result_info: {action_result_info}")
+
+
+        # Return the AI's conversational response, memory chain, AI node UUID, and action result info separately
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, action_result_info
 
 
     # --- Consolidation ---
