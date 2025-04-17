@@ -1100,13 +1100,15 @@ class CollapsibleDriveWidget(QWidget):
             dynamic_baseline = config_baseline + (lt_level * lt_influence)
             deviation = st_level - dynamic_baseline
 
-            # Qualitative description
+            # Qualitative description based on deviation from baseline
+            # Positive deviation = Drive level is HIGHER than baseline (need potentially met/overshot)
+            # Negative deviation = Drive level is LOWER than baseline (need potentially unmet)
             state_desc = "Neutral"
-            if deviation > 0.25: state_desc = "High"
-            elif deviation < -0.25: state_desc = "Low"
+            if deviation > 0.2: state_desc = "High" # Drive level is significantly higher than baseline
+            elif deviation < -0.2: state_desc = "Low" # Drive level is significantly lower than baseline
 
-            # Color coding (example)
-            color = "#CCCCCC" # Neutral
+            # Color coding (example) - Green for High (met), Red for Low (unmet)
+            color = "#CCCCCC" # Neutral grey
             if state_desc == "High": color = "#8FBC8F" # Greenish
             elif state_desc == "Low": color = "#F08080" # Reddish
 

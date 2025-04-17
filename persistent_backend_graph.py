@@ -357,6 +357,7 @@ class GraphMemoryClient:
     def get_current_mood(self) -> tuple[float, float]:
         """Returns the last calculated interaction mood (Valence, Arousal)."""
         # Returns the mood calculated *after* the last interaction, used for the *next* retrieval bias.
+        logger.debug(f"get_current_mood() returning: {self.last_interaction_mood}") # Add logging
         return self.last_interaction_mood
 
     def get_drive_state(self) -> dict:
@@ -420,9 +421,10 @@ class GraphMemoryClient:
 
             # Update node attributes
             node_data['emotion_valence'] = final_valence
+            node_data['emotion_valence'] = final_valence
             node_data['emotion_arousal'] = final_arousal
 
-            logger.debug(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})")
+            logger.info(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})") # Changed level to INFO
 
         except Exception as e:
             logger.error(f"Error during text2emotion analysis for node {node_uuid[:8]}: {e}", exc_info=True)
@@ -1031,8 +1033,8 @@ class GraphMemoryClient:
         effective_mood = current_mood if current_mood else (0.0, 0.1) # Use provided mood or default
 
         # Check if drives are enabled and we have state data
-        if drives_enabled and mood_influence_cfg and self.drive_state["short_term"]:
-            logger.debug(f"Calculating mood adjustment based on drive state: ShortTerm={self.drive_state['short_term']}, LongTerm={self.drive_state['long_term']}")
+        if drives_enabled and mood_influence_cfg and self.drive_state.get("short_term"): # Use .get for safety
+            logger.info(f"Calculating mood adjustment based on drive state: ShortTerm={self.drive_state.get('short_term')}, LongTerm={self.drive_state.get('long_term')}") # Changed level to INFO
             base_valence, base_arousal = effective_mood
             valence_adjustment = 0.0
             arousal_adjustment = 0.0
@@ -3398,7 +3400,7 @@ class GraphMemoryClient:
         if mood_nodes_found > 0:
             current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
 
-        logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias.")
+        logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias. Storing in self.last_interaction_mood.") # Added detail
         self.last_interaction_mood = current_turn_mood # Update state
 
 
@@ -3468,7 +3470,8 @@ class GraphMemoryClient:
                 for d in initial_nodes_data
             ]
             logger.info(f"Loaded {len(self.initial_history_turns)} initial history turns.")
-            logger.debug(f"Initial history turns loaded: {self.initial_history_turns}")
+            # Log the actual loaded history data for debugging timestamps
+            logger.debug(f"Initial history turns data (after sorting chrono): {json.dumps(self.initial_history_turns, indent=2)}")
 
         except Exception as e:
             logger.error(f"Error loading initial history: {e}", exc_info=True)
