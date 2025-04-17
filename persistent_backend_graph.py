@@ -3303,8 +3303,9 @@ class GraphMemoryClient:
             "workspace_actions_attempted": len(workspace_action_results),
         })
 
-        # Return conversational response, memories, AI node UUID, and the planning flag
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None #needs_planning
+        # Return conversational response, memories, AI node UUID.
+        # The needs_planning flag is no longer determined here; planning is handled separately.
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
 
 
     # --- Consolidation ---
