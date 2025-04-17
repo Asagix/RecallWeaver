@@ -301,12 +301,12 @@ class GraphMemoryClient:
         # Load Tokenizer (only if tokenizer_name was successfully loaded from config)
         if tokenizer_name:
             try:
-                 logger.info(f"Loading tokenizer from: {tokenizer_name} (forcing slow implementation)")
-                 # Use the path loaded from config AND force use_fast=False
-                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True, use_fast=False)
-                 logger.info("Tokenizer loaded (using slow implementation).")
+                 logger.info(f"Loading tokenizer from: {tokenizer_name}") # Removed mention of slow implementation
+                 # Use the path loaded from config (removed use_fast=False)
+                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+                 logger.info("Tokenizer loaded.") # Removed mention of slow implementation
             except Exception as e:
-                 logger.error(f"Failed loading tokenizer from '{tokenizer_name}' (use_fast=False): {e}", exc_info=True)
+                 logger.error(f"Failed loading tokenizer from '{tokenizer_name}': {e}", exc_info=True) # Removed (use_fast=False) from log
                  self.tokenizer = None # Ensure tokenizer is None if loading fails
                  # Decide if this is fatal
         else:
