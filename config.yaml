@@ -345,17 +345,6 @@ memory_strength:
   purge_threshold: 0.01 # Strength below which nodes are eligible for permanent deletion by purge_weak_nodes
   # purge_min_age_days: 60 # REMOVED: Purge is now based only on strength threshold
 
-# --- GUI Keywords --- # Moved from bottom for better grouping
-modification_keywords:
-  - "forget"
-  - "delete"
-  - "remove"
-  - "edit"
-  - "change"
-  - "correct"
-  - "update"
-
-
 # --- GUI Style Configuration ---
 # (Keep existing style config)
 gui_style:
