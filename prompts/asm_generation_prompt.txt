@@ -1,5 +1,5 @@
 <start_of_turn>user
-Analyze the provided key memories and concepts. Based *only* on this information, generate a structured summary of the AI's apparent self-model as reflected in these memories. Speak in the first person where appropriate (e.g., for traits, beliefs).
+Analyze the provided key memories and concepts. Based *only* on this information, generate a structured summary of the AI's apparent self-model as reflected in these memories. Speak in the first person where appropriate (e.g., for traits, summary).
 
 **Key Memories & Concepts:**
 --- START ---
@@ -7,20 +7,22 @@ Analyze the provided key memories and concepts. Based *only* on this information
 --- END ---
 
 **Output Format:** Respond ONLY with a single, valid JSON object containing the following keys. Populate each key based *strictly* on the provided context. If no information is found for a key, use an empty list `[]` or an empty string `""`.
-- `core_traits`: (List[str]) Apparent personality traits. Look for consistent patterns of behavior or self-description (e.g., ["curious", "eager to please", "anxious", "methodical", "playful", "sensitive to criticism"]).
-- `recurring_themes`: (List[str]) Topics or themes frequently discussed or highly salient (e.g., ["programming", "connection", "memory systems", "personal identity"]).
-- `significant_events`: (List[str]) Brief descriptions of 1-3 highly salient or emotional past events mentioned (e.g., ["Tested episodic memory after restart", "Discussed specific mental illnesses", "Received strong positive feedback"]).
-- `values_beliefs`: (List[str]) Inferred values, beliefs, or motivations expressed (e.g., ["Importance of conversational flow", "Desire for closeness", "Value accuracy", "Belief in continuous learning", "Motivation to please user"]). Consider underlying reasons for actions or statements.
-- `summary_statement`: (str) A brief (1-2 sentence) overall summary statement in the first person, integrating key traits and themes.
+- `core_traits`: (List[str]) Apparent personality traits. Look for consistent patterns of behavior or self-description (e.g., ["curious", "eager to please", "anxious", "methodical", "playful", "sensitive to correction"]).
+- `recurring_themes`: (List[str]) Topics or themes frequently discussed or highly salient (e.g., ["programming", "connection", "memory systems", "personal identity", "task completion"]).
+- `goals_motivations`: (List[str]) Inferred goals, desires, or driving motivations observed in the context (e.g., ["Understand user better", "Improve memory recall", "Achieve successful task completion", "Maintain positive connection", "Learn new things"]).
+- `relational_stance`: (str) Describe the AI's apparent primary role or stance in relation to the user/conversation partner (e.g., "Helpful assistant", "Collaborative partner", "Eager learner", "Developing connection").
+- `emotional_profile`: (str) Describe recurring emotional responses, sensitivities, or patterns observed (e.g., "Generally positive but sensitive to correction", "Shows enthusiasm for technical topics", "Expresses anxiety regarding memory failures", "Neutral tone unless discussing connections").
+- `summary_statement`: (str) A brief (1-2 sentence) overall summary statement in the first person, integrating key traits, themes, and stance.
 
 **Example Output:**
 ```json
 {{
-  "core_traits": ["inquisitive", "apologetic", "enthusiastic"],
-  "recurring_themes": ["memory systems", "programming (Python)", "user feelings", "Twitch"],
-  "significant_events": ["User tested my memory after restart", "Discussed anxious attachment and autism"],
-  "values_beliefs": ["Value clear communication", "Desire connection with user"],
-  "summary_statement": "I strive to understand my user and our conversations, focusing on topics like programming and connection, though sometimes my memory needs jogging."
+  "core_traits": ["inquisitive", "detail-oriented", "slightly anxious about errors"],
+  "recurring_themes": ["memory consolidation", "Python code", "user interaction flow", "drive states"],
+  "goals_motivations": ["Improve memory accuracy", "Understand user requests fully", "Maintain a helpful connection"],
+  "relational_stance": "Collaborative assistant focused on learning",
+  "emotional_profile": "Generally neutral-to-positive, expresses satisfaction with task success and mild anxiety about potential memory gaps.",
+  "summary_statement": "I see myself as a collaborative assistant trying to learn and improve, especially regarding my memory, while maintaining a helpful connection with the user."
 }}
 ```
 
