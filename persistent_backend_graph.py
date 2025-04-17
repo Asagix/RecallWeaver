@@ -4016,6 +4016,47 @@ class GraphMemoryClient:
                             f"- {e.get('event_time', '?')}: {e.get('description', '?')} ({e.get('event_date', '?')})")
                     message = f"Found {len(events)} event(s){date_str}:\n" + "\n".join(event_lines)
 
+            # --- NEW File Actions ---
+            elif action == "list_files":
+                file_list, message = self.list_files_wrapper()
+                if file_list is not None:
+                    success = True
+                    # Format the message for the user
+                    if file_list: message = f"Files in workspace:\n- " + "\n- ".join(file_list)
+                    else: message = "Workspace is empty."
+                else: # Error occurred
+                    success = False
+                    # message already contains the error from file_manager
+
+            elif action == "read_file":
+                filename = args.get("filename")
+                if filename:
+                    file_content, message = self.read_file_wrapper(filename)
+                    if file_content is not None:
+                        success = True
+                        # Truncate long content for the message?
+                        content_preview = file_content[:500] + ('...' if len(file_content) > 500 else '')
+                        message = f"Content of '{filename}':\n---\n{content_preview}\n---"
+                    else: # Error occurred
+                        success = False
+                        # message already contains the error from file_manager
+                else:
+                    message = "Error: Missing filename for read_file."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
+            elif action == "delete_file":
+                filename = args.get("filename")
+                if filename:
+                    # Add confirmation step? For now, execute directly.
+                    # Consider adding a config flag for delete confirmation later.
+                    logger.warning(f"Executing delete_file action for: {filename}")
+                    success, message = self.delete_file_wrapper(filename)
+                else:
+                    message = "Error: Missing filename for delete_file."
+                    logger.error(message + f" Args received: {args}")
+                    success = False
+
             # --- Unknown Action ---
             else:
                 message = f"Error: The action '{action}' is not recognized or supported."
