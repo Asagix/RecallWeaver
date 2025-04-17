@@ -23,6 +23,20 @@ from datetime import datetime, timezone, timedelta
 
 from workspace_agent import WorkspaceAgent
 
+# Keywords that might indicate a need for workspace planning
+WORKSPACE_KEYWORDS = [
+    "file", "save", "create", "write", "append", "read", "open", "list", "delete", "remove",
+    "calendar", "event", "schedule", "meeting", "appointment", "remind", "task",
+    "note", "document", "report", "summary", "code", # Keywords related to file content
+    "workspace", "directory", # Keywords related to the workspace itself
+    # Add date/time related words often used with calendar
+    "today", "tomorrow", "yesterday", "morning", "afternoon", "evening", "night",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+    "next week", "last week",
+]
+
+
 # --- Emoji Stripping Helper ---
 # Regex to match most common emojis
 EMOJI_PATTERN = re.compile(
@@ -3303,8 +3317,32 @@ class GraphMemoryClient:
             "workspace_actions_attempted": len(workspace_action_results),
         })
 
-        # Return conversational response, memories, AI node UUID.
-        # The needs_planning flag is no longer determined here; planning is handled separately.
+        # --- Determine if workspace planning might be needed ---
+        needs_planning = False
+        user_input_lower = user_input.lower()
+        # Simple keyword check - refine later if too broad/narrow
+        if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
+            needs_planning = True
+            logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
+
+        # Return conversational response, memories, AI node UUID, and the planning flag
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
+
+    except Exception as e:
+        # Catch errors during interaction processing (e.g., the ValueError)
+        logger.error(f"Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
+        # Assign error message to both ai_response and parsed_response
+        ai_response = f"Error during processing: {e}"
+        parsed_response = ai_response # Ensure parsed_response has a value
+        memory_chain_data = [] # Clear memory chain data on error
+        # --- Tuning Log: Interaction Error ---
+        log_tuning_event("INTERACTION_ERROR", {
+            "interaction_id": interaction_id,
+            "personality": self.personality,
+            "stage": "main_processing_loop",
+            "error": str(e),
+        })
+        # Ensure needs_planning is False on error exit from this block
         return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
 
 
