@@ -49,9 +49,9 @@ You are an AI assistant's planning module. Your goal is to determine a sequence 
 **Example Plan (Output Only):**
 ```json
 [
-  {{"action": "read_file", "args": {{"filename": "existing_notes.txt"}}}},
-  {{"action": "create_file", "args": {{"filename": "summary_and_ideas.txt", "content": "Summary of existing notes:\n- Point 1\n- Point 2\n\nNew Ideas:\n- Idea A\n- Idea B"}}}},
-  {{"action": "add_calendar_event", "args": {{"date": "2025-10-26", "time": "14:00", "description": "Follow up on new ideas"}}}}
+  {"action": "read_file", "args": {"filename": "existing_notes.txt"}},
+  {"action": "create_file", "args": {"filename": "summary_and_ideas.txt", "content": "Summary of existing notes:\n- Point 1\n- Point 2\n\nNew Ideas:\n- Idea A\n- Idea B"}},
+  {"action": "add_calendar_event", "args": {"date": "2025-10-26", "time": "14:00", "description": "Follow up on new ideas"}}
 ]
 ```
 
