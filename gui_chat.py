@@ -636,14 +636,8 @@ class Worker(QThread):
 
         # --- If not action or modification (both analyses returned "none" or errored), treat as regular chat ---
         gui_logger.info("No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
-                self.signals.error.emit(f"Memory Modification Analysis Error: {mod_analysis_result.get('reason', '?')}")
-                # Proceed with chat? Or stop? Let's proceed with chat for now.
-                mod_action = "none" # Treat error as no mod action
-
-            if mod_action != "none":
-                # If a specific memory modification action is identified, queue it
-                # Clear any potentially stale clarification state
-                if self.pending_clarification:
+        # Clear any potentially stale clarification state
+        if self.pending_clarification:
                     gui_logger.debug("Clearing stale pending clarification due to modification request.")
                     self.pending_clarification = None
                 gui_logger.info(f"Memory modification action '{mod_action}' detected by LLM. Queuing modify task.")
