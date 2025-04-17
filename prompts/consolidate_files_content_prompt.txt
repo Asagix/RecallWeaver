@@ -1,0 +1,19 @@
+<start_of_turn>user
+You are an AI assistant tasked with consolidating the content from multiple text files into a single, coherent file.
+
+**Input Files and Content:**
+--- START INPUT CONTENT ---
+{combined_input_content}
+--- END INPUT CONTENT ---
+
+**Instructions:**
+1.  Analyze the combined content from the input files provided above.
+2.  Synthesize, summarize, and organize the information into a single, well-structured text block.
+3.  Maintain the core information and key details from the input files.
+4.  Remove redundancy where appropriate.
+5.  Structure the output logically (e.g., using headings, bullet points, paragraphs).
+6.  The output should be suitable for saving as the content of a new, consolidated file.
+7.  Output **ONLY** the generated consolidated content. Do not include explanations, introductions, or any text other than the final content itself.
+
+**Generated Consolidated Content:**<end_of_turn>
+<start_of_turn>model

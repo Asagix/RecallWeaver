@@ -78,6 +78,15 @@ llm_models:
     top_p: 0.95
     top_k: 40
     min_p: 0.0
+  # --- Workspace File Consolidation Task ---
+  workspace_file_consolidation:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 2048 # Needs potentially large context/output
+    temperature: 0.5 # Balance creativity and coherence
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
   # --- Workspace Planning Task ---
   workspace_planning:
     api_type: "generate" # Or chat_completions if model works better

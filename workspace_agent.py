@@ -1,5 +1,8 @@
 import logging
+import json # <<< Add json import
+import re # <<< Add re import
 import file_manager # Import the existing file manager
+from persistent_backend_graph import GraphMemoryClient # <<< Import GraphMemoryClient to use _call_configured_llm
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +18,27 @@ class WorkspaceAgent:
             client_config: The main configuration dictionary (from GraphMemoryClient).
             personality: The name of the current personality.
         """
-        self.config = client_config
+        self.config = client_config # Main config dict
         self.personality = personality
-        logger.info(f"WorkspaceAgent initialized for personality '{self.personality}'.")
+        # Store a reference to the client instance to access its methods/config
+        # This assumes the client is passed or accessible. If not, need to adjust initialization.
+        # For now, let's assume we need to instantiate a minimal client or pass it.
+        # Let's modify __init__ to accept the client instance.
+        # self.client = client_instance # Requires passing GraphMemoryClient instance
+        # Alternative: Re-instantiate parts needed? Less ideal.
+        # Let's assume we need the client's _call_configured_llm and _load_prompt
+        # We might need to pass the client instance when creating WorkspaceAgent
+        # For now, we'll try to instantiate a temporary client inside the method if needed.
+        # --- UPDATE: Instantiate a client instance here ---
+        # This is slightly inefficient but avoids changing the call signature in persistent_backend_graph
+        try:
+             # Pass the same config and personality
+             self.client = GraphMemoryClient(client_config, personality)
+             logger.info(f"WorkspaceAgent initialized for personality '{self.personality}' and created internal GraphMemoryClient instance.")
+        except Exception as e:
+             logger.error(f"WorkspaceAgent failed to initialize internal GraphMemoryClient: {e}", exc_info=True)
+             self.client = None # Ensure client is None if init fails
+             # This might prevent consolidation LLM calls later.
 
     def execute_plan(self, plan: list) -> list[tuple[bool, str, str]]:
         """
@@ -67,6 +88,8 @@ class WorkspaceAgent:
                         action_result = self._execute_add_calendar_event(args)
                     elif action_name == "read_calendar":
                         action_result = self._execute_read_calendar(args)
+                    elif action_name == "consolidate_files":
+                        action_result = self._execute_consolidate_files(args)
                     else:
                         logger.error(f"Unsupported action '{action_name}' in plan (Step {i+1}).")
                         action_result = (False, f"Error: Action '{action_name}' is not supported.", f"{action_name}_unsupported")
@@ -133,6 +156,117 @@ class WorkspaceAgent:
             # message already contains the error from file_manager
         suffix = f"{action_name}_{'success' if success else 'fail'}"
         return success, message, suffix
+
+    def _execute_consolidate_files(self, args: dict) -> tuple[bool, str, str]:
+        """Consolidates multiple input files into a single output file."""
+        input_filenames = args.get("input_filenames")
+        output_filename = args.get("output_filename")
+        action_name = "consolidate_files"
+
+        # --- Argument Validation ---
+        if not isinstance(input_filenames, list) or not input_filenames:
+            msg = "Error: 'input_filenames' must be a non-empty list for consolidate_files."
+            logger.error(msg + f" Args: {args}")
+            return False, msg, f"{action_name}_arg_missing"
+        if not output_filename or not isinstance(output_filename, str):
+            msg = "Error: Missing or invalid 'output_filename' argument for consolidate_files."
+            logger.error(msg + f" Args: {args}")
+            return False, msg, f"{action_name}_arg_missing"
+        if not all(isinstance(fname, str) for fname in input_filenames):
+            msg = "Error: All filenames in 'input_filenames' must be strings."
+            logger.error(msg + f" Args: {args}")
+            return False, msg, f"{action_name}_arg_invalid"
+        if output_filename in input_filenames:
+            msg = "Error: Output filename cannot be one of the input filenames."
+            logger.error(msg + f" Args: {args}")
+            return False, msg, f"{action_name}_arg_conflict"
+
+        logger.info(f"Executing consolidate_files: Inputs={input_filenames}, Output='{output_filename}'")
+
+        # --- Read Input Files ---
+        combined_content = ""
+        read_errors = []
+        successful_reads = []
+        for fname in input_filenames:
+            content, read_msg = file_manager.read_file(self.config, self.personality, fname)
+            if content is not None:
+                combined_content += f"\n\n--- Content from: {fname} ---\n{content}"
+                successful_reads.append(fname)
+            else:
+                logger.error(f"Failed to read input file '{fname}' for consolidation: {read_msg}")
+                read_errors.append(f"Could not read '{fname}': {read_msg}")
+
+        if not successful_reads:
+            msg = "Error: Failed to read any of the input files for consolidation. " + " ".join(read_errors)
+            return False, msg, f"{action_name}_read_fail"
+        if read_errors:
+            # Proceed with consolidation but warn about missing files
+            logger.warning("Consolidating partial content due to read errors: " + "; ".join(read_errors))
+
+        # --- Generate Consolidated Content via LLM ---
+        consolidated_content = None
+        if not self.client:
+             # Handle case where internal client failed to initialize
+             msg = "Internal Error: Cannot generate consolidated content (Backend client missing)."
+             logger.error(msg)
+             return False, msg, f"{action_name}_internal_error"
+
+        try:
+            prompt_template = self.client._load_prompt("consolidate_files_content_prompt.txt")
+            if not prompt_template:
+                raise ValueError("Consolidation content prompt template missing.")
+
+            consolidation_prompt = prompt_template.format(combined_input_content=combined_content.strip())
+            logger.debug(f"Sending file consolidation content prompt (Input length: {len(combined_content)} chars)...")
+
+            # Use the client's configured LLM call method
+            llm_response = self.client._call_configured_llm('workspace_file_consolidation', prompt=consolidation_prompt)
+
+            if llm_response and not llm_response.startswith("Error:"):
+                consolidated_content = llm_response.strip()
+                logger.info(f"LLM generated consolidated content (Length: {len(consolidated_content)} chars).")
+            else:
+                raise ValueError(f"LLM failed to generate consolidated content: {llm_response}")
+
+        except Exception as e:
+            msg = f"Error during consolidated content generation: {e}"
+            logger.error(msg, exc_info=True)
+            return False, msg, f"{action_name}_llm_fail"
+
+        # --- Write Output File ---
+        write_success, write_message = file_manager.create_or_overwrite_file(
+            self.config, self.personality, output_filename, consolidated_content
+        )
+        if not write_success:
+            msg = f"Error writing consolidated file '{output_filename}': {write_message}"
+            logger.error(msg)
+            # Don't delete inputs if output failed
+            return False, msg, f"{action_name}_write_fail"
+
+        logger.info(f"Successfully wrote consolidated file: '{output_filename}'")
+
+        # --- Delete Input Files ---
+        delete_errors = []
+        deleted_count = 0
+        for fname in successful_reads: # Only delete files that were successfully read
+            del_success, del_msg = file_manager.delete_file(self.config, self.personality, fname)
+            if not del_success:
+                logger.error(f"Failed to delete input file '{fname}' after consolidation: {del_msg}")
+                delete_errors.append(f"Could not delete '{fname}': {del_msg}")
+            else:
+                deleted_count += 1
+
+        # --- Final Message ---
+        final_message = f"Successfully consolidated {len(successful_reads)} file(s) into '{output_filename}'."
+        if read_errors:
+            final_message += f" (Warning: Failed to read {len(read_errors)} file(s): {'; '.join(read_errors)})"
+        if delete_errors:
+            final_message += f" (Warning: Failed to delete {len(delete_errors)} original file(s): {'; '.join(delete_errors)})"
+        elif deleted_count == len(successful_reads):
+             final_message += f" Original {deleted_count} file(s) deleted."
+
+
+        return True, final_message, f"{action_name}_success"
 
     def _execute_read_file(self, args: dict) -> tuple[bool, str, str]:
         filename = args.get("filename")
