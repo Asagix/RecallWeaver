@@ -11,7 +11,7 @@ default_personality: "default"
 
 # --- Models & API ---
 embedding_model: "all-MiniLM-L6-v2"
-tokenizer_name: "google/gemma-27b-it"
+tokenizer_name: "google/gemma-3-27b-it"
 kobold_api_url: "http://localhost:5001/api/v1/generate" # Base URL for generate API
 kobold_chat_api_url: "http://localhost:5001/v1/chat/completions" # Base URL for OpenAI-compatible chat API
 
