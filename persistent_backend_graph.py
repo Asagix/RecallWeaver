@@ -1676,8 +1676,8 @@ class GraphMemoryClient:
             return
 
         # 3. Calculate Forgettability Score and Reduce Strength for each candidate:
-        strength_reduced_count = 0
-        nodes_changed = False
+        strength_reduced_count = 0 # Initialize counter
+        nodes_changed = False # Initialize flag
         for uuid in candidate_uuids:
             if uuid not in self.graph: continue # Node might have been deleted since snapshot
             node_data = self.graph.nodes[uuid]
@@ -1814,7 +1814,7 @@ class GraphMemoryClient:
         # Clamp final score 0-1
         final_score = max(0.0, min(1.0, score))
 
-        # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Score: {final_score:.3f}")
+        # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Initial Score: {final_score:.3f}") # Log initial score before adjustments
 
         # --- Apply Decay Resistance (Type-Based) ---
         type_resistance_factor = node_data.get('decay_resistance_factor', 1.0)
@@ -1834,6 +1834,7 @@ class GraphMemoryClient:
         else:
             final_adjusted_score = score_after_type_resistance # No emotion resistance applied
 
+        logger.debug(f"    Final Adjusted Forgettability Score for {node_uuid[:8]}: {final_adjusted_score:.4f}") # Log the final score being returned
         return final_adjusted_score
 
     def _get_relative_time_desc(self, timestamp_str: str) -> str:
@@ -3702,83 +3703,6 @@ class GraphMemoryClient:
             logger.error(err_msg)
             return err_msg
 
-    def _call_configured_llm(self, task_name: str, prompt: str = None, messages: list = None, **overrides) -> str:
-        """
-        Calls the appropriate LLM API based on configuration for the given task.
-
-        Args:
-            task_name: The key for the task in config['llm_models'].
-            prompt: The prompt string (for 'generate' API type).
-            messages: The list of messages (for 'chat_completions' API type).
-            **overrides: Keyword arguments to override default parameters from config.
-
-        Returns:
-            The generated text response string, or an error message string.
-        """
-        logger.debug(f"Calling configured LLM for task: '{task_name}'")
-        task_config = self.config.get('llm_models', {}).get(task_name)
-
-        if not task_config:
-            err_msg = f"Error: LLM configuration for task '{task_name}' not found in config.yaml."
-            logger.error(err_msg)
-            return err_msg
-
-        api_type = task_config.get('api_type')
-        model_name = task_config.get('model_name', 'koboldcpp-default')
-
-        # --- Get default parameters from config ---
-        default_params = {
-            'max_length': task_config.get('max_length', 512),
-            'max_tokens': task_config.get('max_tokens', 512), # For chat API
-            'temperature': task_config.get('temperature', 0.7),
-            'top_p': task_config.get('top_p', 0.95),
-            'top_k': task_config.get('top_k', 60),
-            'min_p': task_config.get('min_p', 0.0),
-            # Add other potential parameters here if needed
-        }
-
-        # --- Merge overrides ---
-        final_params = default_params.copy()
-        final_params.update(overrides)
-        logger.debug(f"  Task Config: {task_config}")
-        logger.debug(f"  Final Params: {final_params}")
-
-
-        # --- Call appropriate API ---
-        if api_type == 'generate':
-            if prompt is None:
-                err_msg = f"Error: Prompt is required for 'generate' API type (task: {task_name})."
-                logger.error(err_msg)
-                return err_msg
-            # Pass parameters explicitly to _call_kobold_api
-            return self._call_kobold_api(
-                prompt=prompt,
-                model_name=model_name, # Pass model name
-                max_length=final_params['max_length'],
-                temperature=final_params['temperature'],
-                top_p=final_params['top_p'],
-                top_k=final_params['top_k'],
-                min_p=final_params['min_p']
-            )
-        elif api_type == 'chat_completions':
-            if messages is None:
-                err_msg = f"Error: Messages list is required for 'chat_completions' API type (task: {task_name})."
-                logger.error(err_msg)
-                return err_msg
-            # Pass parameters explicitly to _call_kobold_multimodal_api
-            return self._call_kobold_multimodal_api(
-                messages=messages,
-                model_name=model_name, # Pass model name
-                max_tokens=final_params['max_tokens'],
-                temperature=final_params['temperature'],
-                top_p=final_params['top_p']
-                # Add top_k, min_p if supported by chat API later
-            )
-        else:
-            err_msg = f"Error: Unknown api_type '{api_type}' configured for task '{task_name}'."
-            logger.error(err_msg)
-            return err_msg
-
 
     # --- Forgetting Mechanism ---
     def run_memory_maintenance(self):
@@ -4964,8 +4888,9 @@ class GraphMemoryClient:
         logger.debug(f"Consolidation context text (first 200 chars):\n{context_text[:200]}...")
 
         # --- 3. Summarization ---
-        summary_node_uuid, summary_created = self._consolidate_summarize(context_text, nodes_data,
-                                                                         nodes_to_process) # Use correct variable
+        summary_node_uuid, summary_created = self._consolidate_summarize(context_text=context_text,
+                                                                         nodes_data=nodes_data,
+                                                                         processed_node_uuids=nodes_to_process) # Pass the list of UUIDs
         # --- Tuning Log: Consolidation Summary ---
         log_tuning_event("CONSOLIDATION_SUMMARY", {
             "personality": self.personality,

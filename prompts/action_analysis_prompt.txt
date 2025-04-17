@@ -12,7 +12,7 @@ AVAILABLE ACTIONS:
 **Analysis Rules:**
 1.  **Strict Action Match:** Does the user's intent *clearly, specifically, and unambiguously* match one of the AVAILABLE ACTIONS?
     *   Vague requests (e.g., "remind me", "make a note", "save this") DO NOT MATCH.
-    *   Actions not listed (e.g., "delete file", "read file content", "list files", "send email") DO NOT MATCH.
+    *   Actions not listed (e.g., "send email", "edit file") DO NOT MATCH. (Note: `create_file` overwrites, it doesn't edit in place).
     *   If unsure, default to `{{"action": "none"}}`.
 2.  **Memory Modification Exclusion:** Requests to 'delete', 'edit', or 'forget' memory entries, nodes, or topics are handled elsewhere. If the request is about modifying the AI's memory, output `{{"action": "none"}}`.
 3.  **Argument Extraction:** If an action matches, extract ALL *required* arguments.

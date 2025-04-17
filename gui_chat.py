@@ -256,20 +256,26 @@ class Worker(QThread):
              self.interaction_count += 1
              gui_logger.debug(f"Interaction count for '{self.personality}': {self.interaction_count}")
 
+             maintenance_task_queued = False # Flag to track if any task was queued
+
              # Check Forgetting Trigger
              # Ensure trigger count is positive (enabled)
              if self.forgetting_trigger_count > 0 and self.interaction_count >= self.forgetting_trigger_count:
                  gui_logger.info(f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
                  self.input_queue.append(('memory_maintenance', None)) # Add maintenance task
-                 # Reset counter immediately after queuing to avoid multiple triggers if queue processes slowly
-                 self.interaction_count = 0 # Reset counter for BOTH forgetting and consolidation checks
+                 maintenance_task_queued = True
 
              # --- Check Consolidation Trigger ---
              # Ensure trigger count is positive (enabled)
+             # Check even if forgetting triggered, in case counts are the same or consolidation is lower
              if self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
                  gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
                  self.input_queue.append(('consolidate', True)) # Pass True for automatic trigger
-                 # Reset counter immediately after queuing
+                 maintenance_task_queued = True
+
+             # Reset counter if EITHER task was queued to prevent immediate re-triggering
+             if maintenance_task_queued:
+                 gui_logger.debug("Resetting interaction counter after queuing maintenance task(s).")
                  self.interaction_count = 0
 
 
