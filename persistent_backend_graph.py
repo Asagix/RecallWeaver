@@ -2908,7 +2908,8 @@ class GraphMemoryClient:
                  "stage": "embedder_check",
                  "error": "Embedder not initialized",
              })
-             return "Error: Backend embedder not initialized correctly.", []
+             # Return the expected 4-tuple format on embedder error
+             return "Error: Backend embedder not initialized correctly.", [], None, False
 
         logger.info(f"Processing interaction (ID: {interaction_id[:8]}): Input='{user_input[:50]}...' Has Attachment: {bool(attachment_data)}")
         if attachment_data: logger.debug(f"Attachment details: type={attachment_data.get('type')}, filename={attachment_data.get('filename')}")
