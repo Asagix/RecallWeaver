@@ -2010,8 +2010,14 @@ class GraphMemoryClient:
         # --- Assemble Final Prompt ---
         final_parts = []
         final_parts.append(time_info_block)
-        # Add instruction about temporal awareness
-        final_parts.append(f"{model_tag}[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]{end_turn}\n")
+        # Add instruction about temporal awareness AND action capability
+        system_instructions = [
+            "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
+            "[System Note: You can perform actions like managing files or calendar events. To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`. Available actions: `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `add_calendar_event`, `read_calendar`. Generate appropriate filenames and content based on the conversation. Only use the ACTION tag if you decide an action is necessary based on the context.]"
+        ]
+        final_parts.append(f"{model_tag}{system_instructions[0]}{end_turn}\n")
+        final_parts.append(f"{model_tag}{system_instructions[1]}{end_turn}\n")
+
         if asm_block: final_parts.append(asm_block) # Add ASM block after time/system note
         if mem_ctx_str: final_parts.append(mem_ctx_str)
         final_parts.extend(hist_parts)
@@ -2752,13 +2758,48 @@ class GraphMemoryClient:
                 ai_response = self._call_kobold_api(prompt=prompt, max_length=max_gen_tokens)
                 # graph_user_input is already set
 
-            # --- Process Response and Update Graph ---
+            # --- Process Response, Check for AI Action Request, and Update Graph ---
+            action_result_message = None # To store feedback about executed action
             if not ai_response or ai_response.startswith("Error:"):
                 logger.error(f"LLM call failed or returned error: {ai_response}")
-                # Use the error message as the response to display
                 parsed_response = ai_response if ai_response else "Error: Received empty response from language model."
             else:
-                parsed_response = ai_response.strip() # Use the successful response
+                parsed_response = ai_response.strip()
+                logger.debug(f"Raw LLM response received: '{parsed_response[:200]}...'")
+
+                # --- Check for AI-requested action ---
+                action_match = re.search(r'\[ACTION:\s*(\{.*?\})\s*\]$', parsed_response, re.DOTALL)
+                if action_match:
+                    action_json_str = action_match.group(1)
+                    logger.info(f"AI requested action detected: {action_json_str}")
+                    # Remove the tag from the conversational response
+                    parsed_response = parsed_response[:action_match.start()].strip()
+                    logger.debug(f"Conversational part of response: '{parsed_response[:100]}...'")
+
+                    try:
+                        action_data = json.loads(action_json_str)
+                        # Basic validation of the parsed action data
+                        if isinstance(action_data, dict) and "action" in action_data and "args" in action_data:
+                            # TODO: Add more robust validation similar to analyze_action_request?
+                            # For now, assume AI generates valid structure if tag is present.
+                            logger.info(f"Executing AI-requested action: {action_data.get('action')} with args: {action_data.get('args')}")
+                            # Execute the action
+                            action_success, action_message, _ = self.execute_action(action_data)
+                            # Prepare feedback message
+                            action_result_message = f"[System: Action '{action_data.get('action')}' {'succeeded' if action_success else 'failed'}. {action_message}]"
+                            logger.info(f"AI Action Result: {action_result_message}")
+                        else:
+                            logger.error(f"Invalid JSON structure in AI action request: {action_json_str}")
+                            action_result_message = "[System: Error - Invalid action request format received from AI.]"
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse JSON from AI action request: {e}. String: '{action_json_str}'")
+                        action_result_message = "[System: Error - Failed to parse action request from AI.]"
+                    except Exception as e:
+                         logger.error(f"Error executing AI-requested action: {e}", exc_info=True)
+                         action_result_message = f"[System: Error executing action - {e}]"
+                else:
+                     logger.debug("No AI action request tag found in response.")
+
 
             # Add nodes to graph regardless of LLM success/failure, using appropriate text
             logger.info("Adding user input node to graph...")
@@ -2856,10 +2897,18 @@ class GraphMemoryClient:
             "retrieved_memory_count": len(memory_chain_data),
             "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
             "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
+            "action_executed": action_result_message is not None,
         })
 
-        # Return the response to be displayed and the memory chain (even if empty)
-        return parsed_response, memory_chain_data
+        # Combine conversational response and action result message
+        final_response_to_gui = parsed_response
+        if action_result_message:
+            # Add a newline if both parts exist
+            separator = "\n\n" if final_response_to_gui else ""
+            final_response_to_gui += separator + action_result_message
+
+        # Return the combined response and the memory chain
+        return final_response_to_gui, memory_chain_data
 
 
     # --- Consolidation ---

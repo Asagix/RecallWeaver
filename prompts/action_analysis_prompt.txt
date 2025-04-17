@@ -1,4 +1,4 @@
-SYSTEM: Your **sole and critical task** is to analyze the user's request based *only* on the rules and available actions provided below. You MUST output **nothing but** a single, valid JSON object representing the analysis result. **No explanations, no apologies, no conversational text, just the JSON.**
+SYSTEM: Your **sole and critical task** is to analyze the **user's request** based *only* on the rules and available actions provided below. This is specifically for interpreting direct user commands, not for deciding actions yourself. You MUST output **nothing but** a single, valid JSON object representing the analysis result. **No explanations, no apologies, no conversational text, just the JSON.**
 
 AVAILABLE ACTIONS:
 - create_file: Creates or completely overwrites a file with the given text content. Requires: 'filename', 'content'.
