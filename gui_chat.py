@@ -1829,7 +1829,8 @@ class ChatWindow(QMainWindow):
 
         # --- Add Clickable File Link (if applicable and successful) ---
         filename_to_link = None
-        if is_success and is_file_action and action_type != "list_files_success":  # Don't link for list
+        # *** MODIFIED: Don't link for delete_file_success ***
+        if is_success and is_file_action and action_type != "list_files_success" and action_type != "delete_file_success":
             # Extract filename from target_info or message if possible
             # target_info might be args dict string or just filename
             filename_match = re.search(r"'(.*?)'", target_info)  # Try to find quoted filename in target_info
