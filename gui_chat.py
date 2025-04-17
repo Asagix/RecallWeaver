@@ -90,13 +90,11 @@ def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
 class WorkerSignals(QObject):
     # Added backend_ready signal
     backend_ready = pyqtSignal(bool, str)  # success_flag, personality_name
-    # Signature changed: Replaced action_result_info object with list for workspace results
-    response_ready = pyqtSignal(str, str, list, str, list)
-    modification_response_ready = pyqtSignal(str, str, str, str) # Keep for memory mods for now
+    # Signature changed: Added object for optional action_result_info dict
+    response_ready = pyqtSignal(str, str, list, str, object)
+    modification_response_ready = pyqtSignal(str, str, str, str)
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
-    # REMOVED clarification_needed signal
-    # REMOVED confirmation_needed signal
     clarification_needed = pyqtSignal(str, list)
     confirmation_needed = pyqtSignal(str, dict)  # NEW: action_type, details_dict
     feedback_provided = pyqtSignal(str, str)  # NEW: node_uuid, feedback_type ('up'/'down')
@@ -122,8 +120,8 @@ class Worker(QThread):
         self.interaction_count = 0  # Tracks user/AI turns since last maintenance/consolidation trigger
         self.personality = personality_name
         self.config_path = config_path
-        # REMOVED pending_clarification
-        # REMOVED pending_confirmation
+        self.pending_clarification = None  # Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
+        self.pending_confirmation = None  # NEW: Store pending confirmation details {'action': str, 'args': dict}
 
         # Load config for keywords and trigger counts
         try:
@@ -184,8 +182,10 @@ class Worker(QThread):
                         self.handle_reset_task()
                     elif task_type == 'consolidate':
                         self.handle_consolidation_task()
-                    # REMOVED execute_action task (handled by workspace agent now)
-                    # REMOVED execute_action_confirmed task
+                    elif task_type == 'execute_action':
+                        self.handle_execute_action_task(data)
+                    elif task_type == 'execute_action_confirmed':
+                        self.handle_confirmed_action_task(data)
                     elif task_type == 'saliency_update':
                         self.handle_saliency_update_task(data)
                     elif task_type == 'feedback':
@@ -234,8 +234,8 @@ class Worker(QThread):
         interaction_successful = False  # Flag to track if LLM call succeeded
 
         try:
-            # process_interaction now returns (response, memories, ai_node_uuid, workspace_action_results)
-            ai_response_text, memory_chain_data, ai_node_uuid, workspace_action_results = self.client.process_interaction(
+            # process_interaction now returns (response, memories, ai_node_uuid, action_result_info)
+            ai_response_text, memory_chain_data, ai_node_uuid, action_result_info = self.client.process_interaction(
                 user_input=user_input_text,
                 conversation_history=self.current_conversation, # Pass only history up to user turn
                 attachment_data=attachment
@@ -259,11 +259,20 @@ class Worker(QThread):
                 ai_turn_data['uuid'] = ai_node_uuid  # Store UUID if returned
                 gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
 
-            # Emit result signal (including AI node UUID and workspace action results list)
-            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid, workspace_action_results)
+            # Emit result signal (including AI node UUID and potential action result)
+            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid, action_result_info)
 
-            # Workspace action results are now handled by the GUI in display_response
-            # No need to emit modification_response_ready here for workspace actions.
+            # If an action was executed, ALSO emit the modification signal for its result message
+            if action_result_info:
+                gui_logger.info("Action result detected, emitting modification_response_ready signal.")
+                # Use placeholder for user_input in this context
+                user_input_placeholder = f"AI Action: {action_result_info.get('action_type', '?').split('_')[0]}"
+                self.signals.modification_response_ready.emit(
+                    user_input_placeholder,
+                    action_result_info.get('message', 'Action result message missing.'),
+                    action_result_info.get('action_type', 'unknown_action'),
+                    action_result_info.get('target_info', '')
+                )
 
             interaction_successful = True  # Mark as successful
 
@@ -659,11 +668,10 @@ class Worker(QThread):
                 # Should not happen if pending_clarification is set correctly, but handle defensively.
                 gui_logger.warning(
                     "Clarification was pending, but no missing args listed. Clearing state and proceeding normally.")
-                self.pending_clarification = None # This attribute is removed, but keep the logic flow comment
+                self.pending_clarification = None
                 # Fall through to normal processing...
 
         # --- If no clarification pending, proceed as normal ---
-        # REMOVED: Clarification state is no longer managed here.
 
         # --- Prioritize Image Attachment ---
         if attachment and attachment.get('type') == 'image':
@@ -683,12 +691,38 @@ class Worker(QThread):
                 self.signals.error.emit(f"Action Analysis Error: {analysis_result.get('reason', '?')}")
                 # Maybe proceed with chat? Or just stop? For now, stop.
                 return
-            # REMOVED: Clarification logic is removed. Planning prompt should handle args.
-            # REMOVED: Action execution logic is removed. Planning prompt handles action identification.
-            pass # Keep structure, but logic is now handled differently
+            elif action == "clarify":
+                # If clarification is needed, add user text to history and emit signal
+                self.current_conversation.append(
+                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                # --- Store pending clarification state ---
+                self.pending_clarification = {
+                    "original_action": analysis_result.get("original_action", "?"),
+                    "args": analysis_result.get("args", {}),  # Store args already extracted by LLM
+                    "missing_args": analysis_result.get("missing_args", [])
+                }
+                gui_logger.info(f"Stored pending clarification: {self.pending_clarification}")
+                self.signals.clarification_needed.emit(
+                    self.pending_clarification["original_action"],
+                    self.pending_clarification["missing_args"]
+                )
+                # Don't queue chat task, wait for user clarification
+                return
+            elif action != "none":
+                # If a specific file/calendar action is identified, queue it
+                # Clear any potentially stale clarification state if a new, complete action is detected
+                if self.pending_clarification:
+                    gui_logger.debug("Clearing stale pending clarification due to new complete action.")
+                    self.pending_clarification = None
+                gui_logger.info(f"Action '{action}' detected. Queuing execution task.")
+                # Add user text to history before queuing action
+                self.current_conversation.append(
+                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.input_queue.append(('execute_action', analysis_result))
+                return  # Don't queue chat task
 
         except Exception as e:
-            # Log error during the (now removed) analysis but fall through to chat
+            # Log error during analysis but potentially fall through to check modification/chat
             gui_logger.error(f"Error during action request analysis: {e}", exc_info=True)
             self.signals.error.emit(f"Failed to analyze for file/calendar actions: {e}")
             # Fall through to check memory modification (currently disabled)
@@ -722,10 +756,14 @@ class Worker(QThread):
         #      self.signals.error.emit(f"Failed to analyze for memory modification actions: {e}")
         # --- END DISABLED Memory Modification Analysis ---
 
-        # --- If no specific action was detected by the (now removed) initial analysis, treat as regular chat ---
-        gui_logger.info("No specific action detected upfront. Queuing chat task (planning will happen in backend).")
-        # REMOVED: Clarification state clearing is removed.
-        task_data = {'text': text, 'attachment': attachment} # Pass potential attachment
+        # --- If not action or modification (both analyses returned "none" or errored), treat as regular chat ---
+        gui_logger.info(
+            "No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
+        # Clear any potentially stale clarification state
+        if self.pending_clarification:
+            gui_logger.debug("Clearing stale pending clarification due to regular chat input.")
+            self.pending_clarification = None
+        task_data = {'text': text, 'attachment': None}  # Ensure chat task always gets dict
         self.input_queue.append(('chat', task_data))
 
     def request_memory_reset(self):
@@ -1038,8 +1076,8 @@ class ChatWindow(QMainWindow):
         self.worker = None  # Worker thread instance
         self.attached_file_path = None  # Store path of file to attach
         self.is_processing = False  # Flag to prevent concurrent processing
-        # REMOVED: awaiting_clarification flag
-        # REMOVED: pending_confirmation attribute
+        self.awaiting_clarification = False  # Flag for clarification state
+        self.pending_confirmation = None  # NEW: Store details for pending confirmation {'action': str, 'args': dict}
 
         # --- Initial State ---
         self.set_input_enabled(False)  # Start with input disabled
@@ -1461,8 +1499,8 @@ class ChatWindow(QMainWindow):
         self.worker.signals.modification_response_ready.connect(self.display_modification_confirmation)
         self.worker.signals.memory_reset_complete.connect(self.on_memory_reset_complete)
         self.worker.signals.consolidation_complete.connect(self.on_consolidation_complete)
-        # REMOVED: clarification_needed connection
-        # REMOVED: confirmation_needed connection
+        self.worker.signals.clarification_needed.connect(self.handle_clarification_request)
+        self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request)  # NEW Connection
         self.worker.signals.error.connect(self.display_error)
         self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
         self.worker.finished.connect(self.on_worker_finished)
@@ -1655,18 +1693,9 @@ class ChatWindow(QMainWindow):
         self.display_message("System", "Memory has been reset.", object_name_suffix="ConfirmationMessage")
         self._finalize_display(status_msg="Memory Reset Complete.", status_duration=5000)
 
-    # REMOVED: handle_confirmation_request slot
-    # @pyqtSlot(str, dict)
-    # def handle_confirmation_request(self, action_type: str, details: dict): ...
-
-    # REMOVED: handle_clarification_request slot
-    # @pyqtSlot(str, list)
-    # def handle_clarification_request(self, original_action, missing_args): ...
-
-    # --- Slot signature updated to accept 5th argument (workspace_results_list) ---
-    @pyqtSlot(str, str, list, str, list)
-    def display_response(self, user_input, ai_response, memories, ai_node_uuid, workspace_results_list):
-        """Displays AI response, memories, and workspace action results."""
+    @pyqtSlot(str, dict)
+    def handle_confirmation_request(self, action_type: str, details: dict):
+        """Handles the signal that user confirmation is needed for an action."""
         gui_logger.info(f"Confirmation needed: Type={action_type}, Details={details}")
         self.pending_confirmation = {'action': action_type, 'args': details}  # Store details
 
@@ -1752,16 +1781,13 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.debug("No memories received for this interaction.")
 
-    # --- Slot signature updated to accept 5th argument (workspace_results_list) ---
-    @pyqtSlot(str, str, list, str, list)
-    def display_response(self, user_input, ai_response, memories, ai_node_uuid, workspace_results_list):
-        """Displays AI response, memories, and workspace action results."""
-        # This slot displays the AI's conversational response and memories.
-        # It then iterates through workspace_results_list and displays each action result.
+    # --- Slot signature updated to accept 5th argument (action_result_info), but it's ignored here ---
+    @pyqtSlot(str, str, list, str, object)
+    def display_response(self, user_input, ai_response, memories, ai_node_uuid, action_result_info):
+        # This slot now ONLY displays the AI's conversational response and memories.
+        # The action_result_info (if any) is handled by display_modification_confirmation.
         gui_logger.debug(f"GUI received AI response: '{ai_response[:50]}...' (UUID: {ai_node_uuid})")
-        gui_logger.debug(f"Received workspace action results: {workspace_results_list}")
-
-        # --- Display AI conversational response ---
+        # --- Pass ai_node_uuid to display_message for the AI bubble ---
         self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
         if memories:
             gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
@@ -1779,28 +1805,11 @@ class ChatWindow(QMainWindow):
                 self.display_error(f"Failed display memories: {e}")
         else:
             gui_logger.debug("No memories received for this interaction.")
-
-        # --- Display Workspace Action Results ---
-        if workspace_results_list:
-            gui_logger.info(f"Displaying {len(workspace_results_list)} workspace action results.")
-            for result_tuple in workspace_results_list:
-                if isinstance(result_tuple, tuple) and len(result_tuple) == 3:
-                    success, message, action_suffix = result_tuple
-                    # Use display_modification_confirmation to show these results
-                    # Need placeholders for user_input and target_info for this call
-                    action_name = action_suffix.split('_')[0] if '_' in action_suffix else action_suffix
-                    placeholder_input = f"Workspace Action: {action_name}"
-                    placeholder_target = "" # Target info isn't directly available here, keep blank
-                    self.display_modification_confirmation(placeholder_input, message, action_suffix, placeholder_target)
-                else:
-                    gui_logger.error(f"Invalid format in workspace_results_list: {result_tuple}")
-                    self.display_error(f"Received invalid workspace result format: {result_tuple}")
-
-        self._finalize_display() # Finalize after displaying everything
+        self._finalize_display()
 
     @pyqtSlot(str, str, str, str)
     def display_modification_confirmation(self, user_input, confirmation_message, action_type, target_info):
-        """Displays confirmation/result messages for memory mods AND workspace actions, using a styled task bubble."""
+        """Displays confirmation/result messages for actions, memory mods, etc., using a styled task bubble."""
         gui_logger.debug(
             f"GUI received confirmation/result. Action Type: {action_type}, Target: {target_info}, Msg: {confirmation_message}")
 
@@ -1883,14 +1892,14 @@ class ChatWindow(QMainWindow):
         self._add_widget_to_chat_layout(row_layout)
 
         # --- Finalize UI State ---
-        # This function is now called potentially multiple times by display_response
-        # The _finalize_display call at the end of display_response handles the overall state.
-        # We might want to remove the _finalize_display call here if it causes issues,
-        # but let's keep it for now as it might provide intermediate status updates.
+        # Determine status message based on success/failure
         final_status = "Action Completed." if is_success else "Action Failed."
-        if action_type == "none": final_status = "No action taken."
-        # Removed clarify handling
-        self.statusBar().showMessage(final_status, 4000) # Show temporary status update
+        if action_type == "none":
+            final_status = "No action taken."
+        elif "clarify" in action_type:
+            final_status = "Waiting for clarification..."  # Should be handled by finalize_display logic
+
+        self._finalize_display(status_msg=final_status, status_duration=4000)
 
     @pyqtSlot(str)
     def open_local_link(self, link_str: str):
@@ -1962,8 +1971,7 @@ class ChatWindow(QMainWindow):
         # Always mark processing as finished when this is called
         self.is_processing = False
 
-        # --- Determine UI State based on personality and processing ---
-        # REMOVED: Clarification logic
+        # --- Determine UI State based on personality, processing, and clarification ---
         should_be_enabled = bool(self.current_personality) and not self.is_processing
         final_status_msg = status_msg
         final_status_duration = status_duration
@@ -1971,25 +1979,32 @@ class ChatWindow(QMainWindow):
         final_light_status = "not_ready"  # Default to red if no personality
 
         if self.current_personality:
-            if self.is_processing: # Should generally be false when called, but handle defensively
+            if self.is_processing:  # Should generally not happen if called correctly, but handle defensively
                 final_status_msg = "Processing..."
-                final_status_duration = 0
+                final_status_duration = 0  # Persistent
                 final_placeholder = "Processing..."
-                final_light_status = "processing"
+                final_light_status = "processing"  # Orange while processing
                 should_be_enabled = False
-            # else: # Normal ready state (no clarification state anymore)
-            #     final_status_msg = status_msg
-            #     final_status_duration = status_duration
-            #     final_placeholder = "Type message, paste image, or /command..."
-            #     final_light_status = "ready"
-            #     should_be_enabled = True
-            # Simplified: If personality loaded and not processing, assume ready.
-            elif not self.is_processing:
-                 final_status_msg = status_msg
-                 final_status_duration = status_duration
-                 final_placeholder = "Type message, paste image, or /command..."
-                 final_light_status = "ready"
-                 should_be_enabled = True
+            elif self.awaiting_clarification:
+                # Find the missing args from the worker's pending state (if possible)
+                # This is a bit indirect, ideally the signal would carry this info again
+                missing_args_str = "missing info"
+                if self.worker and self.worker.pending_clarification:
+                    missing = self.worker.pending_clarification.get('missing_args', [])
+                    if missing: missing_args_str = ", ".join([f"'{arg}'" for arg in missing])
+
+                final_status_msg = f"Waiting for: {missing_args_str}"
+                final_status_duration = 0  # Persistent
+                final_placeholder = f"Enter the missing info..."
+                final_light_status = "loading"  # Yellow while waiting for clarification
+                should_be_enabled = True  # Input should be enabled to provide clarification
+            else:
+                # Normal ready state
+                final_status_msg = status_msg  # Use the message passed in (e.g., "Ready.", "Consolidation complete.")
+                final_status_duration = status_duration
+                final_placeholder = "Type message, paste image, or /command..."
+                final_light_status = "ready"  # Green light
+                should_be_enabled = True
         else:
             # No personality loaded state
             final_status_msg = "Please select a personality from the menu."
