@@ -354,6 +354,16 @@ class GraphMemoryClient:
 
         logger.info(f"GraphMemoryClient initialized for personality '{self.personality}'.")
 
+    def get_current_mood(self) -> tuple[float, float]:
+        """Returns the last calculated interaction mood (Valence, Arousal)."""
+        # Returns the mood calculated *after* the last interaction, used for the *next* retrieval bias.
+        return self.last_interaction_mood
+
+    def get_drive_state(self) -> dict:
+        """Returns the current drive state dictionary."""
+        # Return a copy to prevent external modification? Deep copy might be safer if nested.
+        return self.drive_state.copy() if self.drive_state else {}
+
 
     # --- Emotion Analysis Helper ---
     def _analyze_and_update_emotion(self, node_uuid: str):

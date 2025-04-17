@@ -99,6 +99,8 @@ class WorkerSignals(QObject):
     error = pyqtSignal(str)
     log_message = pyqtSignal(str)
     initial_history_ready = pyqtSignal(list) # NEW: Signal for initial history
+    mood_updated = pyqtSignal(tuple) # NEW: Signal for mood (V, A)
+    drive_state_updated = pyqtSignal(dict) # NEW: Signal for drive state
 
 
 # --- Worker Thread ---
@@ -190,7 +192,17 @@ class Worker(QThread):
                 gui_logger.error(f"Error checking/emitting pending re-greeting: {greet_e}", exc_info=True)
             # --- End re-greeting check ---
 
-            # --- Signal backend is ready AFTER history and potential greeting are handled ---
+            # --- Emit initial Mood and Drive State ---
+            try:
+                initial_mood = self.client.get_current_mood()
+                initial_drives = self.client.get_drive_state()
+                self.signals.mood_updated.emit(initial_mood)
+                self.signals.drive_state_updated.emit(initial_drives)
+                gui_logger.info(f"Emitted initial state: Mood={initial_mood}, Drives={initial_drives}")
+            except Exception as state_e:
+                gui_logger.error(f"Error getting/emitting initial mood/drive state: {state_e}", exc_info=True)
+
+            # --- Signal backend is ready AFTER history, potential greeting, and initial state are handled ---
             self.signals.backend_ready.emit(True, self.personality)
         except Exception as e:
             error_msg = f"FATAL: Failed initialize backend for '{self.personality}': {e}"
@@ -362,6 +374,16 @@ class Worker(QThread):
             if maintenance_task_queued:
                 gui_logger.debug("Resetting interaction counter after queuing maintenance task(s).")
                 self.interaction_count = 0
+
+            # --- Emit updated mood/drive state after successful interaction ---
+            try:
+                current_mood = self.client.get_current_mood()
+                current_drives = self.client.get_drive_state()
+                self.signals.mood_updated.emit(current_mood)
+                self.signals.drive_state_updated.emit(current_drives)
+                gui_logger.debug(f"Emitted updated state after interaction: Mood={current_mood}, Drives={current_drives}")
+            except Exception as state_e:
+                gui_logger.error(f"Error getting/emitting updated mood/drive state: {state_e}", exc_info=True)
 
     def handle_memory_maintenance_task(self):
         """Handles the task for running the nuanced forgetting process."""
@@ -1005,9 +1027,89 @@ class CollapsibleMemoryWidget(QWidget):
             gui_logger.debug(f"Ignoring non-saliency link click: {url.toString()}")
 
 
-# (Before class ChatWindow(QMainWindow): in gui_chat.py)
+# --- Collapsible Drive Widget ---
+class CollapsibleDriveWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.drive_state = {}
+        self.toggle_button = QPushButton()
+        self.toggle_button.setObjectName("DriveToggle") # Style like memory toggle
+        self.content_area = QTextBrowser()
+        self.content_area.setReadOnly(True)
+        self.content_area.setVisible(False)
+        self.content_area.setObjectName("DriveContent") # Style like memory content
 
-# (Before class ChatWindow(QMainWindow): in gui_chat.py)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.toggle_button)
+        layout.addWidget(self.content_area)
+
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False) # Start collapsed
+        self.toggle_button.toggled.connect(self.toggle_content)
+        self.update_widget({}) # Initial empty state
+
+    def update_widget(self, drive_state_dict: dict):
+        self.drive_state = drive_state_dict
+        self.update_button_text()
+        self.populate_content()
+
+    def update_button_text(self):
+        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"
+        self.toggle_button.setText(f"{prefix} AI Drive State")
+
+    def toggle_content(self, checked):
+        self.content_area.setVisible(checked)
+        self.update_button_text()
+        self.adjustSize()
+        QTimer.singleShot(0, self._update_parent_layout)
+
+    def _update_parent_layout(self):
+        if self.parentWidget() and self.parentWidget().layout():
+            self.parentWidget().layout().activate()
+
+    def populate_content(self):
+        if not self.drive_state or not self.drive_state.get("short_term"):
+            self.content_area.setHtml("<small><i>Drive state unavailable.</i></small>")
+            return
+
+        html_content = ""
+        short_term = self.drive_state.get("short_term", {})
+        long_term = self.drive_state.get("long_term", {})
+        # Assuming config is accessible somehow or passed in - for now, use defaults if needed
+        # Ideally, pass base_drives and lt_influence from ChatWindow if needed for baseline calc
+        base_drives = {"Connection": 0.1, "Safety": 0.2, "Understanding": 0.1, "Novelty": 0.05, "Control": 0.1} # Fallback
+        lt_influence = 1.0 # Fallback
+
+        sorted_drives = sorted(short_term.keys())
+
+        for drive_name in sorted_drives:
+            st_level = short_term.get(drive_name, 0.0)
+            lt_level = long_term.get(drive_name, 0.0)
+            config_baseline = base_drives.get(drive_name, 0.0)
+            dynamic_baseline = config_baseline + (lt_level * lt_influence)
+            deviation = st_level - dynamic_baseline
+
+            # Qualitative description
+            state_desc = "Neutral"
+            if deviation > 0.25: state_desc = "High"
+            elif deviation < -0.25: state_desc = "Low"
+
+            # Color coding (example)
+            color = "#CCCCCC" # Neutral
+            if state_desc == "High": color = "#8FBC8F" # Greenish
+            elif state_desc == "Low": color = "#F08080" # Reddish
+
+            html_content += (
+                f"<div style='margin-bottom: 3px;'>"
+                f"<b>{drive_name}:</b> <span style='color: {color};'>{state_desc}</span> "
+                f"<small>(Lvl: {st_level:.2f}, Base: {dynamic_baseline:.2f}, Dev: {deviation:+.2f})</small>"
+                f"</div>"
+            )
+
+        self.content_area.setHtml(html_content)
+
 
 class PasteLineEdit(QLineEdit):
     """A QLineEdit subclass that accepts pasted/dropped images/files via explicit reference."""
@@ -1170,10 +1272,14 @@ class ChatWindow(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setContentsMargins(0, 0, 0, 0) # Set margins for main layout
+
+        # --- Create Drive Summary Widget Instance ---
+        self.drive_summary_widget = CollapsibleDriveWidget(self.central_widget)
+        self.drive_summary_widget.setVisible(False) # Initially hidden
 
         self._create_menu_bar()
-        self._setup_ui_elements()  # Setup UI elements first
+        self._setup_ui_elements()  # Setup UI elements (adds drive widget to layout)
         self._setup_status_bar()  # Setup status bar including indicator
         self.apply_dark_theme()  # Apply theme AFTER UI elements exist
 
@@ -1320,7 +1426,9 @@ class ChatWindow(QMainWindow):
         self.input_layout.addWidget(self.send_button);
         self.input_layout.addWidget(self.consolidate_button);
         self.input_layout.addWidget(self.reset_button)
-        self.layout.addWidget(self.scroll_area, 1);
+        # --- Add Drive Summary Widget ABOVE scroll area ---
+        self.layout.addWidget(self.drive_summary_widget) # Add drive widget here
+        self.layout.addWidget(self.scroll_area, 1); # Chat scroll area takes remaining space
         self.layout.addWidget(self.input_frame)
 
         # --- Connect scrollbar signals ---
@@ -1330,11 +1438,18 @@ class ChatWindow(QMainWindow):
 
     def _setup_status_bar(self):
         """Creates the status bar and adds the status light widget."""
-        # Status Light Indicator (Label with a circle character)
-        self.status_light = QLabel("●")  # Use a unicode circle
-        self.status_light.setObjectName("StatusLight")  # For styling
-        # Add as a permanent widget to the right side
+        # Status Light Indicator
+        self.status_light = QLabel("●")
+        self.status_light.setObjectName("StatusLight")
         self.statusBar().addPermanentWidget(self.status_light)
+
+        # Emotion Indicator Label
+        self.emotion_indicator_label = QLabel("Mood: Neutral") # Initial text
+        self.emotion_indicator_label.setObjectName("EmotionIndicator") # For potential styling
+        self.emotion_indicator_label.setToolTip("Current estimated AI mood (Valence/Arousal)")
+        # Add emotion label BEFORE the status light
+        self.statusBar().addPermanentWidget(self.emotion_indicator_label)
+
         # Initial message set in __init__
 
     def apply_dark_theme(self):
@@ -1453,6 +1568,7 @@ class ChatWindow(QMainWindow):
        """)
         # Re-apply object names
         if hasattr(self, 'status_light'): self.status_light.setObjectName("StatusLight")
+        if hasattr(self, 'emotion_indicator_label'): self.emotion_indicator_label.setObjectName("EmotionIndicator") # Apply name
         # ... (re-apply other object names) ...
         if hasattr(self, 'attach_button'): self.attach_button.setObjectName("AttachButton")
         if hasattr(self, 'send_button'): self.send_button.setObjectName("SendButton")
@@ -1512,6 +1628,8 @@ class ChatWindow(QMainWindow):
         self.set_input_enabled(False)  # Disable input during switch
         self.update_status_light("loading")  # Yellow light while loading
         self.clear_chat_display()
+        self.drive_summary_widget.setVisible(False) # Hide drive summary during switch
+        self.update_emotion_indicator((0.0, 0.1)) # Reset emotion indicator
         self.display_message("System", f"Loading personality: {name}...")
         self.clear_attachment()  # Clear any pending attachments
         self.user_scrolled_up = False # Reset scroll flag on personality switch
@@ -1612,6 +1730,8 @@ class ChatWindow(QMainWindow):
         self.worker.signals.error.connect(self.display_error)
         self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
         self.worker.signals.initial_history_ready.connect(self.display_initial_history) # NEW Connection
+        self.worker.signals.mood_updated.connect(self.update_emotion_indicator) # NEW Connection
+        self.worker.signals.drive_state_updated.connect(self.update_drive_summary) # NEW Connection
         self.worker.finished.connect(self.on_worker_finished)
 
         self.worker.start()  # Start the thread execution (calls run())
@@ -1629,6 +1749,7 @@ class ChatWindow(QMainWindow):
                 gui_logger.info(f"Backend ready for '{personality_name}'. Enabling input.")
                 self.update_status_light("ready")  # Green light
                 self.set_input_enabled(True)  # Enable input fields and buttons
+                self.drive_summary_widget.setVisible(True) # Show drive summary widget
                 self.is_processing = False  # No longer processing the load
                 self.statusBar().showMessage(f"'{personality_name}' loaded. Ready.", 5000)
             else:
@@ -1708,6 +1829,39 @@ class ChatWindow(QMainWindow):
 
         # Scroll to bottom after adding initial history
         QTimer.singleShot(100, self._scroll_to_bottom)
+
+    @pyqtSlot(tuple)
+    def update_emotion_indicator(self, mood_tuple: tuple):
+        """Updates the emotion indicator label based on Valence/Arousal."""
+        if not hasattr(self, 'emotion_indicator_label'): return
+        try:
+            valence, arousal = mood_tuple
+            # Simple mapping to descriptive text
+            mood_desc = "Neutral"
+            if valence > 0.3:
+                if arousal > 0.6: mood_desc = "Excited"
+                elif arousal > 0.3: mood_desc = "Happy"
+                else: mood_desc = "Content"
+            elif valence < -0.3:
+                if arousal > 0.6: mood_desc = "Distressed" # High arousal, negative valence
+                elif arousal > 0.3: mood_desc = "Upset"
+                else: mood_desc = "Sad"
+            else: # Neutral valence
+                if arousal > 0.6: mood_desc = "Agitated" # High arousal, neutral valence
+                elif arousal > 0.3: mood_desc = "Alert"
+                else: mood_desc = "Calm" # Low arousal, neutral valence -> Calm? or Neutral?
+
+            self.emotion_indicator_label.setText(f"Mood: {mood_desc}")
+            self.emotion_indicator_label.setToolTip(f"Valence: {valence:.2f}, Arousal: {arousal:.2f}")
+        except Exception as e:
+            gui_logger.error(f"Error updating emotion indicator: {e}")
+            self.emotion_indicator_label.setText("Mood: Error")
+
+    @pyqtSlot(dict)
+    def update_drive_summary(self, drive_state_dict: dict):
+        """Updates the collapsible drive summary widget."""
+        if hasattr(self, 'drive_summary_widget'):
+            self.drive_summary_widget.update_widget(drive_state_dict)
 
     def show_startup_error(self, message):
         # (Implementation remains the same)
