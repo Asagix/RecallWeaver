@@ -54,14 +54,7 @@ llm_models:
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  memory_modification_analysis:
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 150
-    temperature: 0.2
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.0
+  # Removed duplicate memory_modification_analysis entry
   query_type_classification:
     api_type: "generate"
     model_name: "koboldcpp-default"
@@ -105,15 +98,7 @@ llm_models:
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  # --- Workspace Planning Task ---
-  workspace_planning:
-    api_type: "generate" # Or chat_completions if model works better
-    model_name: "koboldcpp-default"
-    max_length: 768 # Allow more tokens for potentially complex plans/content
-    temperature: 0.2 # Low temp for structured output
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.0
+  # Removed duplicate workspace_planning entry
   # --- Consolidation Tasks ---
   consolidation_summary:
     api_type: "generate"
@@ -393,6 +378,16 @@ gui_style:
     padding_vertical_px: 8
     padding_horizontal_px: 16
 
+# --- GUI Keywords --- # Moved to top level
+modification_keywords:
+  - "forget"
+  - "delete"
+  - "remove"
+  - "edit"
+  - "change"
+  - "correct"
+  - "update"
+
 # --- Subconscious Drives ---
 subconscious_drives:
   enabled: true # Master switch for the drive system
@@ -451,6 +446,20 @@ subconscious_drives:
       Novelty: 0.25    # Positive deviation (excited) -> increases arousal. Negative (bored) -> decreases arousal. (Increased from 0.2)
       Control: 0.20    # Positive deviation (competent) -> slightly increases arousal (focused?). Negative (loss of control) -> increases arousal (agitation). (Changed sign and value from -0.15)
     max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
+
+# --- Feedback System ---
+feedback_system:
+  enable: true # Enable/disable user feedback processing
+  # --- Saliency Influence ---
+  # Additive adjustments to saliency score based on feedback
+  saliency_upvote_boost: 0.1
+  saliency_downvote_penalty: 0.15 # Penalty is subtracted
+
+# --- Autobiographical Self-Model (ASM) Generation ---
+autobiographical_model:
+  num_salient_nodes: 10   # Number of top salient nodes to consider
+  num_emotional_nodes: 10 # Number of top emotional nodes to consider
+  max_context_nodes: 15   # Max total nodes to feed into ASM generation prompt
 
 # --- Feedback System ---
 feedback_system:
