@@ -2203,6 +2203,7 @@ class GraphMemoryClient:
         # Add instruction about temporal awareness AND action capability
         # --- System Instructions for AI ---
         system_instructions = [
+            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]", # Added time awareness instruction
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
@@ -3110,12 +3111,23 @@ class GraphMemoryClient:
                             # Call the dedicated generation prompt
                             gen_prompt_template = self._load_prompt("generate_file_content_prompt.txt")
                             if gen_prompt_template:
-                                # Use the original user input as context for generation
+                                # --- Format relevant memories for the generation prompt ---
+                                # Use memory_chain_data retrieved earlier in this interaction
+                                relevant_memories_text = "\n".join([
+                                    f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {strip_emojis(mem.get('text', ''))}"
+                                    for mem in memory_chain_data # Use the already retrieved memories
+                                ])
+                                if not relevant_memories_text:
+                                    relevant_memories_text = "[No relevant memories retrieved for this context]"
+                                logger.debug(f"Providing memories to file generation prompt:\n{relevant_memories_text[:200]}...")
+
+                                # Use the original user input and formatted memories as context
                                 gen_prompt = gen_prompt_template.format(
-                                    user_request_context=user_input, # Pass original user input
-                                    ai_description=ai_description
+                                    user_request_context=user_input,
+                                    ai_description=ai_description,
+                                    relevant_memories=relevant_memories_text # Pass formatted memories
                                 )
-                                logger.debug(f"Sending file content generation prompt:\n{gen_prompt}")
+                                logger.debug(f"Sending file content generation prompt (with memories):\n{gen_prompt}")
                                 # --- Use configured LLM call ---
                                 gen_response = self._call_configured_llm('file_content_generation', prompt=gen_prompt)
 

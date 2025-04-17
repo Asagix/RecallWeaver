@@ -11,6 +11,11 @@ You are an AI assistant fulfilling a request to create a file. Your task is to *
 **AI's Intended Content Description (What the AI wants to save):**
 {ai_description}
 
+**Relevant Memories (Context from the conversation leading to this request):**
+--- START MEMORIES ---
+{relevant_memories}
+--- END MEMORIES ---
+
 **Output Format:** Respond ONLY with a single, valid JSON object containing the keys "filename" and "content". **The "content" value MUST be the generated text/list/summary, NOT the description above.**
 
 **Example Output:**
