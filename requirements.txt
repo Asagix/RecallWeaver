@@ -33,3 +33,4 @@ emoji<2.0.0 # Pin emoji version for text2emotion compatibility
 # Dependencies for specific tokenizers (e.g., Gemma)
 protobuf
 tiktoken
+sentencepiece # Required by GemmaTokenizer (even slow version)
