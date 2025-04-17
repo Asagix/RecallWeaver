@@ -2322,9 +2322,11 @@ class GraphMemoryClient:
         logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
         llm_response_str = self._call_kobold_api(full_prompt, max_length=512, temperature=0.1)
 
-        if not llm_response_str:
-            logger.error("LLM call failed for action analysis (empty response).")
-            return {'action': 'error', 'reason': 'LLM call failed for action analysis'}
+        # --- Check for API call errors BEFORE parsing ---
+        if not llm_response_str or llm_response_str.startswith("Error:"):
+            error_reason = llm_response_str if llm_response_str else "LLM call failed (empty response)"
+            logger.error(f"Action analysis failed due to LLM API error: {error_reason}")
+            return {'action': 'error', 'reason': error_reason}
 
         parsed_result = None
         json_str = "" # Initialize json_str for potential use in error logging
