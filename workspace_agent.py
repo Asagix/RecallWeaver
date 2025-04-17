@@ -1,8 +1,8 @@
 import logging
-import json # <<< Add json import
-import re # <<< Add re import
+import json
+import re
 import file_manager # Import the existing file manager
-from persistent_backend_graph import GraphMemoryClient # <<< Import GraphMemoryClient to use _call_configured_llm
+# Removed: from persistent_backend_graph import GraphMemoryClient
 
 logger = logging.getLogger(__name__)
 
@@ -10,35 +10,19 @@ class WorkspaceAgent:
     """
     Handles the execution of a planned sequence of workspace actions.
     """
-    def __init__(self, client_config: dict, personality: str):
+    def __init__(self, client_instance):
         """
         Initializes the WorkspaceAgent.
 
         Args:
-            client_config: The main configuration dictionary (from GraphMemoryClient).
-            personality: The name of the current personality.
+            client_instance: An instance of GraphMemoryClient.
         """
-        self.config = client_config # Main config dict
-        self.personality = personality
-        # Store a reference to the client instance to access its methods/config
-        # This assumes the client is passed or accessible. If not, need to adjust initialization.
-        # For now, let's assume we need to instantiate a minimal client or pass it.
-        # Let's modify __init__ to accept the client instance.
-        # self.client = client_instance # Requires passing GraphMemoryClient instance
-        # Alternative: Re-instantiate parts needed? Less ideal.
-        # Let's assume we need the client's _call_configured_llm and _load_prompt
-        # We might need to pass the client instance when creating WorkspaceAgent
-        # For now, we'll try to instantiate a temporary client inside the method if needed.
-        # --- UPDATE: Instantiate a client instance here ---
-        # This is slightly inefficient but avoids changing the call signature in persistent_backend_graph
-        try:
-             # Pass the same config and personality
-             self.client = GraphMemoryClient(client_config, personality)
-             logger.info(f"WorkspaceAgent initialized for personality '{self.personality}' and created internal GraphMemoryClient instance.")
-        except Exception as e:
-             logger.error(f"WorkspaceAgent failed to initialize internal GraphMemoryClient: {e}", exc_info=True)
-             self.client = None # Ensure client is None if init fails
-             # This might prevent consolidation LLM calls later.
+        if client_instance is None:
+             raise ValueError("WorkspaceAgent requires a valid GraphMemoryClient instance.")
+        self.client = client_instance # Store the passed client instance
+        self.config = self.client.config # Get config from the client instance
+        self.personality = self.client.personality # Get personality from the client instance
+        logger.info(f"WorkspaceAgent initialized for personality '{self.personality}' using provided client instance.")
 
     def execute_plan(self, plan: list) -> list[tuple[bool, str, str]]:
         """

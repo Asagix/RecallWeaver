@@ -5485,9 +5485,10 @@ class GraphMemoryClient:
             if parsed_plan is not None:
                 if isinstance(parsed_plan, list) and len(parsed_plan) > 0:
                     logger.info(f"Workspace plan parsed with {len(parsed_plan)} step(s). Executing...")
-                    # Import agent here to avoid circular dependency at top level if needed
+                    # Import agent here to avoid circular dependency at top level
                     from workspace_agent import WorkspaceAgent
-                    agent = WorkspaceAgent(self.config, self.personality)
+                    # Pass the current client instance (self) to the agent
+                    agent = WorkspaceAgent(self)
                     workspace_action_results = agent.execute_plan(parsed_plan)
                     logger.info(f"Workspace plan execution finished. Results: {workspace_action_results}")
                 elif isinstance(parsed_plan, list) and len(parsed_plan) == 0:
