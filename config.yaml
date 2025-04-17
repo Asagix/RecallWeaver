@@ -182,45 +182,61 @@ gui_style:
 # --- Subconscious Drives ---
 subconscious_drives:
   enabled: true # Master switch for the drive system
+
+  # --- Core Drive Definitions & Baselines ---
+  # Define the core drives and their default baseline levels (0.0 = neutral).
+  # These represent the AI's inherent tendencies before long-term learning.
+  base_drives:
+    Connection: 0.1 # Base desire for positive social interaction.
+    Safety: 0.2     # Base desire for security, stability, predictability.
+    Understanding: 0.1 # Base drive to learn, reduce uncertainty.
+    Novelty: 0.05   # Base drive for new experiences, stimulation.
+    Control: 0.1    # Base drive for agency, competence, influence.
+
   # --- Short-Term Drive Dynamics ---
-  # Define the core drives and their *base* configuration baseline (before long-term influence)
-  base_drives: # Renamed from core_drives for clarity
-    Connection: 0.1 # Base need for connection
-    Safety: 0.2     # Base need for safety/predictability
-    Understanding: 0.1 # Baseline drive to understand
-    Novelty: 0.05   # Slight baseline drive for new things
-    Control: 0.1    # Base drive for agency/control
-  # Parameters for short-term drive updates (based on recent interactions)
-  short_term_update_interval_interactions: 10 # How often to potentially update short-term drives via LLM
-  short_term_decay_rate: 0.05 # How quickly short-term activation returns towards dynamic baseline (0=no decay)
-  short_term_satisfaction_factor: 0.1 # How much satisfaction reduces short-term drive activation
-  short_term_frustration_factor: 0.15 # How much frustration increases short-term drive activation
+  # Short-term state fluctuates based on recent events and decays towards a dynamic baseline.
+  short_term_update_interval_interactions: 10 # How often (in user/AI turns) to run LLM analysis for short-term updates (0=disable LLM analysis).
+  short_term_decay_rate: 0.05 # How quickly short-term activation returns towards dynamic baseline per update cycle (0=no decay). Higher = faster return to baseline.
+
+  # --- Heuristic Short-Term Adjustments ---
+  # Direct adjustments applied immediately based on specific events. Values are added/subtracted from the short-term drive level.
+  heuristic_adjustment_factors:
+    action_success_control: 0.05   # Increase Control on successful action execution.
+    action_fail_control: -0.08     # Decrease Control on failed action execution.
+    saliency_increase_connection: 0.03 # Increase Connection slightly on [+S] feedback.
+    saliency_decrease_connection: -0.02 # Decrease Connection slightly on [-S] feedback.
+    # Add more heuristics here (e.g., keyword triggers) if desired later.
+
+  # --- LLM-Based Short-Term Adjustments ---
+  # Factors applied based on LLM analysis ("satisfied"/"frustrated") during the update interval.
+  llm_satisfaction_factor: 0.1 # How much 'satisfied' status reduces drive activation (moves towards baseline). Applied multiplicatively to the deviation above baseline.
+  llm_frustration_factor: 0.15 # How much 'frustrated' status increases drive activation (moves away from baseline). Applied additively.
 
   # --- Long-Term Drive Dynamics ---
-  long_term_update_interval_consolidations: 5 # How many consolidations before updating long-term drives (0=disable)
-  long_term_adjustment_factor: 0.05 # How much LLM analysis nudges long-term drives (0-1 scale)
-  long_term_influence_on_baseline: 1.0 # Multiplier for how much long-term drives affect short-term baseline (0=none, 1=direct addition)
+  # Long-term state reflects persistent tendencies, updated less frequently based on ASM analysis.
+  long_term_update_interval_consolidations: 5 # How many consolidations before running LLM analysis for long-term updates (0=disable).
+  long_term_adjustment_factor: 0.05 # How much LLM analysis nudges long-term drives per update (0-1 scale).
+  long_term_influence_on_baseline: 1.0 # Multiplier for how much long-term drives shift the short-term baseline (0=none, 1=direct addition).
 
-  # --- Mood Influence (Based on Short-Term Drive Deviation from Dynamic Baseline) ---
+  # --- Mood Influence (How drive deviations affect V/A used for retrieval bias) ---
   mood_influence:
-    # How much short-term drive activation *deviation from the dynamic baseline* influences valence/arousal (V/A)
-    # Example: High unmet 'Safety' might increase arousal and decrease valence
-    # Format: drive_name: [valence_factor, arousal_factor]
-    # Positive factor = increases V/A, Negative factor = decreases V/A
-    # Factors are multiplied by the drive's current *deviation* (short_term_activation - dynamic_baseline)
-    valence_factors:
-      Connection: 0.1  # High unmet connection need slightly increases positive valence pull
-      Safety: -0.2     # High unmet safety need strongly decreases valence pull (more negative)
-      Understanding: 0.05
-      Novelty: 0.05
-      Control: -0.1    # High control need slightly decreases valence pull
-    arousal_factors:
-      Connection: 0.05 # High connection need slightly increases arousal
-      Safety: 0.3      # High safety need strongly increases arousal
-      Understanding: 0.1
-      Novelty: 0.15    # High novelty need increases arousal
-      Control: 0.2     # High control need increases arousal
-    max_mood_adjustment: 0.3 # Maximum absolute change to V or A from drives
+    # Factors multiplied by the drive's current *deviation* (short_term_activation - dynamic_baseline)
+    # to calculate adjustments to the base Valence/Arousal mood state.
+    # Positive deviation = drive level is *higher* than baseline (need potentially met/overshot).
+    # Negative deviation = drive level is *lower* than baseline (need potentially unmet).
+    valence_factors: # How deviation affects Pleasantness (-1 to +1)
+      Connection: 0.15  # High connection satisfaction increases pleasantness. Low connection decreases it.
+      Safety: -0.25     # High safety frustration (low level) strongly decreases pleasantness. High safety satisfaction slightly increases it.
+      Understanding: 0.1 # High understanding satisfaction increases pleasantness. Frustration decreases it.
+      Novelty: 0.05    # High novelty satisfaction slightly increases pleasantness.
+      Control: 0.1     # High control satisfaction increases pleasantness. Frustration decreases it.
+    arousal_factors: # How deviation affects Activation/Energy (0 to 1)
+      Connection: 0.05 # High connection satisfaction slightly increases arousal.
+      Safety: -0.3     # High safety frustration (low level) strongly *increases* arousal (anxiety). High safety satisfaction decreases arousal (calm).
+      Understanding: 0.05 # Understanding satisfaction slightly increases arousal (engagement).
+      Novelty: 0.2     # High novelty satisfaction increases arousal (excitement). Frustration decreases it (boredom).
+      Control: 0.15    # High control satisfaction increases arousal (confidence). Frustration increases it (agitation).
+    max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
 
 # --- Saliency Calculation ---
 saliency:

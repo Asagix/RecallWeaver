@@ -957,12 +957,30 @@ class GraphMemoryClient:
                 dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
 
                 # Calculate deviation from the *dynamic* baseline
-                # Positive deviation = higher activation than baseline (need potentially met or overshot)
-                # Negative deviation = lower activation than baseline (need potentially unmet)
                 deviation = current_activation - dynamic_baseline
+                # Positive deviation = drive level is *higher* than baseline (need potentially met/overshot).
+                # Negative deviation = drive level is *lower* than baseline (need potentially unmet).
 
                 # Apply factors based on deviation
-                valence_adj = valence_factors.get(drive_name, 0.0) * deviation
+                # Note: The sign of the factor in config determines the direction of influence.
+                # e.g., Safety valence factor is negative (-0.25), so if deviation is negative (unmet need),
+                # the valence adjustment will be positive (-0.25 * negative_dev = positive), pushing valence up slightly (less negative).
+                # If deviation is positive (met need), adjustment is negative (-0.25 * positive_dev = negative), pushing valence down.
+                # This seems counter-intuitive for Safety valence. Let's rethink.
+
+                # --- Revised Mood Influence Logic ---
+                # We want unmet needs (negative deviation) to generally decrease valence and increase arousal (stress/motivation).
+                # We want met needs (positive deviation) to generally increase valence and potentially decrease arousal (calm/satisfaction).
+                # The factors in config should represent the *strength* of this effect.
+                valence_factor = valence_factors.get(drive_name, 0.0)
+                arousal_factor = arousal_factors.get(drive_name, 0.0)
+
+                # Valence: If factor is positive, positive deviation increases valence. If factor is negative, positive deviation decreases valence.
+                valence_adj = valence_factor * deviation
+                # Arousal: If factor is positive, positive deviation increases arousal. If factor is negative, positive deviation decreases arousal.
+                # However, arousal is often increased by *both* strong satisfaction and strong frustration.
+                # Let's use the *magnitude* of the deviation for arousal, scaled by the factor's sign.
+                arousal_adj = arousal_factor * deviation # Keep simple for now, factor sign determines direction. Review config factors.
                 arousal_adj = arousal_factors.get(drive_name, 0.0) * deviation
                 valence_adjustment += valence_adj
                 arousal_adjustment += arousal_adj
@@ -1470,6 +1488,29 @@ class GraphMemoryClient:
                     # Save memory after update? Could be frequent. Maybe defer saving?
                     # Let's save for now to ensure persistence.
                     self._save_memory()
+
+                    # --- Apply Heuristic Drive Adjustment for Saliency Feedback ---
+                    try:
+                        drive_cfg = self.config.get('subconscious_drives', {})
+                        if drive_cfg.get('enabled', False):
+                            heuristics = drive_cfg.get('heuristic_adjustment_factors', {})
+                            adjustment = 0.0
+                            target_drive = "Connection" # Feedback relates to connection
+
+                            if direction == 'increase':
+                                adjustment = heuristics.get('saliency_increase_connection', 0.0)
+                            elif direction == 'decrease':
+                                adjustment = heuristics.get('saliency_decrease_connection', 0.0)
+
+                            if abs(adjustment) > 1e-4 and target_drive in self.drive_state["short_term"]:
+                                current_level = self.drive_state["short_term"][target_drive]
+                                new_level = current_level + adjustment
+                                self.drive_state["short_term"][target_drive] = new_level
+                                logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to saliency feedback ({direction}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                                # Saving happens above
+                    except Exception as e:
+                        logger.error(f"Error applying heuristic drive adjustment after saliency update: {e}", exc_info=True)
+
                 else:
                      logger.debug(f"Saliency for {node_uuid[:8]} unchanged (already at limit or no effective change).")
 
@@ -3175,9 +3216,26 @@ class GraphMemoryClient:
                     if not prompt_template:
                         logger.error("Failed to load drive analysis prompt template. Skipping LLM update.")
                     else:
+                        # --- Format Current Drive State for Prompt ---
+                        current_drive_state_str = "[Current Drive State (Relative to Baseline):]\n"
+                        drive_state_parts = []
+                        for drive_name, current_activation in self.drive_state["short_term"].items():
+                            config_baseline = base_drives.get(drive_name, 0.0)
+                            long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
+                            dynamic_baseline = config_baseline + (long_term_level * long_term_influence)
+                            deviation = current_activation - dynamic_baseline
+                            state_desc = "Neutral"
+                            if deviation > 0.2: state_desc = "High"
+                            elif deviation < -0.2: state_desc = "Low"
+                            drive_state_parts.append(f"- {drive_name}: {state_desc} (Deviation: {deviation:+.2f})")
+                        current_drive_state_str += "\n".join(drive_state_parts) if drive_state_parts else "Neutral"
+
                         # 3. Call LLM
-                        full_prompt = prompt_template.format(context_text=context_text)
-                        logger.debug(f"Sending drive analysis prompt:\n{full_prompt[:300]}...")
+                        full_prompt = prompt_template.format(
+                            context_text=context_text,
+                            current_drive_state=current_drive_state_str # Pass formatted state
+                        )
+                        logger.debug(f"Sending drive analysis prompt:\n{full_prompt[:500]}...") # Log more context
                         llm_response_str = self._call_kobold_api(full_prompt, max_length=150, temperature=0.3)
 
                         # 4. Parse Response
@@ -3191,8 +3249,8 @@ class GraphMemoryClient:
                                     logger.debug(f"Parsed short-term drive adjustments from LLM: {drive_adjustments}")
 
                                     # 5. Adjust short_term drive_state based on satisfaction/frustration factors
-                                    satisfaction_factor = drive_cfg.get('short_term_satisfaction_factor', 0.1)
-                                    frustration_factor = drive_cfg.get('short_term_frustration_factor', 0.15)
+                                    satisfaction_factor = drive_cfg.get('llm_satisfaction_factor', 0.1) # Use new config key
+                                    frustration_factor = drive_cfg.get('llm_frustration_factor', 0.15) # Use new config key
 
                                     for drive_name, status in drive_adjustments.items():
                                         if drive_name in self.drive_state["short_term"]:
@@ -3204,27 +3262,25 @@ class GraphMemoryClient:
                                             adjustment = 0.0
 
                                             if status == "satisfied":
-                                                # Reduce activation towards dynamic baseline
-                                                # Adjustment is negative, proportional to how far *above* dynamic baseline it is
-                                                adjustment = -max(0, current_activation - dynamic_baseline) * satisfaction_factor
-                                                # The line below was redundant and used the wrong variable, removing it.
-                                                # adjustment = -max(0, current_activation - baseline) * satisfaction_factor
+                                                # Reduce activation towards dynamic baseline (multiplicative adjustment on deviation)
+                                                deviation = current_activation - dynamic_baseline
+                                                if deviation > 0: # Only reduce if above baseline
+                                                     adjustment = -deviation * satisfaction_factor # Adjustment is negative
                                                 logger.debug(f"  Drive '{drive_name}' satisfied. Adjustment: {adjustment:.3f}")
                                             elif status == "frustrated":
-                                                # Increase activation away from baseline
-                                                # Adjustment is positive, proportional to how far *below* baseline it is (or just a fixed amount?)
-                                                # Increase activation (pushing the need higher)
-                                                # Simple additive increase for frustration for now
-                                                adjustment = frustration_factor
+                                                # Increase activation (additive adjustment)
+                                                adjustment = frustration_factor # Adjustment is positive
                                                 logger.debug(f"  Drive '{drive_name}' frustrated. Adjustment: {adjustment:.3f}")
                                             # else: status is neutral/unclear, no adjustment
 
                                             if abs(adjustment) > 1e-4:
                                                 # Apply adjustment to short-term state
-                                                self.drive_state["short_term"][drive_name] += adjustment
+                                                new_level = current_activation + adjustment
                                                 # Optional: Clamp short-term activation? (e.g., between -1 and 2?)
-                                                # self.drive_state["short_term"][drive_name] = max(-1.0, min(2.0, self.drive_state["short_term"][drive_name]))
+                                                # new_level = max(-1.0, min(2.0, new_level))
+                                                self.drive_state["short_term"][drive_name] = new_level
                                                 changed = True # Mark that state was changed by LLM analysis
+                                                logger.info(f"Applied LLM drive adjustment to '{drive_name}' ({status}): {current_activation:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
                                         else:
                                             logger.warning(f"LLM returned adjustment for unknown drive '{drive_name}'.")
 
@@ -3746,6 +3802,30 @@ class GraphMemoryClient:
         # Log the full message if it's short, otherwise truncate
         log_message_detail = message if len(message) < 150 else message[:150] + '...'
         logger.log(log_level, f"Action '{action}' execution result: Success={success}, Suffix='{action_suffix}', Msg='{log_message_detail}'")
+
+        # --- Apply Heuristic Drive Adjustment ---
+        try:
+            drive_cfg = self.config.get('subconscious_drives', {})
+            if drive_cfg.get('enabled', False):
+                heuristics = drive_cfg.get('heuristic_adjustment_factors', {})
+                adjustment = 0.0
+                target_drive = "Control" # Default target drive for actions
+
+                if success:
+                    adjustment = heuristics.get('action_success_control', 0.0)
+                else:
+                    adjustment = heuristics.get('action_fail_control', 0.0)
+
+                if abs(adjustment) > 1e-4 and target_drive in self.drive_state["short_term"]:
+                    current_level = self.drive_state["short_term"][target_drive]
+                    new_level = current_level + adjustment
+                    # Optional: Clamp adjustment range?
+                    self.drive_state["short_term"][target_drive] = new_level
+                    logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to action result ({'Success' if success else 'Fail'}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                    # No need to save here, saving happens elsewhere (e.g., end of interaction)
+        except Exception as e:
+            logger.error(f"Error applying heuristic drive adjustment after action execution: {e}", exc_info=True)
+
         return success, message, action_suffix
 
     def _consolidate_summarize(self, context_text: str, nodes_data: list, active_nodes_to_process: list) -> tuple[str | None, bool]:

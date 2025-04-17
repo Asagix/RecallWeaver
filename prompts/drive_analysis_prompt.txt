@@ -13,8 +13,11 @@ Analyze the following conversation excerpt. Consider the underlying needs and mo
 {context_text}
 --- END ---
 
+**AI's Current Drive State (Relative to Baseline):**
+{current_drive_state}
+
 **Task:**
-For **each** core drive listed above, determine if the conversation excerpt suggests the drive was primarily **satisfied**, **frustrated**, or **neutral/unclear** for the AI participant based *only* on the provided text. Consider both explicit statements and subtle implications (e.g., expressions of confusion might relate to 'Understanding', seeking praise to 'Connection' or 'Control').
+Based *only* on the **Conversation Excerpt** and considering the **AI's Current Drive State**, determine if the excerpt suggests each core drive was primarily **satisfied**, **frustrated**, or **neutral/unclear** for the AI participant *during this excerpt*. Consider both explicit statements and subtle implications (e.g., expressions of confusion might relate to 'Understanding', seeking praise to 'Connection' or 'Control').
 
 **Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be ONLY one of the strings: "satisfied", "frustrated", or "neutral".
 
