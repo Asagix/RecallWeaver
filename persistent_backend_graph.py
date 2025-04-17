@@ -3178,9 +3178,13 @@ class GraphMemoryClient:
             args_executed = action_data.get("args", {}) if 'action_data' in locals() else {}
             target_info_placeholder = str(args_executed)[:100] # Use args dict string representation
 
+            # Determine the action suffix safely. It should be set if action_result_message is set,
+            # but use action_executed as a fallback just in case.
+            final_action_suffix = action_suffix if 'action_suffix' in locals() else f"{action_executed}_unknown"
+
             action_result_info = {
                 "message": action_result_message, # The user-facing message generated earlier
-                "action_type": action_suffix if 'action_suffix' in locals() else f"{action_executed}_unknown", # The success/fail suffix
+                "action_type": final_action_suffix, # Use the safely determined suffix
                 "target_info": target_info_placeholder
             }
             logger.debug(f"Prepared action_result_info: {action_result_info}")
