@@ -5869,13 +5869,15 @@ class GraphMemoryClient:
 
                     # --- Validate Structured ASM ---
                     if isinstance(parsed_data, dict):
-                        required_keys = ["core_traits", "recurring_themes", "significant_events", "values_beliefs", "summary_statement"]
+                        # --- Updated required keys to match the new prompt structure ---
+                        required_keys = ["core_traits", "recurring_themes", "goals_motivations", "relational_stance", "emotional_profile", "summary_statement"]
                         if all(key in parsed_data for key in required_keys):
                             # Basic type validation (can be expanded)
                             if (isinstance(parsed_data["core_traits"], list) and
                                 isinstance(parsed_data["recurring_themes"], list) and
-                                isinstance(parsed_data["significant_events"], list) and
-                                isinstance(parsed_data["values_beliefs"], list) and
+                                isinstance(parsed_data["goals_motivations"], list) and # Check new key type
+                                isinstance(parsed_data["relational_stance"], str) and # Check new key type
+                                isinstance(parsed_data["emotional_profile"], str) and # Check new key type
                                 isinstance(parsed_data["summary_statement"], str)):
 
                                 # Update the entire model
