@@ -37,7 +37,16 @@ llm_models:
     temperature: 0.7
     top_p: 0.9
   # --- Analysis Tasks (Generally need low temperature, specific max lengths) ---
-  action_analysis:
+  # --- DEPRECATED: Use workspace_planning instead ---
+  action_analysis: # Keep entry but maybe mark as unused or lower resources
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 10 # Reduce length significantly if kept
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 10
+    min_p: 0.0
+  memory_modification_analysis:
     api_type: "generate"
     model_name: "koboldcpp-default"
     max_length: 512 # Allow longer for complex args

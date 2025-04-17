@@ -659,10 +659,11 @@ class Worker(QThread):
                 # Should not happen if pending_clarification is set correctly, but handle defensively.
                 gui_logger.warning(
                     "Clarification was pending, but no missing args listed. Clearing state and proceeding normally.")
-                self.pending_clarification = None
+                self.pending_clarification = None # This attribute is removed, but keep the logic flow comment
                 # Fall through to normal processing...
 
         # --- If no clarification pending, proceed as normal ---
+        # REMOVED: Clarification state is no longer managed here.
 
         # --- Prioritize Image Attachment ---
         if attachment and attachment.get('type') == 'image':
