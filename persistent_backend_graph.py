@@ -3237,13 +3237,13 @@ class GraphMemoryClient:
         # except Exception as plan_e:
         #      logger.error(f"Unexpected error during workspace planning phase: {plan_e}", exc_info=True)
 
-        # --- Tuning Log: Interaction End ---
-        log_tuning_event("INTERACTION_END", {
-            "interaction_id": interaction_id,
-            "personality": self.personality,
-            "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
-            "retrieved_memory_count": len(memory_chain_data),
-            "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
+            # --- Tuning Log: Interaction End ---
+            log_tuning_event("INTERACTION_END", {
+                "interaction_id": interaction_id,
+                "personality": self.personality,
+                "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
+                "retrieved_memory_count": len(memory_chain_data),
+                "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
                 "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
                 # "workspace_actions_attempted": len(workspace_action_results), # Removed
             })
