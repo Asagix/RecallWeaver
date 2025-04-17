@@ -2282,6 +2282,7 @@ class GraphMemoryClient:
             'use_story': False,
             'use_authors_note': False,
             'use_world_info': False,
+            # 'model': model_name, # KoboldCpp generate API often ignores this, but include if needed
         }
 
         # Log payload (masking potentially long prompt)
@@ -2373,7 +2374,8 @@ class GraphMemoryClient:
         )
 
         logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=512, temperature=0.1)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('action_analysis', prompt=full_prompt)
 
         # --- Check for API call errors BEFORE parsing ---
         if not llm_response_str or llm_response_str.startswith("Error:"):
@@ -2549,9 +2551,10 @@ class GraphMemoryClient:
 
         full_prompt = prompt_template.format(request_text=request)
 
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=150, temperature=0.2)
-        if not llm_response_str:
-            return {'action': 'error', 'reason': 'LLM call failed'}
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('memory_modification_analysis', prompt=full_prompt)
+        if not llm_response_str or llm_response_str.startswith("Error:"): # Check for helper errors too
+            return {'action': 'error', 'reason': llm_response_str or 'LLM call failed'}
 
         try:
             # Clean potential markdown fences before parsing
@@ -2598,11 +2601,14 @@ class GraphMemoryClient:
             return "other"
 
         full_prompt = prompt_template.format(query_text=query_text)
-        # Use low temperature for classification
-        llm_response = self._call_kobold_api(full_prompt, max_length=10, temperature=0.1)
+        # --- Use configured LLM call ---
+        llm_response = self._call_configured_llm('query_type_classification', prompt=full_prompt)
         classification = llm_response.strip().lower()
 
-        if classification in ["episodic", "semantic", "other"]:
+        if llm_response.startswith("Error:"):
+             logger.error(f"Query classification failed: {llm_response}")
+             return "other" # Default on error
+        elif classification in ["episodic", "semantic", "other"]:
             logger.info(f"Query classified as: {classification}")
             return classification
         else:
@@ -2618,12 +2624,13 @@ class GraphMemoryClient:
             return {'action': 'error', 'reason': 'Intention analysis prompt template missing.'}
 
         full_prompt = prompt_template.format(request_text=request_text)
-        # Use low temperature for focused analysis
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=200, temperature=0.15)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('intention_analysis', prompt=full_prompt)
 
-        if not llm_response_str:
-            logger.error("LLM call failed for intention analysis (empty response).")
-            return {'action': 'error', 'reason': 'LLM call failed for intention analysis'}
+        if not llm_response_str or llm_response_str.startswith("Error:"):
+            error_reason = llm_response_str or "LLM call failed (empty response)"
+            logger.error(f"Intention analysis failed: {error_reason}")
+            return {'action': 'error', 'reason': error_reason}
 
         parsed_result = None
         json_str = ""
@@ -2861,9 +2868,8 @@ class GraphMemoryClient:
                 user_content.append({"type": "image_url", "image_url": {"url": attachment_data['data_url']}})
                 messages.append({"role": "user", "content": user_content})
 
-                # Call Multimodal API
-                max_gen_tokens = self.config.get('prompting', {}).get('max_generation_tokens', 512)
-                ai_response = self._call_kobold_multimodal_api(messages=messages, max_tokens=max_gen_tokens)
+                # Call Multimodal API using configured helper
+                ai_response = self._call_configured_llm('main_chat_multimodal', messages=messages)
 
                 # Prepare user input for graph storage (add placeholder)
                 if attachment_data.get('filename'):
@@ -2947,9 +2953,8 @@ class GraphMemoryClient:
                 prompt = self._construct_prompt(user_input, conversation_history, memory_chain_data, self.tokenizer, max_tokens)
 
                 logger.info("Calling standard LLM Generate API...")
-                max_gen_tokens = self.config.get('prompting', {}).get('max_generation_tokens', 512)
-                # Use the default parameters set in _call_kobold_api unless overridden
-                ai_response = self._call_kobold_api(prompt=prompt, max_length=max_gen_tokens)
+                # Call standard Generate API using configured helper
+                ai_response = self._call_configured_llm('main_chat_text', prompt=prompt)
                 # graph_user_input is already set
 
             # --- Process Response, Check for AI Action Request, and Update Graph ---
@@ -2986,8 +2991,8 @@ class GraphMemoryClient:
                                     ai_description=ai_description
                                 )
                                 logger.debug(f"Sending file content generation prompt:\n{gen_prompt}")
-                                # Use higher temperature for creative generation
-                                gen_response = self._call_kobold_api(gen_prompt, max_length=1024, temperature=0.7)
+                                # --- Use configured LLM call ---
+                                gen_response = self._call_configured_llm('file_content_generation', prompt=gen_prompt)
 
                                 # Parse the generated filename and content
                                 try:
@@ -3343,7 +3348,8 @@ class GraphMemoryClient:
                             current_drive_state=current_drive_state_str # Pass formatted state
                         )
                         logger.debug(f"Sending drive analysis prompt:\n{full_prompt[:500]}...") # Log more context
-                        llm_response_str = self._call_kobold_api(full_prompt, max_length=150, temperature=0.3)
+                        # --- Use configured LLM call ---
+                        llm_response_str = self._call_configured_llm('drive_analysis_short_term', prompt=full_prompt)
 
                         # 4. Parse Response
                         if llm_response_str and not llm_response_str.startswith("Error:"):
@@ -3442,8 +3448,8 @@ class GraphMemoryClient:
             # 3. Call LLM
             full_prompt = prompt_template.format(asm_summary_text=asm_summary_text)
             logger.debug(f"Sending long-term drive analysis prompt:\n{full_prompt[:300]}...")
-            # Use low temperature for analytical task
-            llm_response_str = self._call_kobold_api(full_prompt, max_length=200, temperature=0.2)
+            # --- Use configured LLM call ---
+            llm_response_str = self._call_configured_llm('drive_analysis_long_term', prompt=full_prompt)
 
             # 4. Parse Response
             if llm_response_str and not llm_response_str.startswith("Error:"):
@@ -3612,6 +3618,84 @@ class GraphMemoryClient:
         except Exception as e:
             logger.error(f"Kobold Chat API call unexpected error: {e}", exc_info=True)
             return f"Error: Unexpected issue during Kobold Chat API call."
+
+    def _call_configured_llm(self, task_name: str, prompt: str = None, messages: list = None, **overrides) -> str:
+        """
+        Calls the appropriate LLM API based on configuration for the given task.
+
+        Args:
+            task_name: The key for the task in config['llm_models'].
+            prompt: The prompt string (for 'generate' API type).
+            messages: The list of messages (for 'chat_completions' API type).
+            **overrides: Keyword arguments to override default parameters from config.
+
+        Returns:
+            The generated text response string, or an error message string.
+        """
+        logger.debug(f"Calling configured LLM for task: '{task_name}'")
+        task_config = self.config.get('llm_models', {}).get(task_name)
+
+        if not task_config:
+            err_msg = f"Error: LLM configuration for task '{task_name}' not found in config.yaml."
+            logger.error(err_msg)
+            return err_msg
+
+        api_type = task_config.get('api_type')
+        model_name = task_config.get('model_name', 'koboldcpp-default')
+
+        # --- Get default parameters from config ---
+        default_params = {
+            'max_length': task_config.get('max_length', 512),
+            'max_tokens': task_config.get('max_tokens', 512), # For chat API
+            'temperature': task_config.get('temperature', 0.7),
+            'top_p': task_config.get('top_p', 0.95),
+            'top_k': task_config.get('top_k', 60),
+            'min_p': task_config.get('min_p', 0.0),
+            # Add other potential parameters here if needed
+        }
+
+        # --- Merge overrides ---
+        final_params = default_params.copy()
+        final_params.update(overrides)
+        logger.debug(f"  Task Config: {task_config}")
+        logger.debug(f"  Final Params: {final_params}")
+
+
+        # --- Call appropriate API ---
+        if api_type == 'generate':
+            if prompt is None:
+                err_msg = f"Error: Prompt is required for 'generate' API type (task: {task_name})."
+                logger.error(err_msg)
+                return err_msg
+            # Pass parameters explicitly to _call_kobold_api
+            return self._call_kobold_api(
+                prompt=prompt,
+                model_name=model_name, # Pass model name
+                max_length=final_params['max_length'],
+                temperature=final_params['temperature'],
+                top_p=final_params['top_p'],
+                top_k=final_params['top_k'],
+                min_p=final_params['min_p']
+            )
+        elif api_type == 'chat_completions':
+            if messages is None:
+                err_msg = f"Error: Messages list is required for 'chat_completions' API type (task: {task_name})."
+                logger.error(err_msg)
+                return err_msg
+            # Pass parameters explicitly to _call_kobold_multimodal_api
+            return self._call_kobold_multimodal_api(
+                messages=messages,
+                model_name=model_name, # Pass model name
+                max_tokens=final_params['max_tokens'],
+                temperature=final_params['temperature'],
+                top_p=final_params['top_p']
+                # Add top_k, min_p if supported by chat API later
+            )
+        else:
+            err_msg = f"Error: Unknown api_type '{api_type}' configured for task '{task_name}'."
+            logger.error(err_msg)
+            return err_msg
+
 
         # --- Forgetting Mechanism Placeholders ---
     def run_memory_maintenance(self):
@@ -3945,7 +4029,8 @@ class GraphMemoryClient:
         summary_prompt = prompt_template.format(context_text=context_text)
 
         logger.info("Requesting summary (from file prompt)...")
-        summary_text = self._call_kobold_api(summary_prompt, 150, 0.5)
+        # --- Use configured LLM call ---
+        summary_text = self._call_configured_llm('consolidation_summary', prompt=summary_prompt)
         summary_node_uuid = None
         summary_created = False
         if summary_text and len(summary_text) > 10:
@@ -3980,9 +4065,10 @@ class GraphMemoryClient:
         concept_prompt = prompt_template.format(context_text=context_text)
 
         logger.info("Requesting concepts (from file prompt)...")
-        concepts_text = self._call_kobold_api(concept_prompt, 100, 0.3)
+        # --- Use configured LLM call ---
+        concepts_text = self._call_configured_llm('consolidation_concept', prompt=concept_prompt)
         llm_extracted_concepts = []
-        if concepts_text:
+        if concepts_text and not concepts_text.startswith("Error:"): # Check for errors
             potential_concepts = concepts_text.split(',')
             for concept in potential_concepts:
                 cleaned = concept.strip().strip('"').strip("'").strip()
@@ -4085,7 +4171,8 @@ class GraphMemoryClient:
         )
 
         logger.debug(f"Sending Rich Relation prompt (from file):\n{rich_relation_prompt}")
-        llm_response_str = self._call_kobold_api(rich_relation_prompt, max_length=400, temperature=0.15)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('consolidation_relation', prompt=rich_relation_prompt)
 
         # ... (Rest of the parsing and edge adding logic remains the same) ...
         extracted_relations = []
@@ -4200,7 +4287,8 @@ class GraphMemoryClient:
         relation_prompt = prompt_template.format(concept_list_str=concept_list_str)
 
         logger.info("Requesting concept relationships (V1 - Associative, from file prompt)...")
-        relations_text = self._call_kobold_api(relation_prompt, 100, 0.4)
+        # --- Use configured LLM call ---
+        relations_text = self._call_configured_llm('consolidation_associative_v1', prompt=relation_prompt)
         # ... (Rest of the parsing and edge adding logic remains the same) ...
         if relations_text and relations_text.strip().upper() != "NONE":
             logger.info(f"Found potential associative relationships:\n{relations_text}")
@@ -4250,7 +4338,8 @@ class GraphMemoryClient:
         hierarchy_prompt = prompt_template.format(concept_list_str=concept_list_str)
 
         logger.info("Requesting concept hierarchy (from file prompt)...")
-        hierarchy_text = self._call_kobold_api(hierarchy_prompt, 100, 0.4)
+        # --- Use configured LLM call ---
+        hierarchy_text = self._call_configured_llm('consolidation_hierarchy_v1', prompt=hierarchy_prompt)
         # ... (Rest of the parsing and edge adding logic remains the same, including the regex fix) ...
         if hierarchy_text and hierarchy_text.strip().upper() != "NONE":
             logger.info(f"Found potential hierarchies:\n{hierarchy_text}")
@@ -4333,7 +4422,8 @@ class GraphMemoryClient:
         )
 
         logger.debug(f"Sending Causal Chain prompt:\n{causal_chain_prompt}")
-        llm_response_str = self._call_kobold_api(causal_chain_prompt, max_length=300, temperature=0.15)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('consolidation_causal', prompt=causal_chain_prompt)
 
         extracted_chains = []
         if llm_response_str:
@@ -4437,7 +4527,8 @@ class GraphMemoryClient:
         )
 
         logger.debug(f"Sending Analogy prompt:\n{analogy_prompt}")
-        llm_response_str = self._call_kobold_api(analogy_prompt, max_length=200, temperature=0.2)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('consolidation_analogy', prompt=analogy_prompt)
 
         extracted_analogies = []
         if llm_response_str:
@@ -4575,8 +4666,8 @@ class GraphMemoryClient:
             return
 
         full_prompt = prompt_template.format(context_text=context_text)
-        # Use moderate temperature for slightly creative summary, increase max length for structured output
-        llm_response_str = self._call_kobold_api(full_prompt, max_length=400, temperature=0.6)
+        # --- Use configured LLM call ---
+        llm_response_str = self._call_configured_llm('asm_generation', prompt=full_prompt)
 
         # --- Parse Response and Update Model ---
         if llm_response_str:

@@ -12,7 +12,154 @@ default_personality: "default"
 # --- Models & API ---
 embedding_model: "all-MiniLM-L6-v2"
 tokenizer_name: "google/gemma-7b-it"
-kobold_api_url: "http://localhost:5001/api/v1/generate" # <<< CHECK AND UPDATE THIS URL based on your KoboldCpp setup
+kobold_api_url: "http://localhost:5001/api/v1/generate" # Base URL for generate API
+kobold_chat_api_url: "http://localhost:5001/v1/chat/completions" # Base URL for OpenAI-compatible chat API
+
+# --- LLM Model Configuration ---
+# Define settings for different LLM tasks.
+# 'api_type' can be 'generate' (uses kobold_api_url) or 'chat_completions' (uses kobold_chat_api_url).
+# 'model_name' is often ignored by KoboldCpp but good practice.
+# Other parameters are standard generation settings.
+llm_models:
+  # --- Main Chat ---
+  main_chat_text:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 512
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 64
+    min_p: 0.0
+  main_chat_multimodal:
+    api_type: "chat_completions"
+    model_name: "koboldcpp-multimodal" # Or specific multimodal model name
+    max_tokens: 512 # Note: Parameter name is max_tokens for chat API
+    temperature: 0.7
+    top_p: 0.9
+  # --- Analysis Tasks (Generally need low temperature, specific max lengths) ---
+  action_analysis:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 512 # Allow longer for complex args
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  memory_modification_analysis:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 150
+    temperature: 0.2
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  query_type_classification:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 10
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 10 # Small K for classification
+    min_p: 0.0
+  intention_analysis:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 200
+    temperature: 0.15
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  # --- Consolidation Tasks ---
+  consolidation_summary:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 150
+    temperature: 0.5
+    top_p: 0.95
+    top_k: 60
+    min_p: 0.0
+  consolidation_concept:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 100
+    temperature: 0.3
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+  consolidation_relation: # Rich relations
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 400
+    temperature: 0.15
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  consolidation_causal:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 300
+    temperature: 0.15
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  consolidation_analogy:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 200
+    temperature: 0.2
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+  consolidation_associative_v1: # Old V1 prompt
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 100
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+  consolidation_hierarchy_v1: # Old V1 prompt
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 100
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+  # --- Other Generation Tasks ---
+  asm_generation:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 400
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 60
+    min_p: 0.0
+  file_content_generation:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 1024 # Allow more for file content
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 60
+    min_p: 0.0
+  drive_analysis_short_term:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 150
+    temperature: 0.3
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  drive_analysis_long_term:
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 200
+    temperature: 0.2
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+
 
 # --- Feature Flags ---
 features:
