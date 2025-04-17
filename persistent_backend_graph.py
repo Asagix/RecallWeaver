@@ -2200,6 +2200,9 @@ class GraphMemoryClient:
         # --- Assemble Final Prompt ---
         final_parts = []
         final_parts.append(time_info_block)
+        # Add workspace context block
+        if workspace_context_str:
+             final_parts.append(workspace_context_str)
         # Add instruction about temporal awareness AND action capability
         # --- System Instructions for AI ---
         system_instructions = [
@@ -3864,6 +3867,35 @@ class GraphMemoryClient:
         except Exception as e:
             logger.error(f"Kobold Chat API call unexpected error: {e}", exc_info=True)
             return f"Error: Unexpected issue during Kobold Chat API call."
+
+    def _summarize_file_content(self, file_content: str) -> str | None:
+        """Uses LLM to generate a concise summary of file content."""
+        if not file_content:
+            return None
+
+        prompt_template = self._load_prompt("workspace_file_summary_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load workspace file summary prompt template.")
+            return None
+
+        # Ensure content isn't excessively long for the summarizer prompt itself
+        max_summary_input_len = 3000 # Limit input to summarizer prompt
+        if len(file_content) > max_summary_input_len:
+            file_content = file_content[:max_summary_input_len] + "\n... [Content Truncated for Summarizer]"
+
+        summary_prompt = prompt_template.format(file_content=file_content)
+        logger.debug(f"Sending file summary prompt (Content length: {len(file_content)})...")
+
+        summary = self._call_configured_llm('workspace_file_summary', prompt=summary_prompt)
+
+        if summary and not summary.startswith("Error:"):
+            # Basic cleaning: remove potential leading/trailing quotes or list markers
+            summary = summary.strip().strip('"-* ')
+            logger.debug(f"Generated file summary: '{summary}'")
+            return summary
+        else:
+            logger.error(f"File summary generation failed: {summary}")
+            return None
 
     def _call_configured_llm(self, task_name: str, prompt: str = None, messages: list = None, **overrides) -> str:
         """

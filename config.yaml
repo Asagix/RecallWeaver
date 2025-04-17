@@ -78,6 +78,15 @@ llm_models:
     top_p: 0.95
     top_k: 40
     min_p: 0.0
+  # --- Workspace File Summarization Task (for context) ---
+  workspace_file_summary:
+    api_type: "generate"
+    model_name: "koboldcpp-default" # Use a fast model if possible
+    max_length: 60 # Keep summaries very short (1-2 sentences)
+    temperature: 0.3 # Low temp for factual summary
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
   # --- Workspace File Consolidation Task ---
   workspace_file_consolidation:
     api_type: "generate"
@@ -276,6 +285,7 @@ prompting:
   memory_budget_ratio: 0.45
   history_budget_ratio: 0.55
   re_greeting_threshold_hours: 3 # Hours since last interaction to trigger re-greeting
+  max_files_to_summarize_in_context: 5 # Max files to read & summarize for prompt context
 
 # --- Consolidation Parameters ---
 consolidation:

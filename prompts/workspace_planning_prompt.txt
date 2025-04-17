@@ -22,20 +22,20 @@ You are an AI assistant's planning module. Your goal is to determine a sequence 
 **Retrieved Memories (Relevant Past Info):**
 {memory_text}
 
-**Current Workspace State (Known Files):**
+**Current Workspace State (Filename: Summary):**
 {workspace_files_list}
 
 **Instructions:**
-1.  Analyze the User Request, History, **Current Workspace State** (for file existence checks), and **Memories** (for content generation/context).
+1.  Analyze the User Request, History, **Current Workspace State** (use summaries to understand file content), and **Memories** (for additional context).
 2.  Determine if a **sequence** of the Available Workspace Actions is necessary to fulfill the request or implied intent. **You can plan multiple actions in a single list if needed.**
 3.  If actions are needed, construct a plan as a JSON list of action objects. Each object must have an "action" key (string, one of the available actions) and an "args" key (dictionary of required arguments with string values).
     *   **Optional Argument:** You can add `"silent": true` to the `args` dictionary for any action if you want the system to perform the action *without* displaying a confirmation message in the chat upon success. Failures will still be shown. The default is `false` (show success messages). Example: `{"action": "create_file", "args": {"filename": "temp.txt", "content": "...", "silent": true}}`
     *   The actions will be executed in the order they appear in the list.
 4.  **CRITICAL for `create_file`:** You MUST generate the complete `content` string for the file within the `args`, based on the context and memories. Do NOT just put a description. **Check `Current Workspace State`: If the filename already exists, only plan `create_file` if overwriting is clearly intended by the user request or context. Otherwise, consider `append_file` or choose a different filename.**
-5.  **CRITICAL for `append_file`:** You MUST generate the specific `content` string to be appended, based on context and memories.
-6.  **CRITICAL for `read_file`, `delete_file`:** Only plan these actions if the filename exists in the `Current Workspace State` or if the context strongly implies it should exist. **Do NOT use `Retrieved Memories` to assume file existence.**
-7.  **CRITICAL for `consolidate_files`:** Provide a list of existing `input_filenames` (check `Current Workspace State`) and a descriptive `output_filename`. The system will handle reading inputs, generating content, writing output, and deleting inputs. Use this action to reduce clutter or combine related information. You might need a `read_file` step *before* consolidation if you need to analyze the content to decide *which* files to consolidate.
-8.  **Validation:** If unsure about the current state of files needed for an action, consider adding a `list_files` action *before* the uncertain action in your plan.
+5.  **CRITICAL for `append_file`:** You MUST generate the specific `content` string to be appended, based on context, memories, and the **file summary** from the Workspace State.
+6.  **CRITICAL for `read_file`, `delete_file`:** Only plan these actions if the filename exists in the `Current Workspace State`. Use the **file summary** to help decide if reading/deleting is appropriate for the user's request. **Do NOT use `Retrieved Memories` to assume file existence.**
+7.  **CRITICAL for `consolidate_files`:** Provide a list of existing `input_filenames` (check `Current Workspace State`) and a descriptive `output_filename`. Use the **file summaries** to decide which files are related and suitable for consolidation. The system will handle reading inputs, generating content, writing output, and deleting inputs.
+8.  **Validation:** If the summaries are insufficient or you need full content to make a decision, plan a `read_file` action *before* the action that requires the content (like `append_file`, `delete_file`, `consolidate_files`).
 9.  **IMPORTANT for `list_files`:** This action relies *only* on the actual workspace. Do not use `Retrieved Memories` to influence whether you plan this action or how you interpret its results.
 10. Ensure filenames are descriptive and end in `.txt`.
 11. **Multi-Step Plans:** If fulfilling the request requires multiple steps (e.g., read file A, read file B, consolidate A and B into C, delete A, delete B), list ALL necessary actions in the correct sequence within the JSON list.
