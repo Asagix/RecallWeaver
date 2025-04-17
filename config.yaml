@@ -121,7 +121,7 @@ forget_topic:
 
 # --- Nuanced Forgetting ---
 forgetting:
-  trigger_interaction_count: 20 # How often to run maintenance (0 to disable)
+  trigger_interaction_count: 5 # TEMPORARY: Lowered from 20 to trigger maintenance sooner for testing
   score_threshold: 0.7 # Score above which nodes get archived
   candidate_min_age_hours: 24 # Only consider nodes older than this for strength reduction check
   candidate_min_activation: 0.05 # Only consider nodes with low activation for strength reduction check
