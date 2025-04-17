@@ -2023,9 +2023,13 @@ class GraphMemoryClient:
             "    1. Use `read_file` to get the current content.",
             "    2. In your *next* response, use `create_file` with the *full modified content*.",
             "  **File Naming:** Generate descriptive filenames based on the content, ending with `.txt` (e.g., `project_ideas.txt`, `summary_of_conversation_2025-04-17.txt`).",
-            "  **File Content:** For `create_file`/`append_file`, generate the *actual content* needed based on the conversation (e.g., a list, notes, a summary), not just keywords from the request.",
+            "  **File Content Generation:**", # Emphasize generation
+            "    - For `create_file`/`append_file`, the `content` argument MUST contain the *actual information* requested or that you want to save.",
+            "    - **DO NOT** put the user's request or instructions into the `content` field.",
+            "    - **DO NOT** just repeat keywords.",
+            "    - Generate the list, notes, summary, or text that fulfills the request.",
             "  **Example Autonomous Creation:** If asked 'Summarize our talk about memory and save it', you might respond conversationally and end with:",
-            "    `[ACTION: {\"action\": \"create_file\", \"args\": {\"filename\": \"memory_discussion_summary.txt\", \"content\": \"We discussed the graph memory system, consolidation, and forgetting mechanisms...\"}}]`",
+            "    `[ACTION: {\"action\": \"create_file\", \"args\": {\"filename\": \"memory_discussion_summary.txt\", \"content\": \"Summary: We discussed the graph memory system, its components like nodes and edges, the consolidation process involving summarization and concept extraction, and the mechanisms for forgetting based on activation and saliency.\"}}]`", # Improved example content
             "  Only use the ACTION tag if you decide an action is necessary based on the context.]"
         ]
         # Add each instruction line as a separate system turn for clarity
