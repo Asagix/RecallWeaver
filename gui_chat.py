@@ -2528,11 +2528,10 @@ class ChatWindow(QMainWindow):
             elif file_type == "file":
                 # Display placeholder for generic files
                 attachment_label = QLabel(f"[File Attached: {file_name}]")
-
-            attachment_label.setStyleSheet(
-
-                "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
-            )
+                # Indent the style setting to apply to the file label
+                attachment_label.setStyleSheet(
+                    "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
+                )
             # --- End check for valid file_type --- (This comment might be slightly misplaced now)
             elif file_type is not None: # Only log warning if type was present but unknown
                  gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
