@@ -83,7 +83,7 @@ This document tracks the implementation progress and outlines future enhancement
     * [x] **Modify Retrieval:** Update `retrieve_memory_chain` and `_search_similar_nodes` to remove `status` filtering and incorporate `memory_strength` into activation.
     * [x] **Update `config.yaml`:** Define `forgetting` section (weights, candidates). Define `memory_strength` section (initial, decay_rate, purge_threshold, purge_age). Remove status-based params.
     * [ ] **Testing (Forgetting/Strength):** Test candidate filtering, score calculation, strength reduction logic, and retrieval modulation. Verify tuning knobs work.
-    * [x] **Implement `purge_weak_nodes()`:** Permanently delete nodes below strength threshold and above age threshold.
+    * [x] **Implement `purge_weak_nodes()`:** Permanently delete nodes below strength threshold (Removed age check).
 -   [x] **Action/Tool Handling (via Focused Intent Analysis):**
     -   [x] Backend: Basic structure for `analyze_action_request` and `execute_action` exists.
     -   [x] Backend: Basic file/calendar wrapper methods exist (`create_file`, `append_file`, `add_calendar_event`, `read_calendar`).
