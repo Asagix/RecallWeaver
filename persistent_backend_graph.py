@@ -3265,7 +3265,7 @@ class GraphMemoryClient:
     except Exception as e:
         # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
         logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-            # Assign error message to both ai_response and parsed_response
+        # Assign error message to both ai_response and parsed_response
         ai_response = f"Error during processing: {e}"
         parsed_response = ai_response # Ensure parsed_response has a value
         memory_chain_data = [] # Clear memory chain data on error
