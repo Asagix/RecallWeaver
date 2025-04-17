@@ -1751,9 +1751,12 @@ class GraphMemoryClient:
 
             if contradiction_found:
                 # Trigger action: e.g., flag ASM for review, or trigger targeted regeneration
-                logger.info("Flagging ASM for review due to potential contradiction.")
+                logger.warning(f"*** Potential ASM Contradiction Detected! *** Node {contradicting_node_uuid[:8]} vs Current ASM.")
                 # Simple flag for now, actual regeneration needs more logic
                 self.autobiographical_model['needs_review'] = True
+                self.autobiographical_model['last_contradiction_node'] = contradicting_node_uuid # Store conflicting node UUID
+                self.autobiographical_model['last_contradiction_time'] = datetime.now(timezone.utc).isoformat()
+                logger.info(f"ASM flagged for review. Conflicting node: {contradicting_node_uuid[:8]}")
                 # Optionally trigger _generate_autobiographical_model immediately with specific context?
                 # self._generate_autobiographical_model(focus_node_uuid=contradicting_node_uuid) # Needs modification to accept focus
 
@@ -2023,17 +2026,60 @@ class GraphMemoryClient:
             # else:
                 # logger.debug(f"  Strength for node {uuid[:8]} remains {current_strength:.3f} (Reduction: {strength_reduction:.3f})")
 
-        # 5. Save memory if any strengths were changed
+        # --- Apply Saliency Decay (Applied to ALL nodes, not just strength candidates) ---
+        saliency_decay_rate_per_hour = self.config.get('saliency', {}).get('saliency_decay_rate', 0.0)
+        saliency_decayed_count = 0
+        if saliency_decay_rate_per_hour > 0:
+            logger.info(f"Applying saliency decay (Rate: {saliency_decay_rate_per_hour * 100:.2f}% per hour)...")
+            saliency_decay_details = {}
+            # Iterate through all nodes again for saliency decay
+            for uuid, data in nodes_to_check: # Use the same snapshot
+                if uuid not in self.graph: continue # Check if node still exists
+                current_saliency = data.get('saliency_score', 0.0)
+                if current_saliency <= 0: continue # Skip nodes with no saliency
+
+                last_accessed = data.get('last_accessed_ts', current_time)
+                hours_since_access = (current_time - last_accessed) / 3600.0
+                if hours_since_access <= 0: continue # Skip if accessed very recently
+
+                # Calculate decay multiplier (simple exponential decay)
+                # decay_multiplier = (1.0 - saliency_decay_rate_per_hour) ** hours_since_access # This might decay too fast
+                # Let's try linear decay for simplicity: reduction = rate * hours
+                saliency_reduction = saliency_decay_rate_per_hour * hours_since_access
+                new_saliency = current_saliency - saliency_reduction
+                new_saliency = max(0.0, new_saliency) # Clamp at 0
+
+                if new_saliency < current_saliency:
+                    self.graph.nodes[uuid]['saliency_score'] = new_saliency
+                    nodes_changed = True # Mark that a change occurred
+                    saliency_decayed_count += 1
+                    saliency_decay_details[uuid] = {
+                        "before": current_saliency,
+                        "after": new_saliency,
+                        "hours_since_access": hours_since_access,
+                    }
+                    logger.debug(f"  Decayed saliency for node {uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f} ({hours_since_access:.1f} hrs)")
+
+            if saliency_decay_details:
+                 log_tuning_event("MAINTENANCE_SALIENCY_DECAY", {
+                     "personality": self.personality,
+                     "decay_rate_per_hour": saliency_decay_rate_per_hour,
+                     "decay_details": saliency_decay_details,
+                     "decayed_node_count": saliency_decayed_count,
+                 })
+            logger.info(f"Saliency decay applied to {saliency_decayed_count} nodes.")
+
+        # 5. Save memory if any changes (strength or saliency) were made
         if nodes_changed:
-            logger.info(f"Reduced strength for {strength_reduced_count} nodes. Saving memory...")
+            logger.info(f"Changes detected (Strength: {strength_reduced_count}, Saliency: {saliency_decayed_count}). Saving memory...")
             self._save_memory() # Save changes after maintenance
         else:
-            logger.info("No node strengths were reduced in this maintenance cycle.")
+            logger.info("No node strengths or saliency scores were changed in this maintenance cycle.")
 
         # --- Moved Logging Block ---
-        logger.info(f"--- Memory Maintenance Finished ({strength_reduced_count} strengths reduced) ---")
+        logger.info(f"--- Memory Maintenance Finished (Strength Reduced: {strength_reduced_count}, Saliency Decayed: {saliency_decayed_count}) ---")
         # --- Tuning Log: Maintenance End ---
-        log_tuning_event("MAINTENANCE_STRENGTH_END", {
+        log_tuning_event("MAINTENANCE_END", { # Renamed event type
             "personality": self.personality,
             "strength_reduced_count": strength_reduced_count,
             "nodes_changed": nodes_changed,
@@ -2630,8 +2676,8 @@ class GraphMemoryClient:
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
             # --- Mood/Drive Tone Instruction ---
             f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). Let this subtly influence your response tone. For example, high Valence might lead to warmer language, high Arousal might lead to more energetic phrasing, low Safety might lead to more cautious language.]" if current_mood else "[System Note: Current mood unavailable.]",
-            # --- ASM Integration Instruction ---
-            "[System Note: Consider your 'Self-Perception' summary (Traits, Goals, Role, Emotional Profile) when formulating your response and deciding on actions. Align your behavior with this self-model.]",
+            # --- ASM Integration Instruction (Revised) ---
+            "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself, but **adapt your response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed.]",
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
@@ -5914,14 +5960,15 @@ class GraphMemoryClient:
                     # --- Validate Structured ASM ---
                     if isinstance(parsed_data, dict):
                         # --- Updated required keys to match the new prompt structure ---
-                        required_keys = ["core_traits", "recurring_themes", "goals_motivations", "relational_stance", "emotional_profile", "summary_statement"]
+                        required_keys = ["core_traits", "recurring_themes", "goals_motivations", "relational_stance", "emotional_profile", "observed_changes", "summary_statement"] # Added observed_changes
                         if all(key in parsed_data for key in required_keys):
                             # Basic type validation (can be expanded)
                             if (isinstance(parsed_data["core_traits"], list) and
                                 isinstance(parsed_data["recurring_themes"], list) and
-                                isinstance(parsed_data["goals_motivations"], list) and # Check new key type
-                                isinstance(parsed_data["relational_stance"], str) and # Check new key type
-                                isinstance(parsed_data["emotional_profile"], str) and # Check new key type
+                                isinstance(parsed_data["goals_motivations"], list) and
+                                isinstance(parsed_data["relational_stance"], str) and
+                                isinstance(parsed_data["emotional_profile"], str) and
+                                isinstance(parsed_data["observed_changes"], str) and # Check new key type
                                 isinstance(parsed_data["summary_statement"], str)):
 
                                 # Update the entire model

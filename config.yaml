@@ -501,7 +501,7 @@ subconscious_drives:
 
   # --- Baseline Dynamics (NEW) ---
   # Influence of high-impact events on long-term state
-  high_impact_memory_baseline_shift_factor: 0.1 # How much a single high-impact memory nudges the long-term drive state (0-1).
+  high_impact_memory_baseline_shift_factor: 0.25 # Increased from 0.1: How much a single high-impact memory nudges the long-term drive state (0-1).
 
 
 # --- Autobiographical Self-Model (ASM) Generation ---
@@ -531,3 +531,4 @@ saliency:
   # guaranteed_saliency_threshold moved to activation section for clarity
   recall_boost_factor: 0.03 # Additive boost to saliency score upon successful recall (clamped 0-1) - Decreased from 0.05
   feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
+  saliency_decay_rate: 0.005 # NEW: How much saliency decays per hour (e.g., 0.005 = 0.5% decay per hour since last access)
