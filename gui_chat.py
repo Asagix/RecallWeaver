@@ -2391,6 +2391,19 @@ class ChatWindow(QMainWindow):
             gui_logger.error("Cannot handle saliency feedback: Worker not running.")
             self.display_error("Cannot update saliency: Backend worker not active.")
 
+    # --- NEW: Handler for Copy Button Click ---
+    def handle_copy_click(self, text_to_copy: str):
+        """Copies the provided text to the clipboard."""
+        try:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(text_to_copy)
+            gui_logger.info(f"Copied text to clipboard: '{text_to_copy[:50]}...'")
+            self.statusBar().showMessage("Message copied to clipboard.", 2000) # Brief feedback
+        except Exception as e:
+            gui_logger.error(f"Failed to copy text to clipboard: {e}", exc_info=True)
+            self.statusBar().showMessage("Error copying text.", 3000)
+    # --- End New Handler ---
+
     def handle_feedback_click(self, node_uuid: str, feedback_type: str):
         """Handles clicks on feedback buttons and signals the worker."""
         gui_logger.info(f"Feedback button clicked: UUID={node_uuid}, Type={feedback_type}")
@@ -2816,8 +2829,19 @@ class ChatWindow(QMainWindow):
             thumb_down.setCursor(Qt.CursorShape.PointingHandCursor)
             thumb_down.mousePressEvent = lambda event, u=ai_node_uuid, t="down": self.handle_feedback_click(u, t)
 
+            # --- Add Copy Button ---
+            copy_button = QPushButton("📋") # Use clipboard emoji
+            copy_button.setToolTip("Copy message text")
+            copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            copy_button.setFixedSize(24, 24) # Small fixed size
+            copy_button.setStyleSheet("QPushButton { border: none; background-color: transparent; font-size: 12pt; color: #AAAAAA; } QPushButton:hover { color: #E0E0E0; }")
+            # Use lambda to capture the specific text for this message
+            copy_button.clicked.connect(lambda checked, txt=text: self.handle_copy_click(txt))
+            # --- End Add Copy Button ---
+
             feedback_layout.addWidget(thumb_up)
             feedback_layout.addWidget(thumb_down)
+            feedback_layout.addWidget(copy_button) # Add copy button before timestamp
             # Add timestamp label to the feedback layout as well
             if timestamp_label:
                 feedback_layout.addWidget(timestamp_label)
