@@ -3702,8 +3702,85 @@ class GraphMemoryClient:
             logger.error(err_msg)
             return err_msg
 
+    def _call_configured_llm(self, task_name: str, prompt: str = None, messages: list = None, **overrides) -> str:
+        """
+        Calls the appropriate LLM API based on configuration for the given task.
 
-        # --- Forgetting Mechanism Placeholders ---
+        Args:
+            task_name: The key for the task in config['llm_models'].
+            prompt: The prompt string (for 'generate' API type).
+            messages: The list of messages (for 'chat_completions' API type).
+            **overrides: Keyword arguments to override default parameters from config.
+
+        Returns:
+            The generated text response string, or an error message string.
+        """
+        logger.debug(f"Calling configured LLM for task: '{task_name}'")
+        task_config = self.config.get('llm_models', {}).get(task_name)
+
+        if not task_config:
+            err_msg = f"Error: LLM configuration for task '{task_name}' not found in config.yaml."
+            logger.error(err_msg)
+            return err_msg
+
+        api_type = task_config.get('api_type')
+        model_name = task_config.get('model_name', 'koboldcpp-default')
+
+        # --- Get default parameters from config ---
+        default_params = {
+            'max_length': task_config.get('max_length', 512),
+            'max_tokens': task_config.get('max_tokens', 512), # For chat API
+            'temperature': task_config.get('temperature', 0.7),
+            'top_p': task_config.get('top_p', 0.95),
+            'top_k': task_config.get('top_k', 60),
+            'min_p': task_config.get('min_p', 0.0),
+            # Add other potential parameters here if needed
+        }
+
+        # --- Merge overrides ---
+        final_params = default_params.copy()
+        final_params.update(overrides)
+        logger.debug(f"  Task Config: {task_config}")
+        logger.debug(f"  Final Params: {final_params}")
+
+
+        # --- Call appropriate API ---
+        if api_type == 'generate':
+            if prompt is None:
+                err_msg = f"Error: Prompt is required for 'generate' API type (task: {task_name})."
+                logger.error(err_msg)
+                return err_msg
+            # Pass parameters explicitly to _call_kobold_api
+            return self._call_kobold_api(
+                prompt=prompt,
+                model_name=model_name, # Pass model name
+                max_length=final_params['max_length'],
+                temperature=final_params['temperature'],
+                top_p=final_params['top_p'],
+                top_k=final_params['top_k'],
+                min_p=final_params['min_p']
+            )
+        elif api_type == 'chat_completions':
+            if messages is None:
+                err_msg = f"Error: Messages list is required for 'chat_completions' API type (task: {task_name})."
+                logger.error(err_msg)
+                return err_msg
+            # Pass parameters explicitly to _call_kobold_multimodal_api
+            return self._call_kobold_multimodal_api(
+                messages=messages,
+                model_name=model_name, # Pass model name
+                max_tokens=final_params['max_tokens'],
+                temperature=final_params['temperature'],
+                top_p=final_params['top_p']
+                # Add top_k, min_p if supported by chat API later
+            )
+        else:
+            err_msg = f"Error: Unknown api_type '{api_type}' configured for task '{task_name}'."
+            logger.error(err_msg)
+            return err_msg
+
+
+    # --- Forgetting Mechanism ---
     def run_memory_maintenance(self):
         """
         Placeholder: Runs the nuanced forgetting process.
@@ -3775,7 +3852,14 @@ class GraphMemoryClient:
             self._rebuild_index_from_graph_embeddings()  # Rebuild should only include 'active' nodes now
             self._save_memory()  # Save changes after maintenance
 
-        logger.info(f"--- Memory Maintenance Finished ({archived_count} archived) ---")
+        logger.info(f"--- Memory Maintenance Finished ({strength_reduced_count} strengths reduced) ---")
+        # --- Tuning Log: Maintenance End ---
+        log_tuning_event("MAINTENANCE_STRENGTH_END", {
+            "personality": self.personality,
+            "strength_reduced_count": strength_reduced_count,
+            "nodes_changed": nodes_changed,
+        })
+
 
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
                                   weights: dict) -> float:
@@ -3845,52 +3929,63 @@ class GraphMemoryClient:
 
         # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}) -> Score: {final_score:.3f}")
 
-        return final_score
+        return final_adjusted_score
 
-    def purge_archived_nodes(self, older_than_days: int = 30):
+    def purge_weak_nodes(self):
         """
-        Placeholder: Permanently deletes nodes with status 'archived' that
-        are older than a specified threshold.
+        Permanently deletes nodes whose memory_strength is below a configured threshold
+        and are older than a configured minimum age.
         """
-        if not self.config.get('features', {}).get('enable_forgetting', False): return
+        if not self.config.get('features', {}).get('enable_forgetting', False):
+            logger.debug("Forgetting/Purging feature disabled. Skipping purge.")
+            return
 
-        logger.warning(f"--- Purging Archived Nodes (Older than {older_than_days} days) ---")
-        # 1. Identify archived nodes older than threshold
-        # 2. Use delete_memory_entry (or a bulk delete if more efficient)
-        # 3. Rebuild index and save
+        strength_cfg = self.config.get('memory_strength', {})
+        purge_threshold = strength_cfg.get('purge_threshold', 0.01)
+        # min_age_days = strength_cfg.get('purge_min_age_days', 60) # REMOVED
+        # min_age_seconds = min_age_days * 24 * 3600 # REMOVED
+
+        logger.warning(f"--- Purging Weak Nodes (Strength < {purge_threshold}) ---") # Removed age from log message
+        # --- Tuning Log: Purge Start ---
+        log_tuning_event("PURGE_START", {
+            "personality": self.personality,
+            "strength_threshold": purge_threshold,
+            # "min_age_days": min_age_days, # REMOVED
+        })
+
         purge_count = 0
         current_time = time.time()
-        threshold_seconds = older_than_days * 24 * 3600
         nodes_to_purge = []
+        nodes_snapshot = list(self.graph.nodes(data=True)) # Snapshot
 
-        for uuid, data in self.graph.nodes(data=True):
-            if data.get('status') == 'archived':
-                timestamp_str = data.get('timestamp')
-                node_age = current_time  # Default to max age if no timestamp
-                if timestamp_str:
-                    try:
-                        dt_obj = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                        node_age = current_time - dt_obj.timestamp()
-                    except ValueError:
-                        logger.warning(f"Could not parse timestamp for archived node {uuid[:8]}: {timestamp_str}")
-
-                if node_age >= threshold_seconds:
-                    nodes_to_purge.append(uuid)
-                    logger.debug(f"Marked archived node {uuid[:8]} for purging (Age: {node_age / 3600:.1f} hrs)")
+        for uuid, data in nodes_snapshot:
+            current_strength = data.get('memory_strength', 1.0)
+            # --- Purge only based on strength ---
+            if current_strength < purge_threshold:
+                nodes_to_purge.append(uuid)
+                logger.debug(f"Marked weak node {uuid[:8]} for purging (Strength: {current_strength:.3f})")
+            # else: pass # Node strength is above threshold
 
         # Perform deletion
         if nodes_to_purge:
-            logger.info(f"Attempting to permanently purge {len(nodes_to_purge)} archived nodes...")
-            for uuid in list(nodes_to_purge):  # Iterate over copy
-                if self.delete_memory_entry(uuid):
+            logger.info(f"Attempting to permanently purge {len(nodes_to_purge)} weak nodes...")
+            for uuid in list(nodes_to_purge): # Iterate over copy
+                if self.delete_memory_entry(uuid): # delete_memory_entry handles graph, embed, index, map, rebuild
                     purge_count += 1
                 else:
-                    logger.error(f"Failed to purge archived node {uuid[:8]}.")
+                    logger.error(f"Failed to purge weak node {uuid[:8]}. It might have been deleted already.")
 
             logger.info(f"--- Purge Complete: {purge_count} nodes permanently deleted. ---")
-            # delete_memory_entry already rebuilds/saves, so no extra save needed here.
+            # delete_memory_entry already rebuilds/saves if successful.
         else:
-            logger.info("--- Purge Complete: No archived nodes met the age criteria. ---")
+            logger.info("--- Purge Complete: No weak nodes met the criteria for purging. ---")
+
+        # --- Tuning Log: Purge End ---
+        log_tuning_event("PURGE_END", {
+            "personality": self.personality,
+            "purged_count": purge_count,
+            "purged_uuids": nodes_to_purge, # Log UUIDs that were targeted
+        })
 
     def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
         """
