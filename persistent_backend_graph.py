@@ -1821,7 +1821,7 @@ class GraphMemoryClient:
         # --- Apply Decay Resistance (Type-Based) ---
         type_resistance_factor = node_data.get('decay_resistance_factor', 1.0)
         score_after_type_resistance = final_score * type_resistance_factor
-        logger.debug(f"    Node {uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}")
+        logger.debug(f"    Node {node_uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}") # Corrected uuid -> node_uuid
 
         # Initialize final_adjusted_score
         final_adjusted_score = score_after_type_resistance
@@ -1836,7 +1836,7 @@ class GraphMemoryClient:
             emotion_resistance_multiplier = (1.0 - clamped_emo_mag * emotion_magnitude_resistance_factor)
             # Update final_adjusted_score
             final_adjusted_score *= emotion_resistance_multiplier
-            logger.debug(f"    Node {uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}")
+            logger.debug(f"    Node {node_uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}") # Corrected uuid -> node_uuid
         # else: No emotion resistance applied, final_adjusted_score remains score_after_type_resistance
 
         # Log the final score being returned (moved outside the if/else)
