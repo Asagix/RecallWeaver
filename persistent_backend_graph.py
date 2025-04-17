@@ -426,6 +426,15 @@ class GraphMemoryClient:
             # Happy can have moderate arousal
             arousal += emotion_scores.get('Happy', 0.0) * 0.4
 
+            # --- Log raw calculated values before clamping ---
+            log_tuning_event("EMOTION_ANALYSIS_RAW", {
+                "personality": self.personality,
+                "node_uuid": node_uuid,
+                "raw_scores": emotion_scores,
+                "calculated_valence_unclamped": valence,
+                "calculated_arousal_unclamped": arousal,
+            })
+
             # Clamp values (e.g., -1 to 1 for valence, 0 to 1 for arousal)
             final_valence = max(-1.0, min(1.0, valence))
             final_arousal = max(0.0, min(1.0, arousal)) # Ensure arousal is non-negative
@@ -436,6 +445,13 @@ class GraphMemoryClient:
             node_data['emotion_arousal'] = final_arousal
 
             logger.info(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})") # Changed level to INFO
+            # --- Log final clamped values ---
+            log_tuning_event("EMOTION_ANALYSIS_FINAL", {
+                "personality": self.personality,
+                "node_uuid": node_uuid,
+                "final_valence": final_valence,
+                "final_arousal": final_arousal,
+            })
 
         except Exception as e:
             logger.error(f"Error during text2emotion analysis for node {node_uuid[:8]}: {e}", exc_info=True)
@@ -1095,7 +1111,8 @@ class GraphMemoryClient:
         drive_cfg = self.config.get('subconscious_drives', {})
         mood_influence_cfg = drive_cfg.get('mood_influence', {})
         drives_enabled = drive_cfg.get('enabled', False)
-        effective_mood = current_mood if current_mood else (0.0, 0.1) # Use provided mood or default
+        mood_before_drive_influence = current_mood if current_mood else (0.0, 0.1) # Store initial mood
+        effective_mood = mood_before_drive_influence # Start with initial mood
 
         # Check if drives are enabled and we have state data
         if drives_enabled and mood_influence_cfg and self.drive_state.get("short_term"): # Use .get for safety
@@ -1155,8 +1172,26 @@ class GraphMemoryClient:
 
             effective_mood = (adjusted_valence, adjusted_arousal)
             logger.info(f"Mood adjusted by drives: Original=({base_valence:.2f},{base_arousal:.2f}) -> Adjusted=({effective_mood[0]:.2f},{effective_mood[1]:.2f})")
+            # --- Log mood adjustment from drives ---
+            log_tuning_event("RETRIEVAL_MOOD_DRIVE_ADJUSTMENT", {
+                "personality": self.personality,
+                "mood_before": mood_before_drive_influence,
+                "valence_adjustment": valence_adjustment,
+                "arousal_adjustment": arousal_adjustment,
+                "mood_after": effective_mood,
+                "drive_state_short_term": self.drive_state.get("short_term"), # Log state that caused adjustment
+            })
         else:
              logger.debug("Subconscious drives disabled or no config/state found, using original mood.")
+             # --- Log that no adjustment was made ---
+             log_tuning_event("RETRIEVAL_MOOD_DRIVE_ADJUSTMENT", {
+                 "personality": self.personality,
+                 "mood_before": mood_before_drive_influence,
+                 "valence_adjustment": 0.0,
+                 "arousal_adjustment": 0.0,
+                 "mood_after": effective_mood,
+                 "reason": "Drives disabled or state missing",
+             })
 
 
         # --- Emotional Context Config (Uses effective_mood) ---
@@ -1319,7 +1354,19 @@ class GraphMemoryClient:
                             # Calculate adjustment: Boost for close (low norm_dist), penalize for far (high norm_dist)
                             # Linear scaling: Adjustment ranges from +emo_boost (at dist=0) to -emo_penalty (at dist=max_dist)
                             emo_adjustment = emo_boost * (1.0 - norm_dist) - emo_penalty * norm_dist
-                            # logger.debug(f"    EmoCtx: Mood=({mood_v:.2f},{mood_a:.2f}), Nbr=({neighbor_v:.2f},{neighbor_a:.2f}), Dist={emo_dist:.3f}, NormDist={norm_dist:.3f}, Adjust={emo_adjustment:.3f}")
+                            logger.debug(f"    EmoCtx: Mood=({mood_v:.2f},{mood_a:.2f}), Nbr=({neighbor_v:.2f},{neighbor_a:.2f}), Dist={emo_dist:.3f}, NormDist={norm_dist:.3f}, Adjust={emo_adjustment:.3f}")
+                            # --- Log emotional context bias calculation ---
+                            log_tuning_event("RETRIEVAL_EMO_CTX_BIAS_CALC", {
+                                "personality": self.personality,
+                                "source_node_uuid": source_uuid,
+                                "neighbor_node_uuid": neighbor_uuid,
+                                "effective_mood": effective_mood,
+                                "neighbor_mood": (neighbor_v, neighbor_a),
+                                "emotional_distance": emo_dist,
+                                "normalized_distance": norm_dist,
+                                "calculated_adjustment": emo_adjustment,
+                                "base_activation_pass": base_act_pass,
+                            })
 
                         except Exception as e:
                              logger.warning(f"Error calculating emotional context bias for {neighbor_uuid[:8]}: {e}")
@@ -1674,6 +1721,16 @@ class GraphMemoryClient:
                                 new_level = current_level + adjustment
                                 self.drive_state["short_term"][target_drive] = new_level
                                 logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to saliency feedback ({direction}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                                # --- Log heuristic adjustment ---
+                                log_tuning_event("DRIVE_HEURISTIC_ADJUSTMENT", {
+                                    "personality": self.personality,
+                                    "trigger": f"saliency_feedback_{direction}",
+                                    "node_uuid": uuid, # Log the node involved
+                                    "target_drive": target_drive,
+                                    "adjustment_value": adjustment,
+                                    "level_before": current_level,
+                                    "level_after": new_level,
+                                })
                                 # Saving happens above
                     except Exception as e:
                         logger.error(f"Error applying heuristic drive adjustment after saliency update: {e}", exc_info=True)
@@ -3454,18 +3511,32 @@ class GraphMemoryClient:
         mood_nodes_found = 0
         total_valence = 0.0
         total_arousal = 0.0
+        node_moods_for_avg = {} # Log individual moods
         for node_uuid in nodes_to_check_for_concepts: # Iterate over the same nodes used for concepts
             if node_uuid in self.graph:
                 node_data = self.graph.nodes[node_uuid]
                 default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
                 default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
-                total_valence += node_data.get('emotion_valence', default_v)
-                total_arousal += node_data.get('emotion_arousal', default_a)
+                node_v = node_data.get('emotion_valence', default_v)
+                node_a = node_data.get('emotion_arousal', default_a)
+                node_moods_for_avg[node_uuid[:8]] = {"V": node_v, "A": node_a} # Log individual node mood
+                total_valence += node_v
+                total_arousal += node_a
                 mood_nodes_found += 1
         if mood_nodes_found > 0:
             current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
 
         logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias. Storing in self.last_interaction_mood.") # Added detail
+        # --- Log mood averaging details ---
+        log_tuning_event("MOOD_AVERAGING_UPDATE", {
+            "personality": self.personality,
+            "nodes_averaged": list(node_moods_for_avg.keys()),
+            "individual_node_moods": node_moods_for_avg,
+            "total_valence": total_valence,
+            "total_arousal": total_arousal,
+            "mood_nodes_found": mood_nodes_found,
+            "final_averaged_mood": current_turn_mood,
+        })
         self.last_interaction_mood = current_turn_mood # Update state
 
 
@@ -3667,9 +3738,11 @@ class GraphMemoryClient:
         base_drives = drive_cfg.get('base_drives', {})
         long_term_influence = drive_cfg.get('long_term_influence_on_baseline', 1.0)
         changed = False
+        drive_state_before_update = self.drive_state.copy() # Log initial state
 
         # --- Decay Step (towards dynamic baseline) ---
         if decay_rate > 0:
+            decay_details = {}
             for drive_name, current_activation in list(self.drive_state["short_term"].items()):
                 config_baseline = base_drives.get(drive_name, 0.0)
                 long_term_level = self.drive_state["long_term"].get(drive_name, 0.0)
@@ -3686,7 +3759,18 @@ class GraphMemoryClient:
                 if abs(new_activation - current_activation) > 1e-4: # Check for significant change
                     self.drive_state["short_term"][drive_name] = new_activation
                     changed = True
+                    decay_details[drive_name] = {
+                        "before": current_activation,
+                        "after": new_activation,
+                        "dynamic_baseline": dynamic_baseline,
+                    }
                     logger.debug(f"  Drive '{drive_name}' decayed towards dynamic baseline {dynamic_baseline:.3f}: {current_activation:.3f} -> {new_activation:.3f}")
+            if decay_details:
+                log_tuning_event("DRIVE_STATE_DECAY", {
+                    "personality": self.personality,
+                    "decay_rate": decay_rate,
+                    "decay_details": decay_details,
+                })
 
         # --- LLM Analysis for Short-Term Drive Satisfaction/Frustration ---
         update_interval = drive_cfg.get('short_term_update_interval_interactions', 0) # Get interval from config
@@ -3732,6 +3816,11 @@ class GraphMemoryClient:
                             current_drive_state=current_drive_state_str # Pass formatted state
                         )
                         logger.debug(f"Sending drive analysis prompt:\n{full_prompt[:500]}...") # Log more context
+                        # --- Log prompt sent to LLM ---
+                        log_tuning_event("DRIVE_ANALYSIS_LLM_PROMPT", {
+                            "personality": self.personality,
+                            "prompt": full_prompt,
+                        })
                         # --- Use configured LLM call ---
                         llm_response_str = self._call_configured_llm('drive_analysis_short_term', prompt=full_prompt)
 
@@ -3744,6 +3833,12 @@ class GraphMemoryClient:
                                     json_str = match.group(0)
                                     drive_adjustments = json.loads(json_str)
                                     logger.debug(f"Parsed short-term drive adjustments from LLM: {drive_adjustments}")
+                                    # --- Log parsed LLM adjustments ---
+                                    log_tuning_event("DRIVE_ANALYSIS_LLM_PARSED", {
+                                        "personality": self.personality,
+                                        "raw_response": llm_response_str,
+                                        "parsed_adjustments": drive_adjustments,
+                                    })
 
                                     # 5. Adjust short_term drive_state based on satisfaction/frustration factors
                                     satisfaction_factor = drive_cfg.get('llm_satisfaction_factor', 0.1) # Use new config key
@@ -3778,6 +3873,15 @@ class GraphMemoryClient:
                                                 self.drive_state["short_term"][drive_name] = new_level
                                                 changed = True # Mark that state was changed by LLM analysis
                                                 logger.info(f"Applied LLM drive adjustment to '{drive_name}' ({status}): {current_activation:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                                                # --- Log individual adjustment ---
+                                                log_tuning_event("DRIVE_ANALYSIS_LLM_ADJUSTMENT", {
+                                                    "personality": self.personality,
+                                                    "drive_name": drive_name,
+                                                    "llm_status": status,
+                                                    "adjustment_value": adjustment,
+                                                    "level_before": current_activation,
+                                                    "level_after": new_level,
+                                                })
                                         else:
                                             logger.warning(f"LLM returned adjustment for unknown drive '{drive_name}'.")
 
@@ -4482,6 +4586,16 @@ class GraphMemoryClient:
                     # Optional: Clamp adjustment range?
                     self.drive_state["short_term"][target_drive] = new_level
                     logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to action result ({'Success' if success else 'Fail'}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                    # --- Log heuristic adjustment ---
+                    log_tuning_event("DRIVE_HEURISTIC_ADJUSTMENT", {
+                        "personality": self.personality,
+                        "trigger": f"action_result_{'success' if success else 'fail'}",
+                        "action_name": action, # Log the action that triggered it
+                        "target_drive": target_drive,
+                        "adjustment_value": adjustment,
+                        "level_before": current_level,
+                        "level_after": new_level,
+                    })
                     # No need to save here, saving happens elsewhere (e.g., end of interaction)
         except Exception as e:
             logger.error(f"Error applying heuristic drive adjustment after action execution: {e}", exc_info=True)
