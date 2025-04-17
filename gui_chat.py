@@ -1120,6 +1120,100 @@ class CollapsibleDriveWidget(QWidget):
         self.content_area.setHtml(html_content)
 
 
+# --- Emoji Picker Widget ---
+class EmojiPicker(QDialog):
+    emoji_selected = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Emoji")
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint) # Popup style, no border
+        self.setStyleSheet("background-color: #3A3A3C; border: 1px solid #555;") # Basic styling
+
+        # Define Emojis (Add more as needed)
+        emojis = [
+            "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇",
+            "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚",
+            "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🤩",
+            "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣",
+            "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬",
+            "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗",
+            "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬", "🙄", "😯",
+            "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪", "😵", "🤐",
+            "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕", "🤑", "🤠", "😈",
+            "👿", "👹", "👺", "🤡", "💩", "👻", "💀", "☠️", "👽", "👾",
+            "🤖", "🎃", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿",
+            "😾", "👋", "🤚", "🖐️", "✋", "🖖", "👌", "🤏", "✌️", "🤞",
+            "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍",
+            "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝",
+            "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦵", "🦶", "👂", "🦻",
+            "👃", "🧠", "🦷", "🦴", "👀", "👁️", "👅", "👄", "💋", "🩸",
+            "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔",
+            "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "☮️",
+            "✝️", "☪️", "🕉️", "☸️", "✡️", "🔯", "🕎", "☯️", "☦️", "🛐",
+            "⛎", "♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐",
+            "♑", "♒", "♓", "🆔", "⚛️", "🉑", "☢️", "☣️", "📴", "📳",
+            "🈶", "🈚", "🈸", "🈺", "🈷️", "✴️", "🆚", "💮", "🉐", "㊙️",
+            "㊗️", "🈴", "🈵", "🈹", "🈲", "🅰️", "🅱️", "🆎", "🆑", "🅾️",
+            "🆘", "❌", "⭕", "🛑", "⛔", "📛", "🚫", "💯", "💢", "♨️",
+            "🚷", "🚯", "🚳", "🚱", "🔞", "📵", "🚭", "❗", "❕", "❓",
+            "❔", "‼️", "⁉️", "🔅", "🔆", "〽️", "⚠️", "🚸", "🔱", "⚜️",
+            "🔰", "♻️", "✅", "🈯", "💹", "❇️", "✳️", "❎", "🌐", "💠",
+            "Ⓜ️", "🌀", "💤", "🏧", "🚾", "♿", "🅿️", "🈳", "🈂️", "🛂",
+            "🛃", "🛄", "🛅", "🚹", "🚺", "🚼", "🚻", "🚮", "🎦", "📶",
+            "🈁", "🔣", "ℹ️", "🔤", "🔡", "🔠", "🆖", "🆗", "🆙", "🆒",
+            "🆕", "🆓", "0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣",
+            "8️⃣", "9️⃣", "🔟", "🔢", "#️⃣", "*️⃣", "⏏️", "▶️", "⏸️", "⏯️",
+            "⏹️", "⏺️", "⏭️", "⏮️", "⏩", "⏪", "⏫", "⏬", "◀️", "🔼",
+            "🔽", "➡️", "⬅️", "⬆️", "⬇️", "↗️", "↘️", "↙️", "↖️", "↕️",
+            "↔️", "↪️", "↩️", "⤴️", "⤵️", "🔀", "🔁", "🔂", "🔄", "🔃",
+            "🎵", "🎶", "➕", "➖", "➗", "✖️", "♾️", "💲", "💱", "™️",
+            "©️", "®️", "〰️", "➰", "➿", "🔚", "🔙", "🔛", "🔝", "🔜",
+            "✔️", "☑️", "🔘", "🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "⚫",
+            "⚪", "🟤", "🔺", "🔻", "🔸", "🔹", "🔶", "🔷", "🔳", "🔲",
+            "▪️", "▫️", "◾", "◽", "◼️", "◻️", "🟥", "🟧", "🟨", "🟩",
+            "🟦", "🟪", "⬛", "⬜", "🟫", "🔈", "🔇", "🔉", "🔊", "🔔",
+            "🔕", "📣", "📢", "👁️‍🗨️", "💬", "💭", "🗯️", "♠️", "♣️", "♥️",
+            "♦️", "🃏", "🎴", "🀄", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕",
+            "🕖", "🕗", "🕘", "🕙", "🕚", "🕛", "🕜", "🕝", "🕞", "🕟",
+            "🕠", "🕡", "🕢", "🕣", "🕤", "🕥", "🕦", "🕧"
+        ]
+
+        layout = QGridLayout(self)
+        layout.setSpacing(2) # Tight spacing
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        cols = 10 # Number of columns
+        row, col = 0, 0
+        for emoji in emojis:
+            label = QLabel(emoji)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setFixedSize(30, 30) # Fixed size for each emoji cell
+            label.setStyleSheet("""
+                QLabel { font-size: 16pt; border-radius: 4px; }
+                QLabel:hover { background-color: #555; }
+            """)
+            label.setCursor(Qt.CursorShape.PointingHandCursor)
+            # Use lambda to capture the specific emoji for the click event
+            label.mousePressEvent = lambda event, e=emoji: self.on_emoji_click(e)
+            layout.addWidget(label, row, col)
+            col += 1
+            if col >= cols:
+                col = 0
+                row += 1
+
+        self.setLayout(layout)
+        self.adjustSize() # Adjust dialog size to fit content
+
+    def on_emoji_click(self, emoji):
+        self.emoji_selected.emit(emoji)
+        self.accept() # Close the dialog after selection
+
+    def leaveEvent(self, event):
+        """Close the popup if the mouse leaves it."""
+        self.reject() # Close without emitting signal
+
+
 class PasteLineEdit(QLineEdit):
     """A QLineEdit subclass that accepts pasted/dropped images/files via explicit reference."""
 
@@ -1848,6 +1942,25 @@ class ChatWindow(QMainWindow):
 
         # Scroll to bottom after adding initial history
         QTimer.singleShot(100, self._scroll_to_bottom)
+
+    def open_emoji_picker(self):
+        """Opens the emoji picker dialog near the emoji button."""
+        if not hasattr(self, 'emoji_button'): return
+
+        picker = EmojiPicker(self)
+        picker.emoji_selected.connect(self.insert_emoji)
+
+        # Position the picker below the button
+        button_pos = self.emoji_button.mapToGlobal(QPoint(0, self.emoji_button.height()))
+        picker.move(button_pos)
+        picker.exec() # Show as modal dialog
+
+    @pyqtSlot(str)
+    def insert_emoji(self, emoji: str):
+        """Inserts the selected emoji into the input field at the cursor position."""
+        if hasattr(self, 'input_field'):
+            self.input_field.insert(emoji)
+            self.input_field.setFocus() # Keep focus on input field
 
     @pyqtSlot(tuple)
     def update_emotion_indicator(self, mood_tuple: tuple):
