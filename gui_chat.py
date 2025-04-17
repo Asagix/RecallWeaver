@@ -1743,7 +1743,8 @@ class ChatWindow(QMainWindow):
 
 
 
-    def display_message(self, speaker, text, image_base64: str | None = None, object_name_suffix="Message"):
+    # --- Signature updated to accept ai_node_uuid ---
+    def display_message(self, speaker, text, image_base64: str | None = None, object_name_suffix="Message", ai_node_uuid: str | None = None):
         """Adds a message bubble with optional text, image thumbnail, and timestamp."""
 
         # --- Create Image Label (if image data provided) ---
