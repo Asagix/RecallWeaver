@@ -3814,22 +3814,13 @@ class GraphMemoryClient:
 
         # --- LLM Analysis for Short-Term Drive Satisfaction/Frustration ---
         update_interval = drive_cfg.get('short_term_update_interval_interactions', 0) # Get interval from config
-        # Check if LLM update should run based on interval (can be combined with decay later)
-        # For now, let's assume if relevant_nodes are provided (e.g., from consolidation), we analyze them.
-        if relevant_nodes and update_interval > 0: # Basic check, could be more sophisticated
+        # Check if LLM update should run based on interval AND if context_text is provided
+        if context_text and update_interval > 0: # Check if context_text is non-empty
             logger.info("Attempting LLM analysis for drive state update...")
             try:
-                # 1. Select Nodes & Format Context
-                # Use the nodes passed in (e.g., from consolidation)
-                context_nodes_data = []
-                for node_uuid in relevant_nodes:
-                    if node_uuid in self.graph:
-                        context_nodes_data.append(self.graph.nodes[node_uuid])
-                context_nodes_data.sort(key=lambda x: x.get('timestamp', '')) # Sort chronologically
-                context_text = "\n".join([f"{d.get('speaker', '?')}: {d.get('text', '')}" for d in context_nodes_data])
-
+                # 1. Context is already provided as context_text
                 if not context_text.strip():
-                     logger.warning("No text context available from relevant nodes for drive analysis.")
+                     logger.warning("Received empty context_text for drive analysis.")
                 else:
                     # 2. Load Prompt
                     prompt_template = self._load_prompt("drive_analysis_prompt.txt")
@@ -5686,8 +5677,8 @@ class GraphMemoryClient:
 
         logger.info("--- Consolidation Finished ---")
 
-        # --- Update Short-Term Drive State ---
-        self._update_drive_state(relevant_nodes=nodes_to_process)
+        # --- Update Short-Term Drive State (Pass context_text directly) ---
+        self._update_drive_state(context_text=context_text) # Pass the generated context
 
         # --- Update Long-Term Drive State (Less Frequently) ---
         drive_cfg = self.config.get('subconscious_drives', {})
