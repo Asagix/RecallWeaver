@@ -1148,6 +1148,7 @@ class ChatWindow(QMainWindow):
         self.is_processing = False  # Flag to prevent concurrent processing
         self.awaiting_clarification = False  # Flag for clarification state
         self.pending_confirmation = None  # NEW: Store details for pending confirmation {'action': str, 'args': dict}
+        self.user_scrolled_up = False # Flag to track if user manually scrolled up
 
         # --- Initial State ---
         self.set_input_enabled(False)  # Start with input disabled
@@ -1288,8 +1289,10 @@ class ChatWindow(QMainWindow):
         self.layout.addWidget(self.scroll_area, 1);
         self.layout.addWidget(self.input_frame)
 
-        # --- Connect scrollbar signal for automatic scrolling ---
-        self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom_on_range_change)
+        # --- Connect scrollbar signals ---
+        scrollbar = self.scroll_area.verticalScrollBar()
+        scrollbar.rangeChanged.connect(self._scroll_to_bottom_on_range_change)
+        scrollbar.valueChanged.connect(self._handle_scroll_value_changed) # Connect valueChanged
 
     def _setup_status_bar(self):
         """Creates the status bar and adds the status light widget."""
@@ -1477,6 +1480,7 @@ class ChatWindow(QMainWindow):
         self.clear_chat_display()
         self.display_message("System", f"Loading personality: {name}...")
         self.clear_attachment()  # Clear any pending attachments
+        self.user_scrolled_up = False # Reset scroll flag on personality switch
 
         # Stop existing worker gracefully
         if self.worker and self.worker.isRunning():
@@ -1708,6 +1712,7 @@ class ChatWindow(QMainWindow):
                 # Placeholder text will be reset by _finalize_display or next clarification
 
             if not self.is_processing:
+                self.user_scrolled_up = False # Reset scroll flag when user sends message
                 # (Command handling logic remains the same)
                 if not attachment_to_send:
                     if user_input_text.lower() == "/consolidate":
@@ -1788,6 +1793,7 @@ class ChatWindow(QMainWindow):
         gui_logger.info("Memory reset complete signal received by GUI.")
         self.clear_chat_display()
         self.display_message("System", "Memory has been reset.", object_name_suffix="ConfirmationMessage")
+        self.user_scrolled_up = False # Reset scroll flag after reset
         self._finalize_display(status_msg="Memory Reset Complete.", status_duration=5000)
 
     @pyqtSlot(str, dict)
@@ -2120,26 +2126,35 @@ class ChatWindow(QMainWindow):
         self.update_status_light(final_light_status)
 
     def _scroll_to_bottom(self):
-        # (Implementation remains the same)
-        try:
-            scrollbar = self.scroll_area.verticalScrollBar(); scrollbar.setValue(scrollbar.maximum())
-        except Exception as e:
-            gui_logger.debug(f"Minor error during scroll to bottom: {e}")
+        """Scrolls to the bottom only if the user hasn't manually scrolled up."""
+        if not self.user_scrolled_up:
+            try:
+                scrollbar = self.scroll_area.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+            except Exception as e:
+                gui_logger.debug(f"Minor error during scroll to bottom: {e}")
+        # else:
+            # gui_logger.debug("Skipping auto-scroll, user has scrolled up.")
+
+    @pyqtSlot(int)
+    def _handle_scroll_value_changed(self, value: int):
+        """Updates the user_scrolled_up flag based on scrollbar position."""
+        scrollbar = self.scroll_area.verticalScrollBar()
+        # Consider scrolled up if not at the maximum value
+        is_at_bottom = (value == scrollbar.maximum())
+        if not is_at_bottom and not self.user_scrolled_up:
+            gui_logger.debug("User scrolled up.")
+            self.user_scrolled_up = True
+        elif is_at_bottom and self.user_scrolled_up:
+            gui_logger.debug("User scrolled back to bottom.")
+            self.user_scrolled_up = False
 
     @pyqtSlot(int, int)
     def _scroll_to_bottom_on_range_change(self, min_val, max_val):
-        """Scrolls to bottom when the scroll range changes."""
-        # Check if scrollbar is already near the bottom before auto-scrolling
-        # This prevents unwanted scrolling when user is looking at history
-        scrollbar = self.scroll_area.verticalScrollBar()
-        current_value = scrollbar.value()
-        maximum_value = scrollbar.maximum()
-        # Define a threshold (e.g., 95% scrolled down)
-        threshold = 0.95
-        if current_value >= threshold * maximum_value or current_value == maximum_value:
-            # Only scroll if already near or at the bottom
-            self._scroll_to_bottom()
-        # else: User might be scrolling up, don't force scroll down
+        """Scrolls to bottom when the scroll range changes, respecting user scroll."""
+        # This method is called when content is added, potentially changing the max value.
+        # We should scroll down if the user hasn't scrolled up.
+        self._scroll_to_bottom() # _scroll_to_bottom now contains the check
 
     def handle_attach_file(self):
         """Opens a file dialog allowing any file type and calls the path handler."""
