@@ -1529,17 +1529,15 @@ class ChatWindow(QMainWindow):
         self.input_layout.addWidget(self.input_field, 1);
         self.input_layout.addWidget(self.attach_button);
         # --- Add Emoji Button ---
-        self.emoji_button = QPushButton("😊") # Use standard smiley emoji icon
+        self.emoji_button = QPushButton(":)") # Use simple text smiley
         self.emoji_button.setObjectName("EmojiButton") # For styling
         self.emoji_button.setToolTip("Insert Emoji")
-        # --- Set Font for Emoji Button ---
-        emoji_font = QFont("Segoe UI Emoji", 12) # Use Segoe UI Emoji, adjust size if needed
-        self.emoji_button.setFont(emoji_font)
-        # --- Adjust size based on font ---
-        fm = self.emoji_button.fontMetrics()
-        button_size = max(fm.height(), fm.horizontalAdvance("😊")) + 8 # Add padding
-        self.emoji_button.setFixedSize(button_size, button_size) # Make it square based on emoji size
-        # self.emoji_button.setFixedSize(self.attach_button.sizeHint().height(), self.attach_button.sizeHint().height()) # Old sizing
+        # --- Remove Font Setting ---
+        # emoji_font = QFont("Segoe UI Emoji", 12) # No longer needed for text smiley
+        # self.emoji_button.setFont(emoji_font)
+        # --- Adjust size based on text/attach button ---
+        # Make it roughly the same size as the attach button for consistency
+        self.emoji_button.setFixedSize(self.attach_button.sizeHint().height(), self.attach_button.sizeHint().height())
         self.emoji_button.clicked.connect(self.open_emoji_picker)
         self.input_layout.addWidget(self.emoji_button) # Add before send button
         # --- End Add Emoji Button ---
@@ -1959,9 +1957,41 @@ class ChatWindow(QMainWindow):
         picker = EmojiPicker(self)
         picker.emoji_selected.connect(self.insert_emoji)
 
-        # Position the picker below the button
-        button_pos = self.emoji_button.mapToGlobal(QPoint(0, self.emoji_button.height()))
-        picker.move(button_pos)
+        # --- Calculate Picker Position ---
+        button_rect = self.emoji_button.rect()
+        button_bottom_left_global = self.emoji_button.mapToGlobal(button_rect.bottomLeft())
+        button_top_left_global = self.emoji_button.mapToGlobal(button_rect.topLeft())
+
+        picker_size = picker.sizeHint() # Get the recommended size
+        if not picker_size.isValid(): picker_size = picker.size() # Fallback to current size
+
+        # Get screen geometry for the screen the button is on
+        screen = QApplication.screenAt(button_bottom_left_global)
+        if not screen: screen = QApplication.primaryScreen() # Fallback
+        screen_geometry = screen.availableGeometry() # Use available geometry (excludes taskbar)
+
+        # Calculate potential bottom position if opened below
+        potential_bottom_y = button_bottom_left_global.y() + picker_size.height()
+
+        # Default position: below the button
+        picker_pos = button_bottom_left_global
+
+        # Check if opening below goes off-screen
+        if potential_bottom_y > screen_geometry.bottom():
+            # If it goes off-screen, position it above the button
+            picker_pos = button_top_left_global - QPoint(0, picker_size.height())
+            gui_logger.debug("Emoji picker would go off-screen below, positioning above.")
+        else:
+            gui_logger.debug("Positioning emoji picker below button.")
+
+        # Ensure picker doesn't go off the left/right edges either (simple clamp)
+        picker_pos.setX(max(screen_geometry.left(), min(picker_pos.x(), screen_geometry.right() - picker_size.width())))
+        # Ensure picker doesn't go off the top edge if positioned above
+        if picker_pos.y() < screen_geometry.top():
+             picker_pos.setY(screen_geometry.top())
+
+
+        picker.move(picker_pos)
         picker.exec() # Show as modal dialog
 
     @pyqtSlot(str)
