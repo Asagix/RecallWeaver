@@ -2716,9 +2716,13 @@ class ChatWindow(QMainWindow):
                 Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
             )
             message_label.setOpenExternalLinks(True)
-            # (HTML processing remains the same...)
+            # --- HTML Processing ---
             escaped_text = str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            processed_text = re.sub(r"(?<![*\n])\*\*(?![*\n])(.+?)(?<![*\n])\*\*(?![*\n])", r"<b>\1</b>", escaped_text)
+            # 1. Handle single asterisks first (convert to bold)
+            processed_text = re.sub(r"(?<![*\w])\*(?![*\s])(.+?)(?<![*\s])\*(?![*\w])", r"<b>\1</b>", escaped_text)
+            # 2. Handle double asterisks (convert to bold) - This rule might now catch already bolded text, which is okay.
+            processed_text = re.sub(r"(?<![*\n])\*\*(?![*\n])(.+?)(?<![*\n])\*\*(?![*\n])", r"<b>\1</b>", processed_text)
+            # 3. Handle lists
             lines = processed_text.split("\n")
             html_lines = []
             for line in lines:
