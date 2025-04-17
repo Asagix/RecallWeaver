@@ -1834,12 +1834,13 @@ class GraphMemoryClient:
             # Ensure factor is clamped 0-1 to avoid negative scores
             clamped_emo_mag = min(1.0, max(0.0, emotion_magnitude / 1.414)) # Normalize approx 0-1
             emotion_resistance_multiplier = (1.0 - clamped_emo_mag * emotion_magnitude_resistance_factor)
-            final_adjusted_score = score_after_type_resistance * emotion_resistance_multiplier
-            logger.debug(f"    Node {uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Final Adjusted Score: {final_adjusted_score:.4f}")
-        else:
-            final_adjusted_score = score_after_type_resistance # No emotion resistance applied
+            # Update final_adjusted_score
+            final_adjusted_score *= emotion_resistance_multiplier
+            logger.debug(f"    Node {uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}")
+        # else: No emotion resistance applied, final_adjusted_score remains score_after_type_resistance
 
-        logger.debug(f"    Final Adjusted Forgettability Score for {node_uuid[:8]}: {final_adjusted_score:.4f}") # Log the final score being returned
+        # Log the final score being returned (moved outside the if/else)
+        logger.debug(f"    Final Adjusted Forgettability Score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
         return final_adjusted_score
 
     def _get_relative_time_desc(self, timestamp_str: str) -> str:
