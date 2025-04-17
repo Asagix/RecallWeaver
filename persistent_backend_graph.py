@@ -2783,6 +2783,7 @@ class GraphMemoryClient:
         parsed_response = "Error: Processing failed." # Default for return
         memory_chain_data = []
         graph_user_input = user_input # Start with original input for graph
+        action_result_message = None # Initialize here
 
         try:
             # --- Handle Multimodal Input ---
@@ -2878,8 +2879,8 @@ class GraphMemoryClient:
                         memory_chain_data = self.retrieve_memory_chain(
                             initial_node_uuids=initial_uuids,
                             recent_concept_uuids=list(concepts_for_retrieval), # Pass previous concepts
-                            current_mood=mood_for_retrieval, # Pass previous mood
-                            last_turn_uuids=last_turn_uuids_for_priming # Pass priming UUIDs
+                            current_mood=mood_for_retrieval # Pass previous mood
+                            # last_turn_uuids argument removed
                         )
                         logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
                     else:
