@@ -1823,6 +1823,9 @@ class GraphMemoryClient:
         score_after_type_resistance = final_score * type_resistance_factor
         logger.debug(f"    Node {uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}")
 
+        # Initialize final_adjusted_score
+        final_adjusted_score = score_after_type_resistance
+
         # --- Apply Emotion Magnitude Resistance ---
         emotion_magnitude_resistance_factor = weights.get('emotion_magnitude_resistance_factor', 0.0)
         if emotion_magnitude_resistance_factor > 0:
