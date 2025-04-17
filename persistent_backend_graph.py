@@ -2078,6 +2078,78 @@ class GraphMemoryClient:
             logger.debug(f"Final Prompt (Low Budget): '{final_prompt[:150]}...'") # Corrected logger name
             return final_prompt
 
+        # --- Workspace Context Construction (Summaries) ---
+        workspace_context_str = ""
+        cur_workspace_tokens = 0
+        # Budget calculation needs refinement - workspace context comes *before* memory/history
+        # Let's allocate a portion of the *total* available budget first.
+        # Example: Allocate 15%? Or a fixed amount? Let's try fixed for now.
+        workspace_budget = 500 # Fixed token budget for workspace summaries (adjust as needed)
+        logger.debug(f"Allocated Workspace Context Budget: {workspace_budget}")
+
+        # Ensure workspace budget doesn't exceed total available
+        workspace_budget = min(workspace_budget, avail_budget)
+        avail_budget -= workspace_budget # Reduce available budget for mem/hist
+
+        # Get file list
+        workspace_files, list_msg = file_manager.list_files(self.config, self.personality)
+        if workspace_files is None:
+            logger.error(f"Failed to list workspace files for context: {list_msg}")
+            workspace_context_str = f"{model_tag}[Workspace State: Error retrieving file list]{end_turn}\n"
+        elif not workspace_files:
+            workspace_context_str = f"{model_tag}[Workspace State: Empty]{end_turn}\n"
+        else:
+            # Limit number of files to summarize based on config
+            max_files_to_summarize = self.config.get('prompting', {}).get('max_files_to_summarize_in_context', 5)
+            files_to_process = sorted(workspace_files)[:max_files_to_summarize]
+            logger.info(f"Processing up to {len(files_to_process)} files for workspace context summary (limit: {max_files_to_summarize}).")
+
+            ws_parts = ["[Workspace State (Filename: Summary):]"]
+            ws_header_footer_tags = f"{model_tag}{end_turn}\n" # Approx tokens for surrounding tags
+            try: ws_format_tokens = len(tokenizer.encode(ws_header_footer_tags + "\n".join(ws_parts)))
+            except: ws_format_tokens = 50 # Estimate
+
+            effective_ws_budget = workspace_budget - ws_format_tokens
+
+            for filename in files_to_process:
+                summary_line = f"Filename: {filename}\nSummary: [Content unavailable or too long]" # Default
+                file_content, read_msg = file_manager.read_file(self.config, self.personality, filename)
+
+                if file_content is not None:
+                    # Limit content length before sending to summarizer to avoid excessive tokens
+                    max_content_chars = 2000 # Limit content length for summarization prompt
+                    content_for_summary = file_content[:max_content_chars]
+                    if len(file_content) > max_content_chars:
+                         content_for_summary += "\n... [Content Truncated]"
+
+                    summary = self._summarize_file_content(content_for_summary)
+                    if summary:
+                        summary_line = f"Filename: {filename}\nSummary: {summary}"
+                    else:
+                        summary_line = f"Filename: {filename}\nSummary: [Summary generation failed]"
+                else:
+                    logger.warning(f"Could not read file '{filename}' for context summary: {read_msg}")
+                    summary_line = f"Filename: {filename}\nSummary: [Could not read file]"
+
+                # Check token count before adding
+                try: line_tokens = len(tokenizer.encode(summary_line + "\n---\n"))
+                except: line_tokens = len(summary_line) // 3 # Estimate
+
+                if cur_workspace_tokens + line_tokens <= effective_ws_budget:
+                    ws_parts.append(summary_line)
+                    ws_parts.append("---") # Separator
+                    cur_workspace_tokens += line_tokens
+                else:
+                    logger.warning(f"Workspace context budget ({effective_ws_budget}) reached. Skipping remaining files.")
+                    ws_parts.append("[Remaining files omitted due to context length limit]")
+                    break # Stop adding files
+
+            workspace_context_str = f"{model_tag}{'\n'.join(ws_parts)}{end_turn}\n"
+
+        # Recalculate memory/history budget based on actual workspace tokens used
+        try: actual_ws_tokens = len(tokenizer.encode(workspace_context_str))
+        except: actual_ws_tokens = len(workspace_context_str) // 3
+        avail_budget = max_context_tokens - fixed_tokens - context_headroom - actual_ws_tokens # Recalculate remaining budget
         mem_budget = int(avail_budget * mem_budget_ratio)
         hist_budget = avail_budget - mem_budget
         logger.debug(f"Token Budget Allocation: Memory={mem_budget}, History={hist_budget}") # Corrected logger name
