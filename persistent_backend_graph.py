@@ -2032,7 +2032,43 @@ class GraphMemoryClient:
         for instruction in system_instructions:
              final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
 
+        # --- Format Drive State Block ---
+        drive_block = ""
+        if self.config.get('subconscious_drives', {}).get('enabled', False) and self.drive_state:
+            try:
+                drive_parts = ["[Current Drive State (Internal Motivations):]"]
+                # Format short-term drives (relative to baseline)
+                st_drives = self.drive_state.get("short_term", {})
+                lt_drives = self.drive_state.get("long_term", {})
+                base_drives = self.config.get('subconscious_drives', {}).get('base_drives', {})
+                lt_influence = self.config.get('subconscious_drives', {}).get('long_term_influence_on_baseline', 1.0)
+
+                for drive, st_level in st_drives.items():
+                    config_baseline = base_drives.get(drive, 0.0)
+                    lt_level = lt_drives.get(drive, 0.0)
+                    dynamic_baseline = config_baseline + (lt_level * lt_influence)
+                    deviation = st_level - dynamic_baseline
+                    # Describe the state qualitatively
+                    state_desc = "Neutral"
+                    if deviation > 0.2: state_desc = "High" # Need potentially met/overshot
+                    elif deviation < -0.2: state_desc = "Low" # Need potentially unmet
+                    drive_parts.append(f"- {drive}: {state_desc} (Level: {st_level:.2f}, Baseline: {dynamic_baseline:.2f})")
+
+                # Optionally add long-term summary if needed/space allows
+                # drive_parts.append("[Long-Term Tendencies:]")
+                # for drive, lt_level in lt_drives.items():
+                #     drive_parts.append(f"- {drive}: {lt_level:.2f}")
+
+                if len(drive_parts) > 1:
+                    drive_text = "\n".join(drive_parts)
+                    drive_block = f"{model_tag}{drive_text}{end_turn}\n"
+                    logger.debug("Formatted drive state block created.")
+            except Exception as e:
+                logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
+                drive_block = ""
+
         if asm_block: final_parts.append(asm_block) # Add ASM block after time/system note
+        if drive_block: final_parts.append(drive_block) # Add Drive block after ASM
         if mem_ctx_str: final_parts.append(mem_ctx_str)
         final_parts.extend(hist_parts)
         final_parts.append(user_input_fmt) # Crucial: Adds current user input (potentially with tag)
