@@ -296,6 +296,7 @@ class GraphMemoryClient:
              # Decide if this is fatal
 
         self._load_memory() # Loads data from self.data_dir
+        self._load_initial_history() # Load initial history after main memory load
 
         # Set last added node UUID
         if not self.last_added_node_uuid and self.graph.number_of_nodes() > 0:
@@ -3323,8 +3324,46 @@ class GraphMemoryClient:
         except Exception as e:
             logger.error(f"Error during memory reset: {e}", exc_info=True)
             # Ensure drive state is also reset in case of error
-            self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); self._initialize_drive_state(); logger.warning("Reset failed, re-initialized empty state.")
+            self.graph = nx.DiGraph(); self.embeddings = {}; self.faiss_id_to_uuid = {}; self.uuid_to_faiss_id = {}; self.last_added_node_uuid = None; self.index = faiss.IndexFlatL2(self.embedding_dim); self._initialize_drive_state(); self.initial_history_turns = []; logger.warning("Reset failed, re-initialized empty state.") # Clear initial history on reset
             return False
+
+    def _load_initial_history(self, count=3):
+        """Loads the last 'count' turn nodes to show as initial context."""
+        logger.info(f"Loading initial history (last {count} turns)...")
+        self.initial_history_turns = []
+        try:
+            turn_nodes = [
+                (uuid, data) for uuid, data in self.graph.nodes(data=True)
+                if data.get('node_type') == 'turn' and data.get('timestamp')
+            ]
+            if not turn_nodes:
+                logger.info("No 'turn' nodes found in graph for initial history.")
+                return
+
+            # Sort by timestamp (most recent first)
+            turn_nodes.sort(key=lambda x: x[1]['timestamp'], reverse=True)
+
+            # Get the last 'count' nodes
+            initial_nodes_data = [data for uuid, data in turn_nodes[:count]]
+
+            # Sort them back into chronological order for display/context
+            initial_nodes_data.sort(key=lambda x: x.get('timestamp', ''))
+
+            # Format for conversation history list
+            self.initial_history_turns = [
+                {"speaker": d.get("speaker"), "text": d.get("text"), "timestamp": d.get("timestamp"), "uuid": d.get("uuid")}
+                for d in initial_nodes_data
+            ]
+            logger.info(f"Loaded {len(self.initial_history_turns)} initial history turns.")
+            logger.debug(f"Initial history turns loaded: {self.initial_history_turns}")
+
+        except Exception as e:
+            logger.error(f"Error loading initial history: {e}", exc_info=True)
+            self.initial_history_turns = [] # Ensure it's empty on error
+
+    def get_initial_history(self) -> list:
+        """Returns the loaded initial history turns."""
+        return self.initial_history_turns
 
     # --- Drive State Management ---
     def _initialize_drive_state(self):

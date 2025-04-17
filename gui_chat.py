@@ -98,6 +98,7 @@ class WorkerSignals(QObject):
     feedback_provided = pyqtSignal(str, str)  # NEW: node_uuid, feedback_type ('up'/'down')
     error = pyqtSignal(str)
     log_message = pyqtSignal(str)
+    initial_history_ready = pyqtSignal(list) # NEW: Signal for initial history
 
 
 # --- Worker Thread ---
@@ -157,7 +158,20 @@ class Worker(QThread):
             self.client = GraphMemoryClient(config_path=self.config_path, personality_name=self.personality)
             initialized_successfully = True
             self.signals.log_message.emit(f"Backend for '{self.personality}' initialized.")
-            self.signals.backend_ready.emit(True, self.personality)
+            # --- Get and emit initial history ---
+            try:
+                initial_history = self.client.get_initial_history()
+                if initial_history:
+                    self.current_conversation = initial_history # Pre-populate conversation history
+                    self.signals.initial_history_ready.emit(initial_history)
+                    gui_logger.info(f"Worker emitted {len(initial_history)} initial history turns.")
+                else:
+                    self.current_conversation = [] # Start fresh if no history
+            except Exception as hist_e:
+                gui_logger.error(f"Error getting initial history from backend: {hist_e}", exc_info=True)
+                self.current_conversation = [] # Start fresh on error
+            # --- End initial history handling ---
+            self.signals.backend_ready.emit(True, self.personality) # Signal backend is ready AFTER history is handled
         except Exception as e:
             error_msg = f"FATAL: Failed initialize backend for '{self.personality}': {e}"
             self.signals.error.emit(error_msg)
@@ -506,7 +520,7 @@ class Worker(QThread):
                 error_msg = f"Error calling backend reset_memory: {e}"; self.signals.error.emit(
                     error_msg); backend_logger.error(error_msg, exc_info=True); return
             if reset_ok:
-                self.current_conversation.clear()
+                self.current_conversation.clear() # Clear worker's history too
                 self.interaction_count = 0  # Also reset interaction count on manual memory reset
                 backend_logger.info("Memory reset successful.")
                 self.signals.memory_reset_complete.emit()
@@ -1559,6 +1573,7 @@ class ChatWindow(QMainWindow):
         self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request)  # NEW Connection
         self.worker.signals.error.connect(self.display_error)
         self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
+        self.worker.signals.initial_history_ready.connect(self.display_initial_history) # NEW Connection
         self.worker.finished.connect(self.on_worker_finished)
 
         self.worker.start()  # Start the thread execution (calls run())
@@ -1601,7 +1616,8 @@ class ChatWindow(QMainWindow):
         # For now, assume if worker stops, UI should reflect inactive state unless switching is in progress
         # This logic might need refinement depending on desired behavior on worker crash.
         # If no worker is running for the current personality, set to not ready.
-        if not self.worker or not self.worker.isRunning():
+        # This logic might need refinement if the worker finishes *during* a switch.
+        if self.current_personality and (not self.worker or not self.worker.isRunning()):
             # Check if we are *expecting* it to be stopped (e.g., during switch) might be complex.
             # Safest is perhaps to check if a personality is selected.
             if self.current_personality:
@@ -1627,6 +1643,31 @@ class ChatWindow(QMainWindow):
             elif isinstance(item, QSpacerItem):
                 pass
         self.chat_layout.addStretch()
+
+    @pyqtSlot(list)
+    def display_initial_history(self, history_turns: list):
+        """Displays the initial history turns from the previous session."""
+        gui_logger.info(f"Received {len(history_turns)} initial history turns to display.")
+        if not history_turns:
+            return
+
+        # Add a visual separator
+        separator_label = QLabel("--- Previous Conversation ---")
+        separator_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        separator_label.setStyleSheet("color: #888; font-style: italic; margin-top: 10px; margin-bottom: 5px;")
+        self._add_widget_to_chat_layout(separator_label)
+
+        # Display each turn
+        for turn in history_turns:
+            speaker = turn.get("speaker", "?")
+            text = turn.get("text", "")
+            uuid = turn.get("uuid") # Get UUID if available
+            # Call display_message, passing UUID only if it's an AI turn
+            ai_node_uuid = uuid if speaker == "AI" else None
+            self.display_message(speaker, text, ai_node_uuid=ai_node_uuid)
+
+        # Scroll to bottom after adding initial history
+        QTimer.singleShot(100, self._scroll_to_bottom)
 
     def show_startup_error(self, message):
         # (Implementation remains the same)
