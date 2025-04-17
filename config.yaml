@@ -74,6 +74,8 @@ activation:
     reconsolidation_enable: true
     reconsolidation_threshold: 0.5 # Min V/A distance to trigger reconsolidation adjustment
     reconsolidation_factor: 0.05 # How much to nudge node emotion towards current mood (0 to 1)
+  # --- Short-Term Priming ---
+  priming_boost_factor: 1.5 # Multiplicative boost for immediate previous turn(s)
 
 # --- Prompting & Context Configuration ---
 prompting:
@@ -136,6 +138,7 @@ forgetting:
     emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
     connectivity_factor: 0.05 # Decreased from 0.1
     access_count_factor: 0.05 # Added small weight
+    emotion_magnitude_resistance_factor: 0.1 # NEW: How much emotion magnitude reduces forgettability (0=none)
     # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
     recency_decay_constant: 0.000005 # Example value (adjust based on desired time scale, e.g., for seconds)
   # --- Decay Resistance (Lower factor = Slower decay) ---
@@ -144,7 +147,7 @@ forgetting:
     turn: 1.0      # Standard decay rate for conversational turns
     summary: 0.1   # Summaries decay 10x slower
     concept: 0.05  # Concepts decay 20x slower
-    intention: 0.5 # Intentions decay slower than turns but faster than summaries
+    intention: 0.4 # Intentions decay slightly slower than before (was 0.5)
     default: 1.0   # Default for unknown types
 
 # --- Memory Strength Parameters ---

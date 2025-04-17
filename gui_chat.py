@@ -198,8 +198,10 @@ class Worker(QThread):
              separator = " " if history_text else ""
              history_text += separator + placeholder
 
-        # Append user turn *before* processing potentially long LLM call
-        self.current_conversation.append({"speaker": "User", "text": history_text, "timestamp": user_timestamp})
+        # --- Add user turn to history (WITH UUID if available later) ---
+        # We need the UUID *after* adding to graph, so add placeholder for now
+        user_turn_data = {"speaker": "User", "text": history_text, "timestamp": user_timestamp, "uuid": None}
+        self.current_conversation.append(user_turn_data)
         self.signals.log_message.emit(f"Processing chat: {history_text[:30]}...")
 
         ai_response_text = "Error: Could not get response."
@@ -215,7 +217,18 @@ class Worker(QThread):
 
             # Add AI response to worker's history
             ai_timestamp = datetime.now(timezone.utc).isoformat()
-            self.current_conversation.append({"speaker": "AI", "text": ai_response_text,"timestamp": ai_timestamp})
+            # --- Add AI response to history (WITH UUID if available later) ---
+            ai_turn_data = {"speaker": "AI", "text": ai_response_text,"timestamp": ai_timestamp, "uuid": None}
+            self.current_conversation.append(ai_turn_data)
+
+            # --- Get UUIDs from backend (if returned) and update history ---
+            # This requires process_interaction to return the UUIDs
+            # For now, assume they are NOT returned and priming uses last N turns implicitly
+            # If backend is modified later, update here:
+            # user_uuid_from_backend = ...
+            # ai_uuid_from_backend = ...
+            # if user_uuid_from_backend: user_turn_data['uuid'] = user_uuid_from_backend
+            # if ai_uuid_from_backend: ai_turn_data['uuid'] = ai_uuid_from_backend
 
             # Emit result signal
             self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data)
@@ -242,9 +255,15 @@ class Worker(QThread):
                  gui_logger.info(f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
                  self.input_queue.append(('memory_maintenance', None)) # Add maintenance task
                  # Reset counter immediately after queuing to avoid multiple triggers if queue processes slowly
+                 self.interaction_count = 0 # Reset counter for BOTH forgetting and consolidation checks
+
+             # --- Check Consolidation Trigger ---
+             # Ensure trigger count is positive (enabled)
+             if self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
+                 gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
+                 self.input_queue.append(('consolidate', True)) # Pass True for automatic trigger
+                 # Reset counter immediately after queuing
                  self.interaction_count = 0
-             # Automatic consolidation trigger based on interaction count removed
-             # Manual consolidation via /consolidate command still works.
 
 
     def handle_memory_maintenance_task(self):

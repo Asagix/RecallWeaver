@@ -930,6 +930,22 @@ class GraphMemoryClient:
         prop_unknown = prop_factors.get('UNKNOWN', 0.5) # Fallback
 
         guaranteed_saliency_threshold = act_cfg.get('guaranteed_saliency_threshold', 0.85)
+        priming_boost_factor = act_cfg.get('priming_boost_factor', 1.0) # Get priming boost factor
+
+        # --- Get Last Turn UUIDs for Priming (Internal) ---
+        last_turn_uuids_for_priming = set()
+        if self.last_added_node_uuid and self.last_added_node_uuid in self.graph:
+            last_turn_uuids_for_priming.add(self.last_added_node_uuid)
+            # Try to get the node before the last one via temporal link
+            try:
+                preds = list(self.graph.predecessors(self.last_added_node_uuid))
+                # Find the temporal predecessor if multiple exist
+                temporal_pred = next((p for p in preds if self.graph.get_edge_data(p, self.last_added_node_uuid, {}).get('type') == 'TEMPORAL'), None)
+                if temporal_pred:
+                    last_turn_uuids_for_priming.add(temporal_pred)
+            except Exception as e:
+                logger.warning(f"Could not get temporal predecessor for priming: {e}")
+        logger.debug(f"Priming UUIDs identified internally: {last_turn_uuids_for_priming}")
 
         saliency_enabled = features_cfg.get('enable_saliency', False)
         activation_influence = saliency_cfg.get('activation_influence', 0.0) if saliency_enabled else 0.0
@@ -1060,10 +1076,19 @@ class GraphMemoryClient:
                          logger.debug(f"Applying context focus boost ({boost_applied:.2f}) to node {uuid[:8]} (IsRecent: {is_recent_concept}, MentionsRecent: {mentions_recent_concept})")
 
                 final_initial_activation = base_initial_activation * boost_applied
+
+                # --- Apply Priming Boost ---
+                priming_applied = 1.0
+                if uuid in last_turn_uuids_for_priming: # Check against internally derived set
+                    priming_applied = priming_boost_factor
+                    logger.debug(f"Applying priming boost ({priming_applied:.2f}) to last turn node {uuid[:8]}")
+
+                final_initial_activation *= priming_applied # Apply priming boost multiplicatively
+
                 activation_levels[uuid] = final_initial_activation
                 node_data['last_accessed_ts'] = current_time # Update access time
                 valid_initial_nodes.add(uuid)
-                logger.debug(f"Initialized node {uuid[:8]} - Strength: {initial_strength:.3f}, BaseAct: {base_initial_activation:.3f}, Boost: {boost_applied:.2f}, FinalAct: {final_initial_activation:.3f}")
+                logger.debug(f"Initialized node {uuid[:8]} - Strength: {initial_strength:.3f}, BaseAct: {base_initial_activation:.3f}, CtxBoost: {boost_applied:.2f}, Priming: {priming_applied:.2f}, FinalAct: {final_initial_activation:.3f}")
             else:
                 logger.warning(f"Initial node {uuid} not in graph.")
 
@@ -1738,12 +1763,25 @@ class GraphMemoryClient:
 
         # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Score: {final_score:.3f}")
 
-        # --- Apply Decay Resistance ---
-        resistance_factor = node_data.get('decay_resistance_factor', 1.0)
-        adjusted_score = final_score * resistance_factor
-        logger.debug(f"    Node {uuid[:8]} Resistance Factor: {resistance_factor:.3f}. Adjusted Forget Score: {adjusted_score:.4f}")
+        # --- Apply Decay Resistance (Type-Based) ---
+        type_resistance_factor = node_data.get('decay_resistance_factor', 1.0)
+        score_after_type_resistance = final_score * type_resistance_factor
+        logger.debug(f"    Node {uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}")
 
-        return adjusted_score
+        # --- Apply Emotion Magnitude Resistance ---
+        emotion_magnitude_resistance_factor = weights.get('emotion_magnitude_resistance_factor', 0.0)
+        if emotion_magnitude_resistance_factor > 0:
+            # Calculate emotion magnitude (already done above)
+            # Reduce forgettability score based on magnitude (higher magnitude = lower score)
+            # Ensure factor is clamped 0-1 to avoid negative scores
+            clamped_emo_mag = min(1.0, max(0.0, emotion_magnitude / 1.414)) # Normalize approx 0-1
+            emotion_resistance_multiplier = (1.0 - clamped_emo_mag * emotion_magnitude_resistance_factor)
+            final_adjusted_score = score_after_type_resistance * emotion_resistance_multiplier
+            logger.debug(f"    Node {uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Final Adjusted Score: {final_adjusted_score:.4f}")
+        else:
+            final_adjusted_score = score_after_type_resistance # No emotion resistance applied
+
+        return final_adjusted_score
 
     def _get_relative_time_desc(self, timestamp_str: str) -> str:
         """Converts an ISO timestamp string into a human-readable relative time description."""
@@ -2818,13 +2856,26 @@ class GraphMemoryClient:
                         mood_for_retrieval = self.last_interaction_mood
                         logger.info(f"Using previous interaction context for retrieval: Concepts={len(concepts_for_retrieval)}, Mood={mood_for_retrieval}")
 
+                        # --- Get UUIDs of immediately preceding turns for priming ---
+                        last_turn_uuids_for_priming = []
+                        if conversation_history:
+                            # Get the last turn (which should be the user's input just added)
+                            last_user_turn_uuid = conversation_history[-1].get("uuid") # Assuming UUID is added to history dict
+                            if last_user_turn_uuid: last_turn_uuids_for_priming.append(last_user_turn_uuid)
+                            # Get the turn before that (likely the AI's previous response)
+                            if len(conversation_history) > 1:
+                                 prev_ai_turn_uuid = conversation_history[-2].get("uuid")
+                                 if prev_ai_turn_uuid: last_turn_uuids_for_priming.append(prev_ai_turn_uuid)
+                        logger.debug(f"Priming UUIDs identified: {last_turn_uuids_for_priming}")
+
+
                         # --- Now call retrieval ---
                         logger.info("Retrieving memory chain...")
-                        # logger.info(f"Passing {len(concepts_for_retrieval)} recent concept UUIDs and current mood {mood_for_retrieval} to retrieval.") # Redundant log
                         memory_chain_data = self.retrieve_memory_chain(
                             initial_node_uuids=initial_uuids,
                             recent_concept_uuids=list(concepts_for_retrieval), # Pass previous concepts
-                            current_mood=mood_for_retrieval # Pass previous mood
+                            current_mood=mood_for_retrieval, # Pass previous mood
+                            last_turn_uuids=last_turn_uuids_for_priming # Pass priming UUIDs
                         )
                         logger.info(f"Retrieved memory chain size: {len(memory_chain_data)}")
                     else:

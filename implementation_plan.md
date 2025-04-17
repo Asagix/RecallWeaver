@@ -106,6 +106,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Modify `retrieve_memory_chain` to accept recent concept UUIDs.
     -   [x] Implement logic in `retrieve_memory_chain` to apply `context_focus_boost` to initial activation of relevant nodes.
     -   [x] Add `activation.context_focus_boost` parameter to `config.yaml`.
+    -   [x] Add `activation.priming_boost_factor` to config.
+    -   [x] Modify `retrieve_memory_chain` to identify last turns and apply boost.
     -   [ ] Testing: Verify boost is applied correctly and influences retrieval as expected.
 -   [ ] **Interference Simulation:**
     -   [x] Add `activation.interference` section to `config.yaml` (enable, thresholds, factor).
@@ -118,6 +120,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Modify activation spreading in `retrieve_memory_chain` to calculate emotional distance between `current_mood` and neighbor nodes.
     -   [x] Apply subtle activation boost/penalty based on emotional distance using configured factors.
     -   [x] Add `activation.emotional_context` section to `config.yaml` (bias and reconsolidation params).
+    -   [x] Add `forgetting.weights.emotion_magnitude_resistance_factor` to config.
+    -   [x] Modify `_calculate_forgettability` to apply emotion resistance.
     -   [ ] Testing: Verify emotional context bias is applied correctly and subtly influences retrieval.
 -   [ ] **Emotional Reconsolidation:**
     -   [x] Add `reconsolidation_enable`, `_threshold`, `_factor` to `activation.emotional_context` in `config.yaml`.
@@ -140,7 +144,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [x] Create `prompts/intention_analysis_prompt.txt`.
     -   [x] Implement `_analyze_intention_request` method in `GraphMemoryClient`.
     -   [x] Modify `process_interaction` to call analysis and add 'intention' node if detected.
-    -   [ ] Testing: Verify intentions are detected and stored correctly as nodes.
+    -   [x] Modify config for `intention` node type (saliency, resistance).
+    -   [ ] Testing: Verify intentions are detected, stored, and potentially retrieved correctly.
 -   [ ] **Autobiographical Self-Model (V1 - Prompt Injection):**
     -   [x] Add `self.autobiographical_model` attribute to `GraphMemoryClient`.
     -   [x] Add persistence for ASM to `_load_memory` and `_save_memory` (`asm.json`).
