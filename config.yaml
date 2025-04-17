@@ -41,7 +41,7 @@ llm_models:
   action_analysis: # Keep entry but maybe mark as unused or lower resources
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 10 # Reduce length significantly if kept
+    max_length: 256 # Increased length significantly to allow for full JSON output
     temperature: 0.1
     top_p: 0.95
     top_k: 10
