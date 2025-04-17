@@ -927,10 +927,10 @@ class PasteLineEdit(QLineEdit):
         if urls: # Corrected indentation
             file_path = urls[0].toLocalFile()
             gui_logger.debug(f"Checking URL path: {file_path}")
-           if file_path and os.path.isfile(file_path):
-               # Let the main window handler decide if it's an image or generic file
-               gui_logger.debug("Calling chat_window.handle_attach_file_path (from pasted URL).")
-               self.chat_window.handle_attach_file_path(file_path) # Call using reference
+            if file_path and os.path.isfile(file_path): # Corrected indentation
+                # Let the main window handler decide if it's an image or generic file
+                gui_logger.debug("Calling chat_window.handle_attach_file_path (from pasted URL).")
+                self.chat_window.handle_attach_file_path(file_path) # Call using reference
                return True # Success
            else:
                gui_logger.debug("Pasted URL path is not a valid file.")
