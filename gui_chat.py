@@ -102,12 +102,12 @@ class WorkerSignals(QObject):
 
 # --- Worker Thread ---
 class Worker(QThread):
-    # --- WorkerSignals definition remains the same ---
-    # signals = WorkerSignals() # Assuming WorkerSignals is defined above
+    # --- Add class-level type hint for signals ---
+    signals: WorkerSignals
 
     def __init__(self, personality_name, config_path=DEFAULT_CONFIG_PATH):
         super().__init__()
-        self.signals = WorkerSignals()
+        self.signals = WorkerSignals() # Instantiation remains the same
         self.client = None
         self.current_conversation = []
         self.is_running = True
