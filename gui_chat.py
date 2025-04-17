@@ -923,22 +923,19 @@ class PasteLineEdit(QLineEdit):
             return False
 
         urls = mime_data.urls()
-        # urls = mime_data.urls() # Removed duplicate line
-        if urls: # Corrected indentation
+        if urls:
             file_path = urls[0].toLocalFile()
             gui_logger.debug(f"Checking URL path: {file_path}")
-            if file_path and os.path.isfile(file_path): # Corrected indentation
+            if file_path and os.path.isfile(file_path):
                 # Let the main window handler decide if it's an image or generic file
                 gui_logger.debug("Calling chat_window.handle_attach_file_path (from pasted URL).")
-                self.chat_window.handle_attach_file_path(file_path) # Call using reference
-                return True # Success
+                self.chat_window.handle_attach_file_path(file_path)  # Call using reference
+                return True  # Success
             else:
                 gui_logger.debug("Pasted URL path is not a valid file.")
-       else:
-           gui_logger.debug("mimeData hasUrls() true, but URL list empty?")
-        return False # Failed
-
-
+        else:
+            gui_logger.debug("mimeData hasUrls() true, but URL list empty?")
+        return False  # Failed
 # --- Main Chat Window ---
 class ChatWindow(QMainWindow):
     """Main application window."""
@@ -1380,32 +1377,32 @@ class ChatWindow(QMainWindow):
 
     def send_message(self):
         """Sends user input and potentially attachment payload to worker."""
-       user_input_text = self.input_field.text().strip()
-       attachment_to_send = None
-       attachment_info_for_display = None # Store info needed for display (type, filename)
+        user_input_text = self.input_field.text().strip()
+        attachment_to_send = None
+        attachment_info_for_display = None  # Store info needed for display (type, filename)
 
-       current_attachment = getattr(self, 'attachment_payload', None)
-       if current_attachment:
-          file_type = current_attachment.get('type')
-          file_name = current_attachment.get('filename')
-          gui_logger.debug(f"Attachment payload detected: Type={file_type}, File={file_name}")
-          attachment_to_send = current_attachment
-          # Include base64 in display info ONLY if it's an image
-          attachment_info_for_display = {"type": file_type, "filename": file_name}
-          if file_type == 'image':
-               attachment_info_for_display['base64_string'] = current_attachment.get('base64_string')
+        current_attachment = getattr(self, 'attachment_payload', None)
+        if current_attachment:
+            file_type = current_attachment.get('type')
+            file_name = current_attachment.get('filename')
+            gui_logger.debug(f"Attachment payload detected: Type={file_type}, File={file_name}")
+            attachment_to_send = current_attachment
+            # Include base64 in display info ONLY if it's an image
+            attachment_info_for_display = {"type": file_type, "filename": file_name}
+            if file_type == 'image':
+                attachment_info_for_display['base64_string'] = current_attachment.get('base64_string')
 
-          # Remove placeholder from text input
-           placeholder_pattern = r'\s*\[(Image|File) Attached:\s*.*?\s*\]\s*'
-           user_input_text = re.sub(placeholder_pattern, '', user_input_text).strip()
-           gui_logger.debug(f"User text after removing placeholder: '{user_input_text}'")
+            # Remove placeholder from text input
+            placeholder_pattern = r'\s*\[(Image|File) Attached:\s*.*?\s*\]\s*'
+            user_input_text = re.sub(placeholder_pattern, '', user_input_text).strip()
+            gui_logger.debug(f"User text after removing placeholder: '{user_input_text}'")
 
-           # Clear payload after preparing it for sending
-           self.clear_attachment(clear_status=False)
-       else:
-           gui_logger.debug("No attachment payload detected.")
+            # Clear payload after preparing it for sending
+            self.clear_attachment(clear_status=False)
+        else:
+            gui_logger.debug("No attachment payload detected.")
 
-       if user_input_text or attachment_to_send: # Proceed if text OR attachment exists
+        if user_input_text or attachment_to_send:  # Proceed if text OR attachment exists
             # --- Clear clarification state when user sends input ---
             if self.awaiting_clarification:
                 gui_logger.info("User provided input while clarification was pending. Clearing flag.")
@@ -1415,21 +1412,32 @@ class ChatWindow(QMainWindow):
             if not self.is_processing:
                 # (Command handling logic remains the same)
                 if not attachment_to_send:
-                    if user_input_text.lower() == "/consolidate": self.request_consolidation(); self.input_field.clear(); return
-                    if user_input_text.lower() == "/reset": self.confirm_reset_memory(); self.input_field.clear(); return
-                    if user_input_text.lower() == "/clear": self.clear_attachment(); return
+                    if user_input_text.lower() == "/consolidate":
+                        self.request_consolidation()
+                        self.input_field.clear()
+                        return
+                    if user_input_text.lower() == "/reset":
+                        self.confirm_reset_memory()
+                        self.input_field.clear()
+                        return
+                    if user_input_text.lower() == "/clear":
+                        self.clear_attachment()
+                        return
 
                 self.is_processing = True
                 self.set_input_enabled(False)
-                self.update_status_light("processing") # Orange light
-                self.statusBar().showMessage("Processing...", 0) # Persistent message
+                self.update_status_light("processing")  # Orange light
+                self.statusBar().showMessage("Processing...", 0)  # Persistent message
 
                 # --- Display user message (potentially with attachment info) ---
-                display_text = user_input_text # Text part
+                display_text = user_input_text  # Text part
                 self.display_message("User", display_text, attachment_info=attachment_info_for_display)
 
                 # --- Send data to worker ---
-                gui_logger.debug(f"Sending to worker: Text='{user_input_text[:50]}...', Attachment Type='{attachment_to_send.get('type') if attachment_to_send else None}'")
+                gui_logger.debug(
+                    f"Sending to worker: Text='{user_input_text[:50]}...', "
+                    f"Attachment Type='{attachment_to_send.get('type') if attachment_to_send else None}'"
+                )
                 self.worker.add_input(text=user_input_text, attachment=attachment_to_send)
 
                 self.input_field.clear()
@@ -1439,7 +1447,6 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.info("Empty input and no attachment.")
             self.clear_attachment(clear_status=False)
-
 
     def confirm_reset_memory(self):
         # (Implementation remains the same)
@@ -1838,38 +1845,40 @@ class ChatWindow(QMainWindow):
             gui_logger.debug(f"Processing image file: {file_name}")
             try:
                 # --- Read image data ---
-                with open(file_path, "rb") as image_file: binary_data = image_file.read()
+                with open(file_path, "rb") as image_file:
+                    binary_data = image_file.read()
                 base64_encoded_data = base64.b64encode(binary_data)
-                base64_string = base64_encoded_data.decode('utf-8')
-            mime_type, _ = mimetypes.guess_type(file_path)
-            if mime_type is None: mime_type = "application/octet-stream"
-            image_data_url = f"data:{mime_type};base64,{base64_string}"
+                base64_string = base64_encoded_data.decode("utf-8")
+                mime_type, _ = mimetypes.guess_type(file_path)
+                if mime_type is None:
+                    mime_type = "application/octet-stream"
+                image_data_url = f"data:{mime_type};base64,{base64_string}"
 
-            # --- Create payload ---
-            payload = {
-                "type": "image",
-                "filename": file_name, # Use original filename
-                "data_url": image_data_url,
-                   "base64_string": base64_string
+                # --- Create payload ---
+                payload = {
+                    "type": "image",
+                    "filename": file_name,  # Use original filename
+                    "data_url": image_data_url,
+                    "base64_string": base64_string,
                 }
-               # --- Call common payload handler ---
-               self.handle_attach_payload(payload)
+                # --- Call common payload handler ---
+                self.handle_attach_payload(payload)
 
-           except Exception as e:
-               gui_logger.error(f"Error processing image file path {file_path}: {e}", exc_info=True)
-               self.display_error(f"Error attaching image file: {e}")
-               self.clear_attachment()
-       else:
-           # --- Handle Generic File ---
-           gui_logger.info(f"Attaching generic file: {file_name}")
-           # Create a simpler payload for generic files
-           payload = {
-               "type": "file",
-               "filename": file_name,
-               "path": file_path # Store the path for potential future use (backend needs changes to use this)
-           }
-           # Call common payload handler
-           self.handle_attach_payload(payload)
+            except Exception as e:
+                gui_logger.error(f"Error processing image file path {file_path}: {e}", exc_info=True)
+                self.display_error(f"Error attaching image file: {e}")
+                self.clear_attachment()
+        else:
+            # --- Handle Generic File ---
+            gui_logger.info(f"Attaching generic file: {file_name}")
+            # Create a simpler payload for generic files
+            payload = {
+                "type": "file",
+                "filename": file_name,
+                "path": file_path,  # Store the path for potential future use (backend needs changes to use this)
+            }
+            # Call common payload handler
+            self.handle_attach_payload(payload)
 
 
    def handle_attach_payload(self, payload: dict):
@@ -1935,113 +1944,139 @@ class ChatWindow(QMainWindow):
            file_name = attachment_info.get("filename", "attached_file")
 
            if file_type == "image":
-               # Get base64 string directly from the passed attachment_info
-               image_base64 = attachment_info.get('base64_string')
+            # Get base64 string directly from the passed attachment_info
+            image_base64 = attachment_info.get('base64_string')
 
-               if image_base64:
-                   try:
-                       # Decode and create pixmap
-                       image_bytes = base64.b64decode(image_base64)
-                pixmap = QPixmap()
-                loaded = pixmap.loadFromData(image_bytes)
+            if image_base64:
+                try:
+                    # Decode and create pixmap
+                    image_bytes = base64.b64decode(image_base64)
+                    pixmap = QPixmap()
+                    loaded = pixmap.loadFromData(image_bytes)
 
-                if loaded and not pixmap.isNull():
-                    # Scale pixmap to thumbnail size (using configured max width)
-                    scaled_pixmap = pixmap.scaledToWidth(
-                        self.thumbnail_max_width,
-                        Qt.TransformationMode.SmoothTransformation
-                       )
-                       attachment_label = QLabel()
-                       attachment_label.setPixmap(scaled_pixmap)
-                       attachment_label.setAlignment(Qt.AlignmentFlag.AlignCenter) # Center image within label
-                       attachment_label.setStyleSheet("background-color: transparent; border: 1px solid #555; margin-bottom: 4px;") # Add border/margin
-                   else:
-                       gui_logger.warning("Failed to load QPixmap from base64 data.")
-                       attachment_label = QLabel("[Image Error]") # Fallback text
-                       attachment_label.setStyleSheet("color: #FF8C8C;")
-               except Exception as e:
-                   gui_logger.error(f"Error processing image base64 for display: {e}", exc_info=True)
-                   attachment_label = QLabel("[Image Load Error]")
-                   attachment_label.setStyleSheet("color: #FF8C8C;")
-           else:
+                    if loaded and not pixmap.isNull():
+                        # Scale pixmap to thumbnail size (using configured max width)
+                        scaled_pixmap = pixmap.scaledToWidth(
+                            self.thumbnail_max_width,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                        attachment_label = QLabel()
+                        attachment_label.setPixmap(scaled_pixmap)
+                        attachment_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center image within label
+                        attachment_label.setStyleSheet("background-color: transparent; border: 1px solid #555; margin-bottom: 4px;")  # Add border/margin
+                    else:
+                        gui_logger.warning("Failed to load QPixmap from base64 data.")
+                        attachment_label = QLabel("[Image Error]")  # Fallback text
+                        attachment_label.setStyleSheet("color: #FF8C8C;")
+                except Exception as e:
+                    gui_logger.error(f"Error processing image base64 for display: {e}", exc_info=True)
+                    attachment_label = QLabel("[Image Load Error]")
+                    attachment_label.setStyleSheet("color: #FF8C8C;")
+            else:
                 gui_logger.warning("Image attachment info provided, but base64 data missing for display.")
-                attachment_label = QLabel(f"[Image: {file_name}]") # Show filename as fallback
+                attachment_label = QLabel(f"[Image: {file_name}]")  # Show filename as fallback
                 attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic;")
 
-           elif file_type == "file": # <<< Corrected Indentation
-               # Display placeholder for generic files
-               attachment_label = QLabel(f"[File Attached: {file_name}]")
-               attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;")
-           else: # <<< Corrected Indentation
-                gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
+            elif file_type == "file":
+                # Display placeholder for generic files
+                attachment_label = QLabel(f"[File Attached: {file_name}]")
+                attachment_label.setStyleSheet(
+                    "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
+                )
+        else:
+            gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
 
-       # --- Create Main Message Label (if text provided) ---
-       message_label = None # <<< Corrected Indentation
-       if text: # Only create label if there is text
-           message_label = QLabel()
+        # --- Create Main Message Label (if text provided) ---
+        message_label = None
+        if text:  # Only create label if there is text
+            message_label = QLabel()
             message_label.setWordWrap(True)
-            message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+            message_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
+            )
             message_label.setOpenExternalLinks(True)
             # (HTML processing remains the same...)
-            escaped_text = str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'); processed_text = re.sub(r'(?<![*\n])\*\*(?![*\n])(.+?)(?<![*\n])\*\*(?![*\n])', r'<b>\1</b>', escaped_text); lines = processed_text.split('\n'); html_lines = []
+            escaped_text = str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            processed_text = re.sub(r"(?<![*\n])\*\*(?![*\n])(.+?)(?<![*\n])\*\*(?![*\n])", r"<b>\1</b>", escaped_text)
+            lines = processed_text.split("\n")
+            html_lines = []
             for line in lines:
-                is_list_item = re.match(r'^\s*[\*\-\+]\s+', line);
-                if is_list_item: line_content = re.sub(r'^\s*[\*\-\+]\s+', '', line); html_lines.append(f"<div style='margin-left: 15px; padding-left: 5px;'>&bull;&nbsp;{line_content}</div>")
-                else: html_lines.append(line)
-            processed_text = "<br>".join(html_lines); processed_text = re.sub(r'(<br>\s*){2,}', '<br>', processed_text); message_label.setText(processed_text)
+                is_list_item = re.match(r"^\s*[\*\-\+]\s+", line)
+                if is_list_item:
+                    line_content = re.sub(r"^\s*[\*\-\+]\s+", "", line)
+                    html_lines.append(f"<div style='margin-left: 15px; padding-left: 5px;'>&bull;&nbsp;{line_content}</div>")
+                else:
+                    html_lines.append(line)
+            processed_text = "<br>".join(html_lines)
+            processed_text = re.sub(r"(<br>\s*){2,}", "<br>", processed_text)
+            message_label.setText(processed_text)
             # Set object name for potential styling (needed for text color from main bubble style)
             message_label.setObjectName(f"{speaker}MessageLabel")
-
 
         # --- Create Timestamp Label (Generated Locally) ---
         timestamp_label = None
         # (Timestamp generation/conversion logic remains the same...)
-        time_str_display = "";
+        time_str_display = ""
         try:
-            dt_obj_utc = datetime.now(timezone.utc);
+            dt_obj_utc = datetime.now(timezone.utc)
             if ZoneInfo:
-                try: german_tz = ZoneInfo("Europe/Berlin"); local_dt = dt_obj_utc.astimezone(german_tz); time_str_display = local_dt.strftime('%H:%M')
-                except ZoneInfoNotFoundError: gui_logger.warning("TZ 'Europe/Berlin' not found."); time_str_display = dt_obj_utc.strftime('%H:%M UTC')
-                except Exception as tz_err: gui_logger.warning(f"TZ conversion error: {tz_err}"); time_str_display = dt_obj_utc.strftime('%H:%M UTC')
-            else: time_str_display = dt_obj_utc.strftime('%H:%M UTC')
+                try:
+                    german_tz = ZoneInfo("Europe/Berlin")
+                    local_dt = dt_obj_utc.astimezone(german_tz)
+                    time_str_display = local_dt.strftime("%H:%M")
+                except ZoneInfoNotFoundError:
+                    gui_logger.warning("TZ 'Europe/Berlin' not found.")
+                    time_str_display = dt_obj_utc.strftime("%H:%M UTC")
+                except Exception as tz_err:
+                    gui_logger.warning(f"TZ conversion error: {tz_err}")
+                    time_str_display = dt_obj_utc.strftime("%H:%M UTC")
+            else:
+                time_str_display = dt_obj_utc.strftime("%H:%M UTC")
             if time_str_display:
-                timestamp_label = QLabel(time_str_display); ts_object_name = "TimestampLabel"
-                if speaker == "User": ts_object_name = "UserTimestampLabel"
-                elif speaker == "AI": ts_object_name = "AITimestampLabel"
-                elif speaker == "System": ts_object_name = "SystemTimestampLabel"
-                elif speaker == "Error": ts_object_name = "ErrorTimestampLabel"
-                timestamp_label.setObjectName(ts_object_name); timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        except Exception as e: gui_logger.warning(f"Timestamp error: {e}"); timestamp_label = None
+                timestamp_label = QLabel(time_str_display)
+                ts_object_name = "TimestampLabel"
+                if speaker == "User":
+                    ts_object_name = "UserTimestampLabel"
+                elif speaker == "AI":
+                    ts_object_name = "AITimestampLabel"
+                elif speaker == "System":
+                    ts_object_name = "SystemTimestampLabel"
+                elif speaker == "Error":
+                    ts_object_name = "ErrorTimestampLabel"
+                timestamp_label.setObjectName(ts_object_name)
+                timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        except Exception as e:
+            gui_logger.warning(f"Timestamp error: {e}")
+            timestamp_label = None
 
-        # --- Create Feedback Buttons (only for AI messages with UUID) ---
-        feedback_layout = None
-        if speaker == "AI" and ai_node_uuid:
-            feedback_layout = QHBoxLayout()
-            feedback_layout.setSpacing(5)
-            feedback_layout.addStretch() # Push buttons to the right
+    # --- Create Feedback Buttons (only for AI messages with UUID) ---
+    feedback_layout = None
+    if speaker == "AI" and ai_node_uuid:
+        feedback_layout = QHBoxLayout()
+        feedback_layout.setSpacing(5)
+        feedback_layout.addStretch()  # Push buttons to the right
 
-            thumb_up = QLabel("👍")
-            thumb_up.setToolTip("Good response")
-            thumb_up.setCursor(Qt.CursorShape.PointingHandCursor)
-            thumb_up.mousePressEvent = lambda event, u=ai_node_uuid, t='up': self.handle_feedback_click(u, t)
+        thumb_up = QLabel("👍")
+        thumb_up.setToolTip("Good response")
+        thumb_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        thumb_up.mousePressEvent = lambda event, u=ai_node_uuid, t="up": self.handle_feedback_click(u, t)
 
-            thumb_down = QLabel("👎")
-            thumb_down.setToolTip("Bad response")
-            thumb_down.setCursor(Qt.CursorShape.PointingHandCursor)
-            thumb_down.mousePressEvent = lambda event, u=ai_node_uuid, t='down': self.handle_feedback_click(u, t)
+        thumb_down = QLabel("👎")
+        thumb_down.setToolTip("Bad response")
+        thumb_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        thumb_down.mousePressEvent = lambda event, u=ai_node_uuid, t="down": self.handle_feedback_click(u, t)
 
-            feedback_layout.addWidget(thumb_up)
-            feedback_layout.addWidget(thumb_down)
-            # Add timestamp label to the feedback layout as well
-            if timestamp_label:
-                 feedback_layout.addWidget(timestamp_label)
-            else: # Add spacer if no timestamp
-                 feedback_layout.addSpacerItem(QSpacerItem(10, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+        feedback_layout.addWidget(thumb_up)
+        feedback_layout.addWidget(thumb_down)
+        # Add timestamp label to the feedback layout as well
+        if timestamp_label:
+            feedback_layout.addWidget(timestamp_label)
+        else:  # Add spacer if no timestamp
+            feedback_layout.addSpacerItem(QSpacerItem(10, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
-
-       # --- Assemble Bubble Content ---
-       if not attachment_label and not message_label:
-           return # Don't display anything if both attachment and text are missing/failed
+    # --- Assemble Bubble Content ---
+    if not attachment_label and not message_label:
+        return  # Don't display anything if both attachment and text are missing/failed
 
        bubble_frame = QFrame()
        bubble_layout = QVBoxLayout(bubble_frame)
