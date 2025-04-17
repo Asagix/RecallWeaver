@@ -684,13 +684,7 @@ class GraphMemoryClient:
             except Exception as e: logger.error(f"Failed saving ASM: {e}")
             # --- Save Drive State ---
             self._save_drive_state()
-            # --- Save Last Conversation Turns ---
-            try:
-                with open(self.last_conversation_file, 'w', encoding='utf-8') as f:
-                    json.dump(self.last_conversation_turns, f, indent=2) # Save the list directly
-                logger.debug(f"Last conversation turns saved to {self.last_conversation_file}.")
-            except Exception as e:
-                logger.error(f"Failed saving last conversation turns: {e}", exc_info=True)
+            # --- Saving Last Conversation Turns moved to add_memory_node ---
 
             logger.info(f"Memory saving done ({time.time() - start_time:.2f}s).")
         except Exception as e: logger.error(f"Unexpected save error: {e}", exc_info=True)
@@ -721,6 +715,17 @@ class GraphMemoryClient:
                 logger.error(f"Unexpected error loading {self.last_conversation_file}: {e}. Initializing empty.", exc_info=True)
         else:
             logger.info(f"Last conversation file not found ({self.last_conversation_file}). Starting fresh.")
+
+    def _save_last_conversation(self):
+        """Saves the current self.last_conversation_turns list to its JSON file."""
+        try:
+            # Ensure directory exists (should already, but safety check)
+            os.makedirs(os.path.dirname(self.last_conversation_file), exist_ok=True)
+            with open(self.last_conversation_file, 'w', encoding='utf-8') as f:
+                json.dump(self.last_conversation_turns, f, indent=2)
+            logger.debug(f"Saved {len(self.last_conversation_turns)} turns to {self.last_conversation_file}")
+        except Exception as e:
+            logger.error(f"Failed saving last conversation turns immediately: {e}", exc_info=True)
 
     # --- Memory Node Management ---
     # (Keep add_memory_node, _rollback_add, delete_memory_entry, _find_latest_node_uuid, edit_memory_entry, forget_topic)
@@ -853,8 +858,10 @@ class GraphMemoryClient:
                 if len(self.last_conversation_turns) > max_turns_to_keep:
                     self.last_conversation_turns = self.last_conversation_turns[-max_turns_to_keep:]
                 logger.debug(f"Updated last_conversation_turns. Current count: {len(self.last_conversation_turns)}")
+                # --- Save immediately after updating the list ---
+                self._save_last_conversation()
             except Exception as e:
-                logger.error(f"Error updating last_conversation_turns: {e}", exc_info=True)
+                logger.error(f"Error updating/saving last_conversation_turns: {e}", exc_info=True)
 
         logger.info(f"Successfully added node {node_uuid}.")
         return node_uuid
