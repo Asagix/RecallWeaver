@@ -209,7 +209,15 @@ class GraphMemoryClient:
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
-        tokenizer_name = self.config.get('tokenizer_name', 'google/gemma-3-27b-it')
+        # --- Load tokenizer name/path from config ---
+        tokenizer_name = self.config.get('tokenizer_name') # Get the path from config
+        if not tokenizer_name:
+            logger.error("Tokenizer name/path ('tokenizer_name') not found in config. Cannot load tokenizer.")
+            # Handle error appropriately - maybe raise an exception or set tokenizer to None
+            self.tokenizer = None
+        else:
+            logger.info(f"Using tokenizer path from config: {tokenizer_name}")
+        # --- End tokenizer name loading ---
         # Use a default spacy model name if not specified in config
         spacy_model_name = self.config.get('spacy_model_name', 'en_core_web_sm') # Get model name from config (optional)
 
