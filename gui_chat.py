@@ -9,7 +9,7 @@ import yaml
 import requests
 import mimetypes # <<< Add mimetypes
 
-from pip._internal.utils import urls
+# Removed incorrect import: from pip._internal.utils import urls
 
 # Import zoneinfo safely
 try:
@@ -1643,7 +1643,8 @@ class ChatWindow(QMainWindow):
 
         if filename_to_link:
             # Construct the full path using file_manager helper
-            workspace_path = file_manager.get_workspace_path(self.config, self.current_personality)
+            # Use file_manager helper directly, avoid relying on self.config if worker isn't ready
+            workspace_path = file_manager.get_workspace_path(self.worker.client.config if self.worker and self.worker.client else {}, self.current_personality)
             if workspace_path:
                 full_file_path = os.path.join(workspace_path, filename_to_link)
                 if os.path.exists(full_file_path):
@@ -2078,9 +2079,9 @@ class ChatWindow(QMainWindow):
     if not attachment_label and not message_label:
         return  # Don't display anything if both attachment and text are missing/failed
 
-       bubble_frame = QFrame()
-       bubble_layout = QVBoxLayout(bubble_frame)
-       bubble_layout.setContentsMargins(self.bubble_padding_lr, self.bubble_padding_tb, self.bubble_padding_lr, self.bubble_padding_tb)
+    bubble_frame = QFrame() # Corrected indentation
+    bubble_layout = QVBoxLayout(bubble_frame) # Corrected indentation
+    bubble_layout.setContentsMargins(self.bubble_padding_lr, self.bubble_padding_tb, self.bubble_padding_lr, self.bubble_padding_tb) # Corrected indentation
        bubble_layout.setSpacing(2) # Small spacing between elements
 
        if attachment_label:
@@ -2088,28 +2089,28 @@ class ChatWindow(QMainWindow):
        if message_label:
            bubble_layout.addWidget(message_label) # Add text second
 
-        # --- Add Feedback Layout (or just timestamp if no feedback) ---
-        if feedback_layout:
-            bubble_layout.addLayout(feedback_layout) # Add feedback buttons + timestamp
-        elif timestamp_label:
-             # Add timestamp directly if no feedback buttons needed
-             bubble_layout.addWidget(timestamp_label, alignment=Qt.AlignmentFlag.AlignRight)
+       # --- Add Feedback Layout (or just timestamp if no feedback) ---
+       if feedback_layout: # Corrected indentation
+           bubble_layout.addLayout(feedback_layout) # Add feedback buttons + timestamp
+       elif timestamp_label: # Corrected indentation
+            # Add timestamp directly if no feedback buttons needed
+            bubble_layout.addWidget(timestamp_label, alignment=Qt.AlignmentFlag.AlignRight) # Corrected indentation
 
-        # --- Determine Frame Object Name ---
-        frame_name = "AIBubbleFrame";
-        if speaker == "User": frame_name = "UserBubbleFrame"
-        elif "Confirmation" in object_name_suffix: frame_name = "AIConfirmationBubbleFrame"
+       # --- Determine Frame Object Name ---
+       frame_name = "AIBubbleFrame"; # Corrected indentation
+       if speaker == "User": frame_name = "UserBubbleFrame" # Corrected indentation
+       elif "Confirmation" in object_name_suffix: frame_name = "AIConfirmationBubbleFrame" # Corrected indentation
         elif speaker == "AI": frame_name = "AIBubbleFrame"
         elif speaker == "System": frame_name = "AIBubbleFrame"
         elif speaker == "Error": frame_name = "ErrorBubbleFrame"
-        bubble_frame.setObjectName(frame_name)
+       bubble_frame.setObjectName(frame_name) # Corrected indentation
 
-        # --- Row Layout (remains the same) ---
-        row_layout = QHBoxLayout(); row_layout.setSpacing(0); row_layout.setContentsMargins(0, 0, 0, 0)
-        if speaker == "User": row_layout.addStretch(1); row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignRight)
-        else: row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignLeft); row_layout.addStretch(1)
+       # --- Row Layout (remains the same) ---
+       row_layout = QHBoxLayout(); row_layout.setSpacing(0); row_layout.setContentsMargins(0, 0, 0, 0) # Corrected indentation
+       if speaker == "User": row_layout.addStretch(1); row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignRight) # Corrected indentation
+       else: row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignLeft); row_layout.addStretch(1) # Corrected indentation
 
-        self._add_widget_to_chat_layout(row_layout)
+       self._add_widget_to_chat_layout(row_layout) # Corrected indentation
 
 
 

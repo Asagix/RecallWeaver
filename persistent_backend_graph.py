@@ -3852,7 +3852,7 @@ class GraphMemoryClient:
 
         # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}) -> Score: {final_score:.3f}")
 
-        return final_adjusted_score # noqa: F821
+        # Removed duplicate return statement that was here
 
     def purge_weak_nodes(self):
         """
