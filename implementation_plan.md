@@ -199,8 +199,8 @@ This document tracks the implementation progress and outlines future enhancement
     -   [ ] Develop systematic test scenarios.
     -   [ ] Systematically tune activation parameters.
     -   [ ] Systematically tune consolidation parameters (including association extraction).
-    -   [ ] Systematically tune **forgetting parameters** (weights, thresholds, triggers, **recency_decay_constant**).
-    -   [ ] Systematically tune **saliency parameters** (initial scores, influences, recall_boost_factor, **feedback_factor**).
+    -   [ ] Systematically tune **forgetting parameters** (weights, thresholds, triggers, recency_decay_constant, **decay_resistance factors**).
+    -   [ ] Systematically tune **saliency parameters** (initial scores, influences, recall_boost_factor, feedback_factor).
     -   [ ] Tune Faiss search parameter (`k`).
     -   [ ] Tune LLM generation parameters.
     -   [ ] Evaluate prompting strategies.

@@ -651,10 +651,13 @@ class GraphMemoryClient:
                 # --- Existing attributes ---
                 base_strength=float(base_strength),
                 activation_level=0.0, # Initial activation, updated during retrieval
-                last_accessed_ts=current_time # Timestamp of last access/creation
+                last_accessed_ts=current_time, # Timestamp of last access/creation
+                # --- NEW: Decay Resistance ---
+                decay_resistance_factor=self.config.get('forgetting', {}).get('decay_resistance', {}).get(node_type, 1.0)
             )
             # Access node data *after* adding it to the graph
             node_data = self.graph.nodes[node_uuid]
+            logger.debug(f"Node {node_uuid[:8]} added with decay_resistance: {node_data.get('decay_resistance_factor')}")
             logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Strength: {node_data.get('memory_strength')}, Saliency: {node_data.get('saliency_score')}).")
         except Exception as e:
              logger.error(f"Failed adding node {node_uuid} to graph: {e}")
@@ -1735,7 +1738,12 @@ class GraphMemoryClient:
 
         # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Score: {final_score:.3f}")
 
-        return final_score
+        # --- Apply Decay Resistance ---
+        resistance_factor = node_data.get('decay_resistance_factor', 1.0)
+        adjusted_score = final_score * resistance_factor
+        logger.debug(f"    Node {uuid[:8]} Resistance Factor: {resistance_factor:.3f}. Adjusted Forget Score: {adjusted_score:.4f}")
+
+        return adjusted_score
 
     def _get_relative_time_desc(self, timestamp_str: str) -> str:
         """Converts an ISO timestamp string into a human-readable relative time description."""
@@ -1781,15 +1789,15 @@ class GraphMemoryClient:
 
         strength_cfg = self.config.get('memory_strength', {})
         purge_threshold = strength_cfg.get('purge_threshold', 0.01)
-        min_age_days = strength_cfg.get('purge_min_age_days', 60)
-        min_age_seconds = min_age_days * 24 * 3600
+        # min_age_days = strength_cfg.get('purge_min_age_days', 60) # REMOVED
+        # min_age_seconds = min_age_days * 24 * 3600 # REMOVED
 
-        logger.warning(f"--- Purging Weak Nodes (Strength < {purge_threshold}, Age > {min_age_days} days) ---")
+        logger.warning(f"--- Purging Weak Nodes (Strength < {purge_threshold}) ---") # Removed age from log message
         # --- Tuning Log: Purge Start ---
         log_tuning_event("PURGE_START", {
             "personality": self.personality,
             "strength_threshold": purge_threshold,
-            "min_age_days": min_age_days,
+            # "min_age_days": min_age_days, # REMOVED
         })
 
         purge_count = 0
@@ -1799,25 +1807,10 @@ class GraphMemoryClient:
 
         for uuid, data in nodes_snapshot:
             current_strength = data.get('memory_strength', 1.0)
+            # --- Purge only based on strength ---
             if current_strength < purge_threshold:
-                # Check age
-                timestamp_str = data.get('timestamp')
-                node_age_sec = current_time # Default to max age if no timestamp
-                if timestamp_str:
-                    try:
-                        # Ensure timezone awareness for comparison
-                        dt_obj = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                        if dt_obj.tzinfo is None: # If somehow still naive, assume UTC
-                             dt_obj = dt_obj.replace(tzinfo=timezone.utc)
-                        node_age_sec = (datetime.now(timezone.utc) - dt_obj).total_seconds()
-                    except ValueError:
-                        logger.warning(f"Could not parse timestamp for weak node {uuid[:8]}: {timestamp_str}")
-
-                if node_age_sec >= min_age_seconds:
-                    nodes_to_purge.append(uuid)
-                    logger.debug(f"Marked weak node {uuid[:8]} for purging (Strength: {current_strength:.3f}, Age: {node_age_sec / 3600 / 24:.1f} days)")
-                # else:
-                    # logger.debug(f"Node {uuid[:8]} is weak ({current_strength:.3f}) but too young ({node_age_sec / 3600 / 24:.1f} days) for purging.")
+                nodes_to_purge.append(uuid)
+                logger.debug(f"Marked weak node {uuid[:8]} for purging (Strength: {current_strength:.3f})")
             # else: pass # Node strength is above threshold
 
         # Perform deletion

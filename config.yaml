@@ -138,13 +138,21 @@ forgetting:
     access_count_factor: 0.05 # Added small weight
     # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
     recency_decay_constant: 0.000005 # Example value (adjust based on desired time scale, e.g., for seconds)
+  # --- Decay Resistance (Lower factor = Slower decay) ---
+  # Multiplies the final forgettability score. Core memories should have very low factors.
+  decay_resistance:
+    turn: 1.0      # Standard decay rate for conversational turns
+    summary: 0.1   # Summaries decay 10x slower
+    concept: 0.05  # Concepts decay 20x slower
+    intention: 0.5 # Intentions decay slower than turns but faster than summaries
+    default: 1.0   # Default for unknown types
 
 # --- Memory Strength Parameters ---
 memory_strength:
   initial_value: 1.0 # Starting strength for new nodes
-  decay_rate: 0.15 # Increased from 0.1 - Factor applied to forgettability score for strength reduction
+  decay_rate: 0.15 # Factor applied to forgettability score for strength reduction
   purge_threshold: 0.01 # Strength below which nodes are eligible for permanent deletion by purge_weak_nodes
-  purge_min_age_days: 60 # Minimum age (in days) before a node below threshold can be purged
+  # purge_min_age_days: 60 # REMOVED: Purge is now based only on strength threshold
 
 # --- GUI Keywords --- # Moved from bottom for better grouping
 modification_keywords:
