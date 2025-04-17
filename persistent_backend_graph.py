@@ -3326,12 +3326,12 @@ class GraphMemoryClient:
             logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
 
         # Return conversational response, memories, AI node UUID, and the planning flag
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None #needs_planning
 
         except Exception as e:
-            # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
-            logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-            # Assign error message to both ai_response and parsed_response
+        # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
+        logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
+        # Assign error message to both ai_response and parsed_response
         ai_response = f"Error during processing: {e}"
         parsed_response = ai_response # Ensure parsed_response has a value
         memory_chain_data = [] # Clear memory chain data on error
@@ -3340,10 +3340,10 @@ class GraphMemoryClient:
             "interaction_id": interaction_id,
             "personality": self.personality,
             "stage": "main_processing_loop",
-                "error": str(e),
-            })
-            # Ensure needs_planning is False on error exit from this block
-            return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
+            "error": str(e),
+        })
+        # Ensure needs_planning is False on error exit from this block
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
 
 
     # --- Consolidation ---
