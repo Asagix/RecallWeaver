@@ -1,0 +1,426 @@
+    def _construct_prompt(self, user_input: str, conversation_history: list, memory_chain: list, tokenizer, max_context_tokens: int, current_mood: tuple[float, float] | None = None) -> str:
+        """
+        Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, and ASM.
+        Applies memory strength budgeting.
+        """
+        # Use the correct logger name: 'logger'
+        logger.debug(f"_construct_prompt received user_input: '{user_input}', Mood: {current_mood}") # Corrected logger name
+
+        if tokenizer is None:
+            logger.error("Tokenizer unavailable for prompt construction.") # Corrected logger name
+            return f"<start_of_turn>user\n{user_input}<end_of_turn>\n<start_of_turn>model\n"
+
+        # --- Time formatting ---
+        time_str = "[Current time unavailable]"
+        try:
+            localtz = ZoneInfo("Europe/Berlin") if ZoneInfo else timezone.utc
+            now = datetime.now(localtz)
+            time_str = now.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
+        except Exception as e:
+            logger.warning(f"Could not get/format local time: {e}") # Corrected logger name
+
+        # --- Gemma Instruct format tags ---
+        start_turn, end_turn = "<start_of_turn>", "<end_of_turn>"
+        user_tag, model_tag = f"{start_turn}user\n", f"{start_turn}model\n"
+
+        # --- Format CURRENT user input ---
+        user_input_fmt = f"{user_tag}{user_input}{end_turn}\n"
+        logger.debug(f"Formatted current user input (user_input_fmt): '{user_input_fmt[:150]}...'") # Corrected logger name
+
+        final_model_tag = f"{model_tag}"
+        time_info_block = f"{model_tag}Current time is {time_str}.{end_turn}\n"
+        asm_block = "" # Initialize ASM block
+
+        # --- Format Structured ASM Block (Using updated fields) ---
+        if self.autobiographical_model:
+            try:
+                # Format the structured data into a readable block
+                asm_parts = ["[My Self-Perception:]"]
+                if self.autobiographical_model.get("summary_statement"): asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
+                if self.autobiographical_model.get("core_traits"): asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+                if self.autobiographical_model.get("recurring_themes"): asm_parts.append(f"- Often Discuss: {', '.join(self.autobiographical_model['recurring_themes'])}")
+                # Use new fields
+                if self.autobiographical_model.get("goals_motivations"): asm_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
+                if self.autobiographical_model.get("relational_stance"): asm_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
+                if self.autobiographical_model.get("emotional_profile"): asm_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
+
+                if len(asm_parts) > 1: # Only add block if there's content beyond the header
+                    asm_text = "\n".join(asm_parts)
+                    asm_block = f"{model_tag}{asm_text}{end_turn}\n"
+                    logger.debug("Structured ASM block created.")
+                else:
+                    logger.debug("ASM dictionary present but contained no usable fields.")
+            except Exception as e:
+                logger.error(f"Error formatting structured ASM for prompt: {e}", exc_info=True)
+                asm_block = "" # Clear block on formatting error
+        else:
+            logger.debug("No ASM summary available to add to prompt.")
+
+        # --- Token Budget Calculation ---
+        prompt_cfg = self.config.get('prompting', {})
+        context_headroom = prompt_cfg.get('context_headroom', 250)
+        mem_budget_ratio = prompt_cfg.get('memory_budget_ratio', 0.40) # Slightly reduced default for memory
+        hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.45) # Slightly reduced default for history
+        # Workspace budget is calculated later
+        # Add the system note to fixed parts
+        system_note_block = f"{model_tag}[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]{end_turn}\n"
+        # --- Format Drive State Block ---
+        drive_block = ""
+        if self.config.get('subconscious_drives', {}).get('enabled', False) and self.drive_state:
+            try:
+                drive_parts = ["[Current Drive State (Internal Motivations - Use to inform response style):]"]
+                st_drives = self.drive_state.get("short_term", {})
+                lt_drives = self.drive_state.get("long_term", {})
+                base_drives = self.config.get('subconscious_drives', {}).get('base_drives', {})
+                lt_influence = self.config.get('subconscious_drives', {}).get('long_term_influence_on_baseline', 1.0)
+
+                for drive, st_level in st_drives.items():
+                    config_baseline = base_drives.get(drive, 0.0)
+                    lt_level = lt_drives.get(drive, 0.0)
+                    dynamic_baseline = config_baseline + (lt_level * lt_influence)
+                    deviation = st_level - dynamic_baseline
+                    state_desc = "Neutral"
+                    if deviation > 0.2: state_desc = "High"
+                    elif deviation < -0.2: state_desc = "Low"
+                    drive_parts.append(f"- {drive}: {state_desc} (Deviation: {deviation:+.2f})")
+
+                if len(drive_parts) > 1:
+                    drive_text = "\n".join(drive_parts)
+                    drive_block = f"{model_tag}{drive_text}{end_turn}\n"
+                    logger.debug("Formatted drive state block created for prompt.")
+            except Exception as e:
+                logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
+                drive_block = ""
+
+        try:
+            fixed_tokens = (len(tokenizer.encode(time_info_block)) +
+                            len(tokenizer.encode(system_note_block)) + # Add system note tokens
+                            len(tokenizer.encode(asm_block)) + # Add ASM block tokens
+                            len(tokenizer.encode(drive_block)) + # Add Drive block tokens
+                            len(tokenizer.encode(user_input_fmt)) +
+                            len(tokenizer.encode(final_model_tag)))
+        except Exception as e:
+            logger.error(f"Tokenization error for fixed prompt parts (incl. ASM/System Note): {e}") # Corrected logger name
+            fixed_tokens = len(time_info_block) + len(user_input_fmt) + len(final_model_tag)
+            logger.warning("Using character count proxy for fixed tokens.") # Corrected logger name
+
+        total_available_budget = max_context_tokens - fixed_tokens - context_headroom
+        logger.debug(f"Token counts: Max={max_context_tokens}, Fixed={fixed_tokens}, Headroom={context_headroom}, Total Available={total_available_budget}")
+
+        if total_available_budget <= 0:
+            logger.warning(f"Low token budget ({total_available_budget}). Only including current input and time.") # Use total_available_budget
+            final_prompt = time_info_block + user_input_fmt + final_model_tag
+            logger.debug(f"Final Prompt (Low Budget): '{final_prompt[:150]}...'") # Corrected logger name
+            return final_prompt # Return early if no budget
+
+        # --- Calculate Budgets (Memory & History first, Workspace gets remainder) ---
+        mem_budget = int(total_available_budget * mem_budget_ratio)
+        hist_budget = int(total_available_budget * hist_budget_ratio)
+        # Workspace budget is whatever is left over
+        workspace_budget = total_available_budget - mem_budget - hist_budget
+        # Ensure workspace budget isn't negative if ratios exceed 1.0
+        workspace_budget = max(0, workspace_budget)
+        logger.debug(f"Budget Allocation: Memory={mem_budget}, History={hist_budget}, Workspace={workspace_budget}")
+        # --- Tuning Log: Prompt Budgeting ---
+        log_tuning_event("PROMPT_BUDGETING", {
+            "personality": self.personality,
+            "user_input_preview": user_input[:100],
+            "max_context_tokens": max_context_tokens,
+            "fixed_tokens": fixed_tokens,
+            "headroom": context_headroom,
+            "total_available_budget": total_available_budget,
+            "memory_budget": mem_budget,
+            "history_budget": hist_budget,
+            "workspace_budget": workspace_budget,
+        })
+
+        # --- Workspace Context Construction (Summaries) ---
+        workspace_context_str = ""
+        cur_workspace_tokens = 0
+        # Use the calculated workspace_budget
+        logger.debug(f"Constructing Workspace Context (Budget: {workspace_budget})")
+
+        # Get file list
+        workspace_files, list_msg = file_manager.list_files(self.config, self.personality)
+        if workspace_files is None:
+            logger.error(f"Failed to list workspace files for context: {list_msg}")
+            workspace_context_str = f"{model_tag}[Workspace State: Error retrieving file list]{end_turn}\n"
+        elif not workspace_files:
+            workspace_context_str = f"{model_tag}[Workspace State: Empty]{end_turn}\n"
+        else:
+            # Limit number of files to summarize based on config
+            max_files_to_summarize = self.config.get('prompting', {}).get('max_files_to_summarize_in_context', 5)
+            files_to_process = sorted(workspace_files)[:max_files_to_summarize]
+            logger.info(f"Processing up to {len(files_to_process)} files for workspace context summary (limit: {max_files_to_summarize}).")
+
+            ws_parts = ["[Workspace State (Filename: Summary):]"]
+            ws_header_footer_tags = f"{model_tag}{end_turn}\n" # Approx tokens for surrounding tags
+            try: ws_format_tokens = len(tokenizer.encode(ws_header_footer_tags + "\n".join(ws_parts)))
+            except: ws_format_tokens = 50 # Estimate
+
+            effective_ws_budget = workspace_budget - ws_format_tokens
+
+            for filename in files_to_process:
+                summary_line = f"Filename: {filename}\nSummary: [Content unavailable or too long]" # Default
+                file_content, read_msg = file_manager.read_file(self.config, self.personality, filename)
+
+                if file_content is not None:
+                    # Limit content length before sending to summarizer to avoid excessive tokens
+                    max_content_chars = 2000 # Limit content length for summarization prompt
+                    content_for_summary = file_content[:max_content_chars]
+                    if len(file_content) > max_content_chars:
+                         content_for_summary += "\n... [Content Truncated]"
+
+                    summary = self._summarize_file_content(content_for_summary)
+                    if summary:
+                        summary_line = f"Filename: {filename}\nSummary: {summary}"
+                    else:
+                        summary_line = f"Filename: {filename}\nSummary: [Summary generation failed]"
+                else:
+                    logger.warning(f"Could not read file '{filename}' for context summary: {read_msg}")
+                    summary_line = f"Filename: {filename}\nSummary: [Could not read file]"
+
+                # Check token count before adding
+                try: line_tokens = len(tokenizer.encode(summary_line + "\n---\n"))
+                except: line_tokens = len(summary_line) // 3 # Estimate
+
+                if cur_workspace_tokens + line_tokens <= effective_ws_budget:
+                    ws_parts.append(summary_line)
+                    ws_parts.append("---") # Separator
+                    cur_workspace_tokens += line_tokens
+                else:
+                    logger.warning(f"Workspace context budget ({effective_ws_budget}) reached. Skipping remaining files.")
+                    ws_parts.append("[Remaining files omitted due to context length limit]")
+                    break # Stop adding files
+
+            # Join the parts into a single string first
+            workspace_content = "\n".join(ws_parts)
+            # Then use the joined string in the f-string
+            workspace_context_str = f"{model_tag}{workspace_content}{end_turn}\n"
+            try:
+                cur_workspace_tokens = len(tokenizer.encode(workspace_context_str))
+            except:
+                cur_workspace_tokens = len(workspace_context_str) // 3 # Estimate
+            logger.debug(f"Actual Workspace Tokens Used: {cur_workspace_tokens}")
+
+        # --- Memory Context Construction (with Strength Budgeting) ---
+        mem_ctx_str = ""
+        cur_mem_tokens = 0
+        mem_header = "---\n[Relevant Past Information - Use this to recall facts (like names) and context]:\n"
+        mem_footer = "\n---"
+        mem_placeholder_no_mem = "[No relevant memories found or fit budget]"
+        mem_placeholder_too_long = "[Memory Omitted Due To Length]"
+        mem_placeholder_error = "[Memory Error Processing Context]"
+        mem_content = mem_placeholder_no_mem
+        included_mem_uuids = []
+
+        if memory_chain and mem_budget > 0:
+            # Sort memories by strength (desc) then timestamp (desc) for prioritization
+            mem_chain_sorted = sorted(memory_chain, key=lambda x: (x.get('memory_strength', 0.0), x.get('timestamp', '')), reverse=True)
+            mem_parts = []
+            tmp_tokens = 0
+            try:
+                format_tokens = len(tokenizer.encode(f"{model_tag}{mem_header}{mem_footer}{end_turn}\n"))
+            except Exception:
+                format_tokens = 50
+            effective_mem_budget = mem_budget - format_tokens
+
+            for node in mem_chain_sorted:
+                spk = node.get('speaker','?')
+                txt = node.get('text','')
+                ts = node.get('timestamp','')
+                strength = node.get('memory_strength', 0.0)
+                relative_time_desc = self._get_relative_time_desc(ts)
+
+                # --- Memory Strength Budgeting ---
+                # Reduce detail for weaker memories (e.g., truncate text)
+                max_chars_for_node = 1000 # Default max chars
+                if strength < 0.3: max_chars_for_node = 80 # Very weak, very short preview
+                elif strength < 0.6: max_chars_for_node = 200 # Weak, short preview
+
+                truncated_txt = txt[:max_chars_for_node]
+                if len(txt) > max_chars_for_node: truncated_txt += "..."
+
+                # Format memory entry (include strength indicator?)
+                fmt_mem = f"{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
+                try:
+                    mem_tok_len = len(tokenizer.encode(fmt_mem))
+                except Exception as e:
+                    logger.warning(f"Tokenization error for memory item: {e}. Skipping memory item.")
+                    continue
+
+                if tmp_tokens + mem_tok_len <= effective_mem_budget:
+                    mem_parts.append(fmt_mem)
+                    tmp_tokens += mem_tok_len
+                    included_mem_uuids.append(node['uuid'][:8])
+                else:
+                    logger.debug("Memory budget reached during context construction.")
+                    break
+
+            if mem_parts:
+                # Re-sort the *included* parts chronologically for the final prompt
+                # This requires storing timestamp along with fmt_mem temporarily
+                mem_parts_with_ts = []
+                for node in mem_chain_sorted:
+                     if node['uuid'][:8] in included_mem_uuids: # Check if this node was included
+                         spk = node.get('speaker','?')
+                         txt = node.get('text','')
+                         ts = node.get('timestamp','')
+                         strength = node.get('memory_strength', 0.0)
+                         relative_time_desc = self._get_relative_time_desc(ts)
+                         max_chars_for_node = 1000
+                         if strength < 0.3: max_chars_for_node = 80
+                         elif strength < 0.6: max_chars_for_node = 200
+                         truncated_txt = txt[:max_chars_for_node]
+                         if len(txt) > max_chars_for_node: truncated_txt += "..."
+                         fmt_mem = f"{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
+                         mem_parts_with_ts.append((ts, fmt_mem))
+
+                mem_parts_with_ts.sort(key=lambda item: item[0]) # Sort by timestamp (ascending)
+                sorted_mem_parts = [item[1] for item in mem_parts_with_ts] # Extract sorted strings
+                mem_content = mem_header + "".join(sorted_mem_parts) + mem_footer
+
+        # Format the final memory block (or placeholder)
+        if mem_content != mem_placeholder_no_mem:
+             full_mem_block = f"{model_tag}{mem_content}{end_turn}\n"
+        else:
+             full_mem_block = f"{model_tag}{mem_placeholder_no_mem}{end_turn}\n"
+
+        try:
+            mem_block_tok_len = len(tokenizer.encode(full_mem_block))
+            if mem_block_tok_len <= mem_budget:
+                mem_ctx_str = full_mem_block
+                cur_mem_tokens = mem_block_tok_len
+                logger.debug(f"Included memory block ({cur_mem_tokens} tokens). UUIDs (chrono): {included_mem_uuids}") # Corrected logger name
+            else:
+                # This case should be less likely now due to pre-calculation, but handle anyway
+                logger.warning(f"Formatted memory block ({mem_block_tok_len}) still exceeded budget ({mem_budget}). Using placeholder.") # Corrected logger name
+                mem_ctx_str = f"{model_tag}{mem_placeholder_too_long}{end_turn}\n"
+                cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
+        except Exception as e:
+            logger.error(f"Tokenization error for memory block: {e}. Using error placeholder.") # Corrected logger name
+            mem_ctx_str = f"{model_tag}{mem_placeholder_error}{end_turn}\n"
+            cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
+
+
+        # --- History Context Construction ---
+        hist_parts = []
+        cur_hist_tokens = 0
+        # Use the pre-calculated hist_budget
+        logger.debug(f"Constructing History Context (Budget: {hist_budget})")
+        included_hist_count = 0
+
+        history_to_process = conversation_history # Use history passed in
+
+        if history_to_process and hist_budget > 0: # Use hist_budget here
+            for turn in reversed(history_to_process):
+                spk = turn.get('speaker', '?')
+                txt = turn.get('text', '')
+                logger.debug(f"Processing history turn: Speaker={spk}, Text='{txt[:80]}...'") # Corrected logger name
+
+                if spk == 'User': fmt_turn = f"{user_tag}{txt}{end_turn}\n"
+                elif spk in ['AI', 'System', 'Error']: fmt_turn = f"{model_tag}{txt}{end_turn}\n"
+                else: logger.warning(f"Unknown speaker '{spk}' in history, skipping."); continue # Corrected logger name
+
+                try: turn_tok_len = len(tokenizer.encode(fmt_turn))
+                except Exception as e: logger.warning(f"Tokenization error for history turn: {e}. Skipping."); continue
+
+                if cur_hist_tokens + turn_tok_len <= hist_budget: # Use hist_budget
+                    hist_parts.append(fmt_turn)
+                    cur_hist_tokens += turn_tok_len
+                    included_hist_count += 1
+                else: logger.debug("History budget reached."); break # Corrected logger name
+
+            hist_parts.reverse() # Chronological order
+            # --- Log the actual history text being included ---
+            history_context_for_log = "".join(hist_parts)
+            logger.debug(f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
+
+        # --- Assemble Final Prompt ---
+        final_parts = []
+        final_parts.append(time_info_block)
+        # Add workspace context block
+        if workspace_context_str:
+             final_parts.append(workspace_context_str)
+        # Add instruction about temporal awareness AND action capability
+        # --- System Instructions for AI ---
+        system_instructions = [
+            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
+            "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
+            "[System Note: **Synthesize** the information from the 'Relevant Past Information' (memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
+            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
+            # --- Mood/Drive Tone Instruction ---
+            f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). Let this subtly influence your response tone. For example, high Valence might lead to warmer language, high Arousal might lead to more energetic phrasing, low Safety might lead to more cautious language.]" if current_mood else "[System Note: Current mood unavailable.]",
+            # --- ASM Integration Instruction ---
+            "[System Note: Consider your 'Self-Perception' summary (Traits, Goals, Role, Emotional Profile) when formulating your response and deciding on actions. Align your behavior with this self-model.]",
+            # --- Action Capability Instructions ---
+            "[System Note: You have the ability to manage files and calendar events.",
+            "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
+            "  **Available Actions:** `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `consolidate_files`, `add_calendar_event`, `read_calendar`.",
+            "  **CRITICAL: `edit_file` is NOT a valid action.** Use `read_file` then `create_file` (overwrites).",
+            "  **To Edit a File:** Use `read_file` then `create_file` (overwrites).",
+            "  **Using Actions:**",
+            "    - For `list_files`, `read_calendar`: Use `[ACTION: {\"action\": \"action_name\", \"args\": {}}]` (or add optional 'date' arg for read_calendar).",
+            "    - For `read_file`, `delete_file`: Use `[ACTION: {\"action\": \"action_name\", \"args\": {\"filename\": \"target_file.txt\"}}]`.",
+            "    - For `append_file`: Use `[ACTION: {\"action\": \"append_file\", \"args\": {\"filename\": \"target_file.txt\", \"content\": \"Text to append...\"}}]` (Generate the actual content to append).",
+            "    - For `add_calendar_event`: Use `[ACTION: {\"action\": \"add_calendar_event\", \"args\": {\"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"description\": \"Event details...\"}}]`.",
+            "    - **For `create_file`:** Signal your *intent* by providing a brief description. The system will handle filename/content generation separately. Use `[ACTION: {\"action\": \"create_file\", \"args\": {\"description\": \"Brief description of what to save, e.g., 'List of project ideas'\"}}]`.",
+            "  Only use the ACTION tag if you decide an action is necessary based on the context.]",
+            # --- NEW: Instruction for handling retrieved intentions ---
+            "[System Note: If you see a retrieved memory starting with 'Remember:' (indicating a stored intention), check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]"
+        ]
+        # Add each instruction line as a separate system turn for clarity
+        for instruction in system_instructions:
+             final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
+
+        # --- Add Context Blocks ---
+        if asm_block: final_parts.append(asm_block) # Add ASM block after time/system notes
+        if drive_block: final_parts.append(drive_block) # Add Drive block after ASM
+        if mem_ctx_str: final_parts.append(mem_ctx_str) # Add Memories after internal state
+        final_parts.extend(hist_parts) # Add History
+        final_parts.append(user_input_fmt) # Crucial: Adds current user input
+        final_parts.append(final_model_tag)
+        final_prompt = "".join(final_parts)
+
+        # --- Final Logging and Checks ---
+        logger.debug(f"--- Final Prompt Structure ---") # Corrected logger name
+        if len(final_prompt) > 500: logger.debug(f"{final_prompt[:250]}...\n...\n...{final_prompt[-250:]}") # Corrected logger name
+        else: logger.debug(final_prompt) # Corrected logger name
+        logger.debug(f"--- End Final Prompt Structure ---") # Corrected logger name
+
+        try:
+            final_tok_count = len(tokenizer.encode(final_prompt))
+            logger.info(f"Constructed prompt final token count: {final_tok_count} (Budget Available: {total_available_budget})") # Use total_available_budget
+            if final_tok_count > max_context_tokens:
+                 logger.error(f"CRITICAL: Final prompt ({final_tok_count} tokens) EXCEEDS max context ({max_context_tokens}).") # Corrected logger name
+            elif final_tok_count > max_context_tokens - context_headroom:
+                 logger.warning(f"Final prompt ({final_tok_count} tokens) close to max context ({max_context_tokens}). Less headroom ({max_context_tokens-final_tok_count}).") # Corrected logger name
+        except Exception as e:
+            logger.error(f"Tokenization error for final prompt: {e}") # Corrected logger name
+            final_tok_count = -1 # Indicate error
+
+        # --- Write final prompt to debug log file ---
+        try:
+            log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            last_prompt_file = os.path.join(log_dir, 'last_prompt.txt')
+            with open(last_prompt_file, 'w', encoding='utf-8') as f:
+                f.write(f"--- Prompt for Personality: {self.personality} at {datetime.now(timezone.utc).isoformat()} ---\n\n")
+                f.write(final_prompt)
+            logger.debug(f"Wrote final prompt to {last_prompt_file}")
+        except Exception as e:
+            logger.error(f"Failed to write last_prompt.txt: {e}", exc_info=True)
+
+        # --- Tuning Log: Prompt Construction Result ---
+        log_tuning_event("PROMPT_CONSTRUCTION_RESULT", {
+            "personality": self.personality,
+            "user_input_preview": strip_emojis(user_input[:100]), # Strip emojis
+            "included_memory_uuids": included_mem_uuids, # From memory construction block
+            "included_history_turns": included_hist_count, # From history construction block
+            "final_token_count": final_tok_count,
+            "max_context_tokens": max_context_tokens,
+            "prompt_preview_start": final_prompt[:200],
+            "prompt_preview_end": final_prompt[-200:],
+        })
+
+        return final_prompt
