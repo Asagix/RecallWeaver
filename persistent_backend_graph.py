@@ -1736,6 +1736,8 @@ class GraphMemoryClient:
                             elif direction == 'decrease':
                                 adjustment = heuristics.get('saliency_decrease_connection', 0.0)
 
+                            logger.debug(f"Saliency feedback heuristic: Direction='{direction}', Target='{target_drive}', AdjustmentValue={adjustment:.4f}") # Log calculated adjustment
+
                             if abs(adjustment) > 1e-4 and target_drive in self.drive_state["short_term"]:
                                 current_level = self.drive_state["short_term"][target_drive]
                                 new_level = current_level + adjustment
@@ -3863,7 +3865,7 @@ class GraphMemoryClient:
                                 if match:
                                     json_str = match.group(0)
                                     drive_adjustments = json.loads(json_str)
-                                    logger.debug(f"Parsed short-term drive adjustments from LLM: {drive_adjustments}")
+                                    logger.info(f"LLM Drive Analysis Result: {drive_adjustments}") # Log the full result at INFO level
                                     # --- Log parsed LLM adjustments ---
                                     log_tuning_event("DRIVE_ANALYSIS_LLM_PARSED", {
                                         "personality": self.personality,
