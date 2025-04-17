@@ -23,13 +23,13 @@ features:
 
 # --- Activation Spreading Parameters ---
 activation:
-  initial: 1.0
-  threshold: 0.1
+  initial: 0.7 # Reduced from 1.0
+  threshold: 0.18 # Increased from 0.1
   node_decay_rate: 0.02
   edge_decay_rate: 0.01
   spreading_depth: 3
   max_initial_nodes: 7
-  propagation_factor_base: 0.7
+  propagation_factor_base: 0.65 # Reduced from 0.7
   propagation_factors:
     TEMPORAL_fwd: 1.0
     TEMPORAL_bwd: 0.8
