@@ -171,7 +171,27 @@ class Worker(QThread):
                 gui_logger.error(f"Error getting initial history from backend: {hist_e}", exc_info=True)
                 self.current_conversation = [] # Start fresh on error
             # --- End initial history handling ---
-            self.signals.backend_ready.emit(True, self.personality) # Signal backend is ready AFTER history is handled
+
+            # --- Check for and emit pending re-greeting ---
+            try:
+                pending_greeting = self.client.get_pending_re_greeting()
+                if pending_greeting:
+                    gui_logger.info(f"Worker found pending re-greeting: '{pending_greeting[:50]}...'")
+                    greeting_timestamp = datetime.now(timezone.utc).isoformat()
+                    # Add greeting to conversation history (no UUID needed here as it wasn't added to graph yet)
+                    greeting_turn = {"speaker": "AI", "text": pending_greeting, "timestamp": greeting_timestamp, "uuid": None}
+                    self.current_conversation.append(greeting_turn)
+                    # Emit response_ready to display the greeting in the GUI
+                    # User input is empty, no memories, no AI node UUID yet, no planning needed
+                    self.signals.response_ready.emit("", pending_greeting, [], None, False)
+                else:
+                    gui_logger.debug("No pending re-greeting found.")
+            except Exception as greet_e:
+                gui_logger.error(f"Error checking/emitting pending re-greeting: {greet_e}", exc_info=True)
+            # --- End re-greeting check ---
+
+            # --- Signal backend is ready AFTER history and potential greeting are handled ---
+            self.signals.backend_ready.emit(True, self.personality)
         except Exception as e:
             error_msg = f"FATAL: Failed initialize backend for '{self.personality}': {e}"
             self.signals.error.emit(error_msg)

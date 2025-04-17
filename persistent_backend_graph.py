@@ -203,6 +203,7 @@ class GraphMemoryClient:
         }
         self.initial_history_turns = [] # Store last N turns from previous session
         self.time_since_last_interaction_hours = 0.0 # Store time gap
+        self.pending_re_greeting = None # Store generated re-greeting message
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -299,6 +300,7 @@ class GraphMemoryClient:
 
         self._load_memory() # Loads data from self.data_dir
         self._load_initial_history() # Load initial history after main memory load
+        self._check_and_generate_re_greeting() # Check and generate re-greeting after history load
 
         # Set last added node UUID
         if not self.last_added_node_uuid and self.graph.number_of_nodes() > 0:
@@ -3005,50 +3007,10 @@ class GraphMemoryClient:
         action_result_message = None # Initialize here
 
         try:
-            # --- Check for Re-Greeting Condition ---
-            re_greeting_threshold = self.config.get('prompting', {}).get('re_greeting_threshold_hours', 3.0)
-            logger.debug(f"Checking re-greeting: FirstInteraction={is_first_interaction_of_session}, TimeGap={self.time_since_last_interaction_hours:.2f}h, Threshold={re_greeting_threshold}h")
-            if is_first_interaction_of_session and self.time_since_last_interaction_hours > re_greeting_threshold:
-                logger.info(f"Time gap ({self.time_since_last_interaction_hours:.2f}h) exceeds threshold ({re_greeting_threshold}h). Generating re-greeting.")
-                # --- Tuning Log: Re-Greeting Triggered ---
-                log_tuning_event("RE_GREETING_TRIGGERED", {
-                    "interaction_id": interaction_id,
-                    "personality": self.personality,
-                    "time_gap_hours": self.time_since_last_interaction_hours,
-                    "threshold_hours": re_greeting_threshold,
-                })
+            # --- Re-greeting logic moved to __init__ ---
 
-                # Prepare context for re-greeting prompt
-                last_messages_context = "\n".join([f"- {turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in self.initial_history_turns[-3:]]) # Last 3 turns # Strip emojis
-                asm_summary = self.autobiographical_model.get("summary_statement", "[No self-summary available]")
-
-                re_greeting_prompt_template = self._load_prompt("re_greeting_prompt.txt")
-                if not re_greeting_prompt_template:
-                    logger.error("Re-greeting prompt template missing. Falling back to standard response.")
-                    # Fall through to normal processing below
-                else:
-                    re_greeting_prompt = re_greeting_prompt_template.format(
-                        time_gap_hours=self.time_since_last_interaction_hours,
-                        last_messages_context=last_messages_context,
-                        asm_summary=asm_summary
-                    )
-                    logger.debug(f"Sending re-greeting prompt:\n{re_greeting_prompt}")
-                    # Call LLM using dedicated config
-                    ai_response = self._call_configured_llm('re_greeting_generation', prompt=re_greeting_prompt)
-                    parsed_response = ai_response.strip() if ai_response and not ai_response.startswith("Error:") else "Hello again! It's been a while." # Fallback greeting
-
-                    # Add user/AI nodes for this interaction
-                    user_node_uuid = self.add_memory_node(graph_user_input, "User")
-                    ai_node_uuid = self.add_memory_node(parsed_response, "AI")
-
-                    # Update context for next interaction (mood/concepts) - reuse logic from end of block
-                    self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
-
-                    # Return the greeting - no memory chain, no planning needed for this
-                    return parsed_response, [], ai_node_uuid, False # Return False for needs_planning
-
-            # --- If not re-greeting, proceed with normal interaction ---
-            logger.debug("Proceeding with normal interaction flow (not re-greeting).")
+            # --- Proceed with normal interaction flow ---
+            logger.debug("Processing normal interaction flow.")
 
             # --- Handle Multimodal Input ---
             if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('data_url'):
@@ -3525,6 +3487,52 @@ class GraphMemoryClient:
     def get_initial_history(self) -> list:
         """Returns the loaded initial history turns."""
         return self.initial_history_turns
+
+    def _check_and_generate_re_greeting(self):
+        """Checks time gap and generates re-greeting if needed during initialization."""
+        self.pending_re_greeting = None # Ensure it's clear initially
+        re_greeting_threshold = self.config.get('prompting', {}).get('re_greeting_threshold_hours', 3.0)
+        logger.debug(f"Checking re-greeting on init: TimeGap={self.time_since_last_interaction_hours:.2f}h, Threshold={re_greeting_threshold}h")
+
+        if self.time_since_last_interaction_hours > re_greeting_threshold:
+            logger.info(f"Time gap ({self.time_since_last_interaction_hours:.2f}h) exceeds threshold ({re_greeting_threshold}h). Generating re-greeting during init.")
+            # --- Tuning Log: Re-Greeting Triggered (Init) ---
+            log_tuning_event("RE_GREETING_TRIGGERED_INIT", {
+                "personality": self.personality,
+                "time_gap_hours": self.time_since_last_interaction_hours,
+                "threshold_hours": re_greeting_threshold,
+            })
+
+            # Prepare context for re-greeting prompt
+            last_messages_context = "\n".join([f"- {turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in self.initial_history_turns[-3:]]) # Strip emojis
+            asm_summary = self.autobiographical_model.get("summary_statement", "[No self-summary available]")
+
+            re_greeting_prompt_template = self._load_prompt("re_greeting_prompt.txt")
+            if not re_greeting_prompt_template:
+                logger.error("Re-greeting prompt template missing. Cannot generate greeting.")
+                return # Exit if prompt missing
+
+            re_greeting_prompt = re_greeting_prompt_template.format(
+                time_gap_hours=self.time_since_last_interaction_hours,
+                last_messages_context=last_messages_context,
+                asm_summary=asm_summary
+            )
+            logger.debug(f"Sending re-greeting prompt (init):\n{re_greeting_prompt}")
+            # Call LLM using dedicated config
+            ai_response = self._call_configured_llm('re_greeting_generation', prompt=re_greeting_prompt)
+            parsed_response = ai_response.strip() if ai_response and not ai_response.startswith("Error:") else "Hello again! It's been a while." # Fallback greeting
+
+            # Store the generated greeting
+            self.pending_re_greeting = parsed_response
+            logger.info(f"Generated and stored pending re-greeting: '{self.pending_re_greeting[:50]}...'")
+        else:
+            logger.debug("Time gap does not exceed threshold. No re-greeting needed on init.")
+
+    def get_pending_re_greeting(self) -> str | None:
+        """Returns the pending re-greeting message (if any) and clears it."""
+        greeting = self.pending_re_greeting
+        self.pending_re_greeting = None # Clear after retrieval
+        return greeting
 
     # --- Drive State Management ---
     def _initialize_drive_state(self):
