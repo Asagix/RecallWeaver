@@ -90,9 +90,9 @@ def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
 class WorkerSignals(QObject):
     # Added backend_ready signal
     backend_ready = pyqtSignal(bool, str)  # success_flag, personality_name
-    # Signature changed: Added object for optional action_result_info dict
-    response_ready = pyqtSignal(str, str, list, str, object)
-    modification_response_ready = pyqtSignal(str, str, str, str)
+    # Signature changed: Replaced action_result_info object with needs_planning flag (bool)
+    response_ready = pyqtSignal(str, str, list, str, bool)
+    modification_response_ready = pyqtSignal(str, str, str, str) # Keep for memory mods AND workspace results
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
     clarification_needed = pyqtSignal(str, list)
