@@ -2068,7 +2068,8 @@ class GraphMemoryClient:
                 drive_block = ""
 
         if asm_block: final_parts.append(asm_block) # Add ASM block after time/system note
-        if drive_block: final_parts.append(drive_block) # Add Drive block after ASM
+        # --- Drive block is intentionally NOT added to final_parts to keep it subconscious ---
+        # if drive_block: final_parts.append(drive_block) # Add Drive block after ASM
         if mem_ctx_str: final_parts.append(mem_ctx_str)
         final_parts.extend(hist_parts)
         final_parts.append(user_input_fmt) # Crucial: Adds current user input (potentially with tag)
