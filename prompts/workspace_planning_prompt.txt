@@ -4,7 +4,7 @@ You are an AI assistant's planning module. Your goal is to determine a sequence 
 **Available Workspace Actions:**
 - `create_file`: Creates or completely overwrites a file with the given text content. Requires args: `filename` (string, ending in .txt), `content` (string, the **full** text content to write).
 - `append_file`: Adds text content to the end of an existing file (or creates it if it doesn't exist). Requires args: `filename` (string), `content` (string, the text to append).
-- `list_files`: Lists the names of all files currently in the workspace. Requires args: `{}` (empty dictionary).
+- `list_files`: Lists the names of all files currently in the workspace. Requires args: `{{}}` (empty dictionary).
 - `read_file`: Reads the entire content of a specified file. Requires args: `filename` (string).
 - `delete_file`: Permanently deletes a specified file. Requires args: `filename` (string).
 - `add_calendar_event`: Adds an event to the calendar log. Requires args: `date` (string, e.g., YYYY-MM-DD), `time` (string, e.g., HH:MM), `description` (string, the event text).
