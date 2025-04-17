@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMimeData, QUrl,QBuffer, QByteArray, QIODevice
 from PyQt6.QtGui import QTextCursor, QColor, QPalette, QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
-    QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence
+    QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices # Added QDesktopServices
 
 from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger
 import file_manager
@@ -1968,17 +1968,17 @@ class ChatWindow(QMainWindow):
                 attachment_label = QLabel(f"[Image: {file_name}]") # Show filename as fallback
                 attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic;")
 
-       elif file_type == "file":
-           # Display placeholder for generic files
-           attachment_label = QLabel(f"[File Attached: {file_name}]")
-           attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;")
-       else:
-            gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
+           elif file_type == "file": # <<< Corrected Indentation
+               # Display placeholder for generic files
+               attachment_label = QLabel(f"[File Attached: {file_name}]")
+               attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;")
+           else: # <<< Corrected Indentation
+                gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
 
-        # --- Create Main Message Label (if text provided) ---
-        message_label = None
-        if text: # Only create label if there is text
-            message_label = QLabel()
+       # --- Create Main Message Label (if text provided) ---
+       message_label = None # <<< Corrected Indentation
+       if text: # Only create label if there is text
+           message_label = QLabel()
             message_label.setWordWrap(True)
             message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse)
             message_label.setOpenExternalLinks(True)
