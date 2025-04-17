@@ -7,7 +7,7 @@ import re
 import logging
 import yaml
 import requests
-import mimetypes # <<< Add mimetypes
+import mimetypes  # <<< Add mimetypes
 
 # Removed incorrect import: from pip._internal.utils import urls
 
@@ -15,19 +15,21 @@ import mimetypes # <<< Add mimetypes
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
-    print("WARNING: zoneinfo module not found. Timestamps will use UTC. Consider `pip install tzdata`.", file=sys.stderr)
-    ZoneInfo = None # type: ignore
-    ZoneInfoNotFoundError = Exception # Placeholder
+    print("WARNING: zoneinfo module not found. Timestamps will use UTC. Consider `pip install tzdata`.",
+          file=sys.stderr)
+    ZoneInfo = None  # type: ignore
+    ZoneInfoNotFoundError = Exception  # Placeholder
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QTextBrowser, QLineEdit, # Added QTextBrowser
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QTextBrowser, QLineEdit,  # Added QTextBrowser
     QPushButton, QScrollArea, QLabel, QHBoxLayout, QFrame, QSplitter,
     QSizePolicy, QSpacerItem, QMessageBox, QInputDialog, QComboBox,
     QMenuBar, QMenu, QFileDialog
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMimeData, QUrl,QBuffer, QByteArray, QIODevice
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, pyqtSlot, QMimeData, QUrl, QBuffer, QByteArray, \
+    QIODevice
 from PyQt6.QtGui import QTextCursor, QColor, QPalette, QFont, QAction, QActionGroup, QDragEnterEvent, QDropEvent, \
-    QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices # Added QDesktopServices
+    QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices  # Added QDesktopServices
 
 from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger
 import file_manager
@@ -35,23 +37,25 @@ import file_manager
 # --- Logger Setup ---
 gui_logger = logging.getLogger(__name__)
 if not logging.root.handlers:
-     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - GUI - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - GUI - %(levelname)s - %(message)s')
 else:
-     gui_logger.setLevel(logging.DEBUG)
+    gui_logger.setLevel(logging.DEBUG)
 
 # --- Constants ---
 DEFAULT_CONFIG_PATH = "config.yaml"
 FALLBACK_MODIFICATION_KEYWORDS = ["forget", "delete", "remove", "edit", "change", "correct", "update"]
 
+
 # --- Helper Function ---
 def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
     # (Implementation remains the same as previous version)
     personalities = []
-    default_personality = None # Track default separately
+    default_personality = None  # Track default separately
     try:
-        with open(config_path, 'r') as f: config = yaml.safe_load(f)
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
         base_path = config.get('base_memory_path', 'memory_sets')
-        default_personality = config.get('default_personality') # Don't assume 'default'
+        default_personality = config.get('default_personality')  # Don't assume 'default'
 
         # Add explicitly listed personalities first (maintaining order if specified)
         config_personalities = config.get('available_personalities', [])
@@ -64,36 +68,38 @@ def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
         if base_path and os.path.isdir(base_path):
             for item in os.listdir(base_path):
                 if os.path.isdir(os.path.join(base_path, item)):
-                    if item not in personalities: # Add only if not already listed
-                         personalities.append(item)
+                    if item not in personalities:  # Add only if not already listed
+                        personalities.append(item)
 
         # Ensure the default from config is present if specified, add if missing
         if default_personality and default_personality not in personalities:
-             personalities.insert(0, default_personality) # Add to beginning if missing
+            personalities.insert(0, default_personality)  # Add to beginning if missing
 
     except Exception as e:
         gui_logger.error(f"Error discovering personalities: {e}. Using minimal fallback.")
         if default_personality and default_personality not in personalities:
-             personalities.append(default_personality)
+            personalities.append(default_personality)
         if not personalities:
-            personalities = ['default'] # Absolute fallback
+            personalities = ['default']  # Absolute fallback
 
     gui_logger.info(f"Discovered personalities: {personalities}")
     return personalities
 
+
 # --- Worker Thread Signals ---
 class WorkerSignals(QObject):
     # Added backend_ready signal
-    backend_ready = pyqtSignal(bool, str) # success_flag, personality_name
-    response_ready = pyqtSignal(str, str, list, str) # Added ai_node_uuid (str or None)
+    backend_ready = pyqtSignal(bool, str)  # success_flag, personality_name
+    response_ready = pyqtSignal(str, str, list, str)  # Added ai_node_uuid (str or None)
     modification_response_ready = pyqtSignal(str, str, str, str)
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
     clarification_needed = pyqtSignal(str, list)
-    confirmation_needed = pyqtSignal(str, dict) # NEW: action_type, details_dict
-    feedback_provided = pyqtSignal(str, str) # NEW: node_uuid, feedback_type ('up'/'down')
+    confirmation_needed = pyqtSignal(str, dict)  # NEW: action_type, details_dict
+    feedback_provided = pyqtSignal(str, str)  # NEW: node_uuid, feedback_type ('up'/'down')
     error = pyqtSignal(str)
     log_message = pyqtSignal(str)
+
 
 # --- Worker Thread ---
 class Worker(QThread):
@@ -106,21 +112,23 @@ class Worker(QThread):
         self.client = None
         self.current_conversation = []
         self.is_running = True
-        self.input_queue = [] # List to hold tasks: (task_type, data)
+        self.input_queue = []  # List to hold tasks: (task_type, data)
         self.mod_keywords = []
-        self.consolidation_trigger_count = 0 # Interactions before auto-consolidation
-        self.forgetting_trigger_count = 0 # Interactions before auto-forgetting
-        self.interaction_count = 0 # Tracks user/AI turns since last maintenance/consolidation trigger
+        self.consolidation_trigger_count = 0  # Interactions before auto-consolidation
+        self.forgetting_trigger_count = 0  # Interactions before auto-forgetting
+        self.interaction_count = 0  # Tracks user/AI turns since last maintenance/consolidation trigger
         self.personality = personality_name
         self.config_path = config_path
-        self.pending_clarification = None # Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
-        self.pending_confirmation = None # NEW: Store pending confirmation details {'action': str, 'args': dict}
+        self.pending_clarification = None  # Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
+        self.pending_confirmation = None  # NEW: Store pending confirmation details {'action': str, 'args': dict}
 
         # Load config for keywords and trigger counts
         try:
-            with open(config_path, 'r') as f: config = yaml.safe_load(f)
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
             loaded_keywords = config.get('modification_keywords', FALLBACK_MODIFICATION_KEYWORDS)
-            self.mod_keywords = [str(kw).lower() for kw in loaded_keywords] if isinstance(loaded_keywords, list) else FALLBACK_MODIFICATION_KEYWORDS
+            self.mod_keywords = [str(kw).lower() for kw in loaded_keywords] if isinstance(loaded_keywords,
+                                                                                          list) else FALLBACK_MODIFICATION_KEYWORDS
             gui_logger.info(f"Worker({self.personality}) loaded keywords: {self.mod_keywords}")
 
             # Load forgetting trigger count (used for memory maintenance)
@@ -130,8 +138,10 @@ class Worker(QThread):
 
             # Load consolidation trigger count
             consolidation_cfg = config.get('consolidation', {})
-            self.consolidation_trigger_count = int(consolidation_cfg.get('trigger_interaction_count', 0)) # Default 0 (disabled)
-            gui_logger.info(f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
+            self.consolidation_trigger_count = int(
+                consolidation_cfg.get('trigger_interaction_count', 0))  # Default 0 (disabled)
+            gui_logger.info(
+                f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
 
         except Exception as e:
             gui_logger.error(f"Error loading config for worker: {e}. Using fallbacks.", exc_info=True)
@@ -163,18 +173,27 @@ class Worker(QThread):
                 task_type, data = self.input_queue.pop(0)
                 try:
                     gui_logger.debug(f"Worker processing task: {task_type}")
-                    if task_type == 'chat': self.handle_chat_task(data)
-                    elif task_type == 'modify': self.handle_modify_task(data)
-                    elif task_type == 'reset': self.handle_reset_task()
-                    elif task_type == 'consolidate': self.handle_consolidation_task()
-                    elif task_type == 'execute_action': self.handle_execute_action_task(data)
-                    elif task_type == 'execute_action_confirmed': self.handle_confirmed_action_task(data)
-                    elif task_type == 'saliency_update': self.handle_saliency_update_task(data)
-                    elif task_type == 'feedback': self.handle_feedback_task(data) # NEW Handler
+                    if task_type == 'chat':
+                        self.handle_chat_task(data)
+                    elif task_type == 'modify':
+                        self.handle_modify_task(data)
+                    elif task_type == 'reset':
+                        self.handle_reset_task()
+                    elif task_type == 'consolidate':
+                        self.handle_consolidation_task()
+                    elif task_type == 'execute_action':
+                        self.handle_execute_action_task(data)
+                    elif task_type == 'execute_action_confirmed':
+                        self.handle_confirmed_action_task(data)
+                    elif task_type == 'saliency_update':
+                        self.handle_saliency_update_task(data)
+                    elif task_type == 'feedback':
+                        self.handle_feedback_task(data)  # NEW Handler
                     # --- Add handler for memory maintenance ---
-                    elif task_type == 'memory_maintenance': self.handle_memory_maintenance_task()
+                    elif task_type == 'memory_maintenance':
+                        self.handle_memory_maintenance_task()
                     else:
-                         gui_logger.warning(f"Unknown task type received in worker queue: {task_type}")
+                        gui_logger.warning(f"Unknown task type received in worker queue: {task_type}")
 
                 except Exception as e:
                     # Catch errors within specific task handlers if possible,
@@ -184,7 +203,7 @@ class Worker(QThread):
                     backend_logger.error(error_msg, exc_info=True)
             else:
                 # Prevent busy-waiting
-                self.msleep(100) # Sleep for 100 milliseconds if queue is empty
+                self.msleep(100)  # Sleep for 100 milliseconds if queue is empty
 
         # --- Cleanup when loop ends ---
         self.save_memory_on_stop()
@@ -198,9 +217,9 @@ class Worker(QThread):
         user_timestamp = datetime.now(timezone.utc).isoformat()
         history_text = user_input_text
         if attachment and attachment.get('type') == 'image':
-             placeholder = f" [Image: {attachment.get('filename', 'Attached')}]"
-             separator = " " if history_text else ""
-             history_text += separator + placeholder
+            placeholder = f" [Image: {attachment.get('filename', 'Attached')}]"
+            separator = " " if history_text else ""
+            history_text += separator + placeholder
 
         # --- Add user turn to history (WITH UUID if available later) ---
         # We need the UUID *after* adding to graph, so add placeholder for now
@@ -210,8 +229,8 @@ class Worker(QThread):
 
         ai_response_text = "Error: Could not get response."
         memory_chain_data = []
-        ai_node_uuid = None # Initialize AI node UUID
-        interaction_successful = False # Flag to track if LLM call succeeded
+        ai_node_uuid = None  # Initialize AI node UUID
+        interaction_successful = False  # Flag to track if LLM call succeeded
 
         try:
             # process_interaction now returns (response, memories, ai_node_uuid)
@@ -224,7 +243,7 @@ class Worker(QThread):
             # Add AI response to worker's history
             ai_timestamp = datetime.now(timezone.utc).isoformat()
             # --- Add AI response to history (WITH UUID if available later) ---
-            ai_turn_data = {"speaker": "AI", "text": ai_response_text,"timestamp": ai_timestamp, "uuid": None}
+            ai_turn_data = {"speaker": "AI", "text": ai_response_text, "timestamp": ai_timestamp, "uuid": None}
             self.current_conversation.append(ai_turn_data)
 
             # --- Get UUIDs from backend (if returned) and update history ---
@@ -236,50 +255,52 @@ class Worker(QThread):
             # if user_uuid_from_backend: user_turn_data['uuid'] = user_uuid_from_backend
             # if ai_uuid_from_backend: ai_turn_data['uuid'] = ai_uuid_from_backend # No longer needed here
             if ai_node_uuid:
-                 ai_turn_data['uuid'] = ai_node_uuid # Store UUID if returned
-                 gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
+                ai_turn_data['uuid'] = ai_node_uuid  # Store UUID if returned
+                gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
 
             # Emit result signal (including AI node UUID)
             self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid)
-            interaction_successful = True # Mark as successful
+            interaction_successful = True  # Mark as successful
 
         except Exception as e:
             error_msg = f"Error during chat processing: {e}"
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg, exc_info=True)
             error_timestamp = datetime.now(timezone.utc).isoformat()
-            self.current_conversation.append({"speaker": "Error","text": f"Failed to process interaction: {e}","timestamp": error_timestamp})
+            self.current_conversation.append(
+                {"speaker": "Error", "text": f"Failed to process interaction: {e}", "timestamp": error_timestamp})
             # Emit error response, potentially using the original history text for context
             self.signals.response_ready.emit(history_text, f"Error generating response: {e}", [])
-            interaction_successful = False # Mark as failed
+            interaction_successful = False  # Mark as failed
 
         # --- Trigger Maintenance Tasks AFTER interaction attempt ---
         if interaction_successful:
-             self.interaction_count += 1
-             gui_logger.debug(f"Interaction count for '{self.personality}': {self.interaction_count}")
+            self.interaction_count += 1
+            gui_logger.debug(f"Interaction count for '{self.personality}': {self.interaction_count}")
 
-             maintenance_task_queued = False # Flag to track if any task was queued
+            maintenance_task_queued = False  # Flag to track if any task was queued
 
-             # Check Forgetting Trigger
-             # Ensure trigger count is positive (enabled)
-             if self.forgetting_trigger_count > 0 and self.interaction_count >= self.forgetting_trigger_count:
-                 gui_logger.info(f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
-                 self.input_queue.append(('memory_maintenance', None)) # Add maintenance task
-                 maintenance_task_queued = True
+            # Check Forgetting Trigger
+            # Ensure trigger count is positive (enabled)
+            if self.forgetting_trigger_count > 0 and self.interaction_count >= self.forgetting_trigger_count:
+                gui_logger.info(
+                    f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
+                self.input_queue.append(('memory_maintenance', None))  # Add maintenance task
+                maintenance_task_queued = True
 
-             # --- Check Consolidation Trigger ---
-             # Ensure trigger count is positive (enabled)
-             # Check even if forgetting triggered, in case counts are the same or consolidation is lower
-             if self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
-                 gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
-                 self.input_queue.append(('consolidate', True)) # Pass True for automatic trigger
-                 maintenance_task_queued = True
+            # --- Check Consolidation Trigger ---
+            # Ensure trigger count is positive (enabled)
+            # Check even if forgetting triggered, in case counts are the same or consolidation is lower
+            if self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
+                gui_logger.info(
+                    f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
+                self.input_queue.append(('consolidate', True))  # Pass True for automatic trigger
+                maintenance_task_queued = True
 
-             # Reset counter if EITHER task was queued to prevent immediate re-triggering
-             if maintenance_task_queued:
-                 gui_logger.debug("Resetting interaction counter after queuing maintenance task(s).")
-                 self.interaction_count = 0
-
+            # Reset counter if EITHER task was queued to prevent immediate re-triggering
+            if maintenance_task_queued:
+                gui_logger.debug("Resetting interaction counter after queuing maintenance task(s).")
+                self.interaction_count = 0
 
     def handle_memory_maintenance_task(self):
         """Handles the task for running the nuanced forgetting process."""
@@ -291,7 +312,7 @@ class Worker(QThread):
                 self.client.run_memory_maintenance()
                 # Optionally emit a signal if specific feedback is needed?
                 # self.signals.maintenance_complete.emit("Memory maintenance finished.")
-                self.signals.log_message.emit("[Auto] Memory maintenance finished.") # Simple log message for now
+                self.signals.log_message.emit("[Auto] Memory maintenance finished.")  # Simple log message for now
             except Exception as e:
                 error_msg = f"Error during automatic memory maintenance: {e}"
                 self.signals.error.emit(error_msg)
@@ -325,51 +346,65 @@ class Worker(QThread):
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg)
 
-
     def handle_modify_task(self, user_input):
         # (Implementation remains the same - no interaction counter increment)
         user_timestamp = datetime.now(timezone.utc).isoformat()
         # self.current_conversation.append({"speaker": "User", "text": user_input, "timestamp": user_timestamp}) # Maybe don't add modification command itself to history? Or add differently?
         self.signals.log_message.emit(f"Processing modification: {user_input[:30]}...")
         final_confirmation_msg = "Could not understand modification request."
-        final_action_type = "error"; final_target_info = ""; ok = False; msg = final_confirmation_msg
+        final_action_type = "error";
+        final_target_info = "";
+        ok = False;
+        msg = final_confirmation_msg
         try:
             # --- Call backend analysis ---
             action_data = self.client.analyze_memory_modification_request(user_input)
             if isinstance(action_data, dict) and 'action' in action_data:
-                action = action_data.get('action'); final_action_type = action
-                target_uuid = action_data.get('target_uuid'); target_desc = action_data.get('target')
-                new_text = action_data.get('new_text'); topic = action_data.get('topic')
+                action = action_data.get('action');
+                final_action_type = action
+                target_uuid = action_data.get('target_uuid');
+                target_desc = action_data.get('target')
+                new_text = action_data.get('new_text');
+                topic = action_data.get('topic')
 
                 # Determine target info string for logging/signal
-                if action in ["delete", "edit"]: final_target_info = target_uuid or target_desc or "?"
-                elif action == "forget": final_target_info = topic or "?"
+                if action in ["delete", "edit"]:
+                    final_target_info = target_uuid or target_desc or "?"
+                elif action == "forget":
+                    final_target_info = topic or "?"
 
                 # --- Execute backend modification ---
                 if action == "delete":
                     if target_uuid:
                         ok = self.client.delete_memory_entry(target_uuid)
                         msg = f"Deleted entry: {target_uuid[:8]}..." if ok else f"Failed to delete entry: {target_uuid[:8]}..."
-                    else: msg = f"Cannot delete: Please specify the exact UUID of the memory entry."; final_action_type = "delete_clarify"
+                    else:
+                        msg = f"Cannot delete: Please specify the exact UUID of the memory entry."; final_action_type = "delete_clarify"
                 elif action == "edit":
-                    if target_uuid and new_text is not None: # Allow empty string edit? Yes.
+                    if target_uuid and new_text is not None:  # Allow empty string edit? Yes.
                         new_uuid = self.client.edit_memory_entry(target_uuid, new_text)
                         ok = bool(new_uuid)
                         msg = f"Edited entry {target_uuid[:8]}. New ID: {new_uuid[:8]}" if ok else f"Failed to edit entry: {target_uuid[:8]}..."
-                        final_target_info = new_uuid[:8] if ok else target_uuid[:8] # Show new or old UUID
-                    elif not target_uuid: msg = f"Cannot edit: Please specify the exact UUID of the memory entry."; final_action_type = "edit_clarify"
-                    else: msg = "Cannot edit: Please provide the new text after the UUID."; final_action_type = "edit_clarify"
+                        final_target_info = new_uuid[:8] if ok else target_uuid[:8]  # Show new or old UUID
+                    elif not target_uuid:
+                        msg = f"Cannot edit: Please specify the exact UUID of the memory entry."; final_action_type = "edit_clarify"
+                    else:
+                        msg = "Cannot edit: Please provide the new text after the UUID."; final_action_type = "edit_clarify"
                 elif action == "forget":
                     if topic:
-                        ok, msg = self.client.forget_topic(topic) # forget_topic returns (bool, message)
-                    else: msg = "Cannot forget: Please specify the topic to forget."; final_action_type = "forget_clarify"
-                elif action == "none": ok, msg = True, "No memory modification action taken."
-                elif action == "error": ok, msg = False, f"Analysis Error: {action_data.get('reason', 'Unknown')}"
-                else: ok, msg = False, f"Unknown action type '{action}' received from analysis."
+                        ok, msg = self.client.forget_topic(topic)  # forget_topic returns (bool, message)
+                    else:
+                        msg = "Cannot forget: Please specify the topic to forget."; final_action_type = "forget_clarify"
+                elif action == "none":
+                    ok, msg = True, "No memory modification action taken."
+                elif action == "error":
+                    ok, msg = False, f"Analysis Error: {action_data.get('reason', 'Unknown')}"
+                else:
+                    ok, msg = False, f"Unknown action type '{action}' received from analysis."
 
                 final_confirmation_msg = msg
                 # Refine suffix logic
-                if action not in ["none","error","unknown"] and "clarify" not in action:
+                if action not in ["none", "error", "unknown"] and "clarify" not in action:
                     final_action_type = f"{action}_{'success' if ok else 'fail'}"
 
             else:
@@ -384,24 +419,31 @@ class Worker(QThread):
 
         # Append system response to conversation history
         confirmation_timestamp = datetime.now(timezone.utc).isoformat()
-        self.current_conversation.append({"speaker": "System", "text": final_confirmation_msg, "timestamp": confirmation_timestamp})
+        self.current_conversation.append(
+            {"speaker": "System", "text": final_confirmation_msg, "timestamp": confirmation_timestamp})
         # Emit signal to GUI
-        self.signals.modification_response_ready.emit(user_input, final_confirmation_msg, final_action_type, str(final_target_info))
+        self.signals.modification_response_ready.emit(user_input, final_confirmation_msg, final_action_type,
+                                                      str(final_target_info))
 
     def handle_reset_task(self):
         # (Implementation remains the same - no interaction counter increment)
         self.signals.log_message.emit("Resetting memory...")
         backend_logger.info("Worker received reset request.")
         if self.client:
-            try: reset_ok = self.client.reset_memory();
-            except Exception as e: error_msg = f"Error calling backend reset_memory: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
+            try:
+                reset_ok = self.client.reset_memory();
+            except Exception as e:
+                error_msg = f"Error calling backend reset_memory: {e}"; self.signals.error.emit(
+                    error_msg); backend_logger.error(error_msg, exc_info=True); return
             if reset_ok:
-                 self.current_conversation.clear()
-                 self.interaction_count = 0 # Also reset interaction count on manual memory reset
-                 backend_logger.info("Memory reset successful.")
-                 self.signals.memory_reset_complete.emit()
-            else: self.signals.error.emit("Backend failed to reset memory.")
-        else: self.signals.error.emit("Backend client not available for reset.")
+                self.current_conversation.clear()
+                self.interaction_count = 0  # Also reset interaction count on manual memory reset
+                backend_logger.info("Memory reset successful.")
+                self.signals.memory_reset_complete.emit()
+            else:
+                self.signals.error.emit("Backend failed to reset memory.")
+        else:
+            self.signals.error.emit("Backend client not available for reset.")
 
     def handle_consolidation_task(self, triggered_automatically=False):
         """Handles the task for running memory consolidation."""
@@ -411,36 +453,37 @@ class Worker(QThread):
         if self.client:
             try:
                 # --- Ensure the correct method name is called ---
-                self.client.run_consolidation() # <<< This call
+                self.client.run_consolidation()  # <<< This call
                 # --- End Correction ---
             except AttributeError as e:
-                 # Catch the specific error if the method is still missing
-                 error_msg = f"Error during consolidation: Method 'run_consolidation' not found on client. {e}"
-                 self.signals.error.emit(error_msg)
-                 backend_logger.error(error_msg, exc_info=True)
-                 return
+                # Catch the specific error if the method is still missing
+                error_msg = f"Error during consolidation: Method 'run_consolidation' not found on client. {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+                return
             except Exception as e:
-                 # Catch other errors during execution
-                 error_msg = f"Error during consolidation: {e}"
-                 self.signals.error.emit(error_msg)
-                 backend_logger.error(error_msg, exc_info=True)
-                 return # Stop if error occurs
+                # Catch other errors during execution
+                error_msg = f"Error during consolidation: {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+                return  # Stop if error occurs
 
             # This logic correctly handles automatic vs manual triggers for logging/signals
             if triggered_automatically:
-                 # Counter reset happens in handle_chat_task *before* automatic triggering logic queueing the task
-                 gui_logger.info("Automatic consolidation finished.") # Log completion
-            self.signals.consolidation_complete.emit(f"{prefix}Consolidation finished.") # Signal GUI
+                # Counter reset happens in handle_chat_task *before* automatic triggering logic queueing the task
+                gui_logger.info("Automatic consolidation finished.")  # Log completion
+            self.signals.consolidation_complete.emit(f"{prefix}Consolidation finished.")  # Signal GUI
         else:
             self.signals.error.emit("Backend client not available for consolidation.")
 
-
-
     def handle_execute_action_task(self, action_data):
         # (Implementation remains the same - no interaction counter increment)
-        action = action_data.get('action', 'unknown'); self.signals.log_message.emit(f"Executing action: {action}...")
+        action = action_data.get('action', 'unknown');
+        self.signals.log_message.emit(f"Executing action: {action}...")
         if self.client:
-            success = False; message = f"Failed to execute action '{action}'."; action_suffix = f"{action}_fail"
+            success = False;
+            message = f"Failed to execute action '{action}'.";
+            action_suffix = f"{action}_fail"
             try:
                 # Backend now returns (bool, message, suffix) or dict for confirmation
                 backend_response = self.client.execute_action(action_data)
@@ -450,21 +493,21 @@ class Worker(QThread):
                     gui_logger.info(f"Overwrite confirmation needed for action: {backend_response}")
                     # Store the details needed to perform the action later
                     self.pending_confirmation = {
-                        'action': 'create_file', # The action to perform if confirmed
+                        'action': 'create_file',  # The action to perform if confirmed
                         'args': backend_response.get('args', {})
                     }
                     # Emit confirmation signal instead of modification response
                     self.signals.confirmation_needed.emit("confirm_overwrite", backend_response.get("args", {}))
-                    return # Stop processing here, wait for GUI confirmation
+                    return  # Stop processing here, wait for GUI confirmation
                 # --- Otherwise, assume (success, message, suffix) tuple ---
                 elif isinstance(backend_response, tuple) and len(backend_response) == 3:
-                     success, message, action_suffix = backend_response
+                    success, message, action_suffix = backend_response
                 else:
-                     # Handle unexpected response format
-                     logger.error(f"Unexpected response format from execute_action: {backend_response}")
-                     success = False
-                     message = "Received unexpected response from backend during action execution."
-                     action_suffix = f"{action}_error"
+                    # Handle unexpected response format
+                    logger.error(f"Unexpected response format from execute_action: {backend_response}")
+                    success = False
+                    message = "Received unexpected response from backend during action execution."
+                    action_suffix = f"{action}_error"
 
             except Exception as e:
                 error_msg = f"Error calling backend execute_action for '{action}': {e}"
@@ -481,12 +524,13 @@ class Worker(QThread):
             # Emit signal to GUI (use the suffix returned by execute_action)
             # Need placeholder for user input and target info for this signal
             user_input_placeholder = f"Action request: {action}"
-            target_info_placeholder = str(action_data.get('args', {}))[:100] # Use args as target info
-            self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix, target_info_placeholder)
+            target_info_placeholder = str(action_data.get('args', {}))[:100]  # Use args as target info
+            self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix,
+                                                          target_info_placeholder)
         else:
-             error_msg = "Backend client not available for action execution."
-             self.signals.error.emit(error_msg)
-             backend_logger.error(error_msg)
+            error_msg = "Backend client not available for action execution."
+            self.signals.error.emit(error_msg)
+            backend_logger.error(error_msg)
 
     def handle_confirmed_action_task(self, confirmed_action_data):
         """Executes an action that the user has explicitly confirmed (e.g., overwrite)."""
@@ -496,7 +540,7 @@ class Worker(QThread):
 
         success = False
         message = f"Failed to execute confirmed action '{action}'."
-        action_suffix = f"{action}_fail" # Start with fail suffix
+        action_suffix = f"{action}_fail"  # Start with fail suffix
 
         try:
             if action == "create_file":
@@ -529,7 +573,8 @@ class Worker(QThread):
         # Emit signal to GUI
         user_input_placeholder = f"Confirmed Action: {action}"
         target_info_placeholder = str(args)[:100]
-        self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix, target_info_placeholder)
+        self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix,
+                                                      target_info_placeholder)
 
         # Clear pending state
         self.pending_confirmation = None
@@ -558,18 +603,19 @@ class Worker(QThread):
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg)
 
-
     def add_input(self, text: str, attachment: dict | None = None):
         """Analyzes input/attachment and adds appropriate task to the queue."""
         if not self.client:
-             self.signals.error.emit("Backend client not ready.")
-             return
+            self.signals.error.emit("Backend client not ready.")
+            return
 
-        gui_logger.info(f"Worker received input: Text='{text[:50]}...', Attachment Type='{attachment.get('type') if attachment else None}'")
+        gui_logger.info(
+            f"Worker received input: Text='{text[:50]}...', Attachment Type='{attachment.get('type') if attachment else None}'")
 
         # --- Check for Pending Clarification ---
         if self.pending_clarification:
-            gui_logger.info(f"Handling input as clarification response for action: {self.pending_clarification.get('original_action')}")
+            gui_logger.info(
+                f"Handling input as clarification response for action: {self.pending_clarification.get('original_action')}")
             # Assume the new text provides the missing arguments.
             # A more robust approach might try to parse the new text specifically
             # for the missing args, but let's start simple.
@@ -584,7 +630,7 @@ class Worker(QThread):
             # This might need refinement based on typical user responses.
             if missing_args:
                 first_missing = missing_args[0]
-                current_args[first_missing] = text # Assign the user's input text
+                current_args[first_missing] = text  # Assign the user's input text
                 gui_logger.debug(f"Attempting to fill missing arg '{first_missing}' with text: '{text[:50]}...'")
 
                 # Construct the action data to execute
@@ -597,15 +643,17 @@ class Worker(QThread):
                 self.pending_clarification = None
 
                 # Add user's clarification text to history
-                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.current_conversation.append(
+                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
                 # Queue the execution task
                 gui_logger.info(f"Queuing action '{original_action}' for execution with clarified args: {current_args}")
                 self.input_queue.append(('execute_action', action_data_to_execute))
-                return # Stop further processing of this input
+                return  # Stop further processing of this input
 
             else:
                 # Should not happen if pending_clarification is set correctly, but handle defensively.
-                gui_logger.warning("Clarification was pending, but no missing args listed. Clearing state and proceeding normally.")
+                gui_logger.warning(
+                    "Clarification was pending, but no missing args listed. Clearing state and proceeding normally.")
                 self.pending_clarification = None
                 # Fall through to normal processing...
 
@@ -613,10 +661,10 @@ class Worker(QThread):
 
         # --- Prioritize Image Attachment ---
         if attachment and attachment.get('type') == 'image':
-             gui_logger.info("Image attachment found. Queuing chat task directly.")
-             task_data = {'text': text, 'attachment': attachment}
-             self.input_queue.append(('chat', task_data))
-             return
+            gui_logger.info("Image attachment found. Queuing chat task directly.")
+            task_data = {'text': text, 'attachment': attachment}
+            self.input_queue.append(('chat', task_data))
+            return
 
         # --- If no image, proceed with standard analysis ---
         gui_logger.info(f"Analyzing text input for actions/commands: '{text[:50]}...'")
@@ -631,11 +679,12 @@ class Worker(QThread):
                 return
             elif action == "clarify":
                 # If clarification is needed, add user text to history and emit signal
-                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.current_conversation.append(
+                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
                 # --- Store pending clarification state ---
                 self.pending_clarification = {
                     "original_action": analysis_result.get("original_action", "?"),
-                    "args": analysis_result.get("args", {}), # Store args already extracted by LLM
+                    "args": analysis_result.get("args", {}),  # Store args already extracted by LLM
                     "missing_args": analysis_result.get("missing_args", [])
                 }
                 gui_logger.info(f"Stored pending clarification: {self.pending_clarification}")
@@ -653,15 +702,16 @@ class Worker(QThread):
                     self.pending_clarification = None
                 gui_logger.info(f"Action '{action}' detected. Queuing execution task.")
                 # Add user text to history before queuing action
-                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.current_conversation.append(
+                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
                 self.input_queue.append(('execute_action', analysis_result))
-                return # Don't queue chat task
+                return  # Don't queue chat task
 
         except Exception as e:
-             # Log error during analysis but potentially fall through to check modification/chat
-             gui_logger.error(f"Error during action request analysis: {e}", exc_info=True)
-             self.signals.error.emit(f"Failed to analyze for file/calendar actions: {e}")
-             # Fall through to check memory modification (currently disabled)
+            # Log error during analysis but potentially fall through to check modification/chat
+            gui_logger.error(f"Error during action request analysis: {e}", exc_info=True)
+            self.signals.error.emit(f"Failed to analyze for file/calendar actions: {e}")
+            # Fall through to check memory modification (currently disabled)
 
         # --- If not a file/calendar action, analyze for memory modification ---
         # --- DISABLED Memory Modification Analysis ---
@@ -693,22 +743,24 @@ class Worker(QThread):
         # --- END DISABLED Memory Modification Analysis ---
 
         # --- If not action or modification (both analyses returned "none" or errored), treat as regular chat ---
-        gui_logger.info("No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
+        gui_logger.info(
+            "No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
         # Clear any potentially stale clarification state
         if self.pending_clarification:
             gui_logger.debug("Clearing stale pending clarification due to regular chat input.")
             self.pending_clarification = None
-        task_data = {'text': text, 'attachment': None} # Ensure chat task always gets dict
+        task_data = {'text': text, 'attachment': None}  # Ensure chat task always gets dict
         self.input_queue.append(('chat', task_data))
-
 
     def request_memory_reset(self):
         # (Implementation remains the same)
-        gui_logger.info("GUI requested memory reset."); self.input_queue.append(('reset', None))
+        gui_logger.info("GUI requested memory reset.");
+        self.input_queue.append(('reset', None))
 
     def request_consolidation(self):
         # (Implementation remains the same)
-        gui_logger.info("GUI requested manual consolidation."); self.input_queue.append(('consolidate', None))
+        gui_logger.info("GUI requested manual consolidation.");
+        self.input_queue.append(('consolidate', None))
 
     def request_saliency_update(self, uuid: str, direction: str):
         """Adds a saliency update task to the queue."""
@@ -717,36 +769,38 @@ class Worker(QThread):
 
     def stop(self):
         # (Implementation remains the same)
-        self.is_running = False; gui_logger.info("Stop requested for worker.")
+        self.is_running = False;
+        gui_logger.info("Stop requested for worker.")
 
     def save_memory_on_stop(self):
         # (Implementation remains the same)
         if self.client:
             backend_logger.info("Triggering final save from worker...")
-            try: self.client._save_memory(); backend_logger.info("Final save complete.")
-            except Exception as e: backend_logger.error(f"Error during final save: {e}", exc_info=True)
-        else: backend_logger.warning("Worker stopping, but no backend client to save.")
-
-
+            try:
+                self.client._save_memory(); backend_logger.info("Final save complete.")
+            except Exception as e:
+                backend_logger.error(f"Error during final save: {e}", exc_info=True)
+        else:
+            backend_logger.warning("Worker stopping, but no backend client to save.")
 
 
 # --- Collapsible Memory Widget ---
 # (Implementation remains the same as previous version)
 class CollapsibleMemoryWidget(QWidget):
     # NEW Signal
-    saliency_feedback_requested = pyqtSignal(str, str) # uuid, direction ('increase'/'decrease')
+    saliency_feedback_requested = pyqtSignal(str, str)  # uuid, direction ('increase'/'decrease')
 
     def __init__(self, memories, parent=None):
         super().__init__(parent)
         self.memories = memories or []
         self.toggle_button = QPushButton()
         self.toggle_button.setObjectName("MemoryToggle")
-        self.content_area = QTextBrowser() # Changed from QTextEdit
+        self.content_area = QTextBrowser()  # Changed from QTextEdit
         self.content_area.setReadOnly(True)
         self.content_area.setVisible(False)
         self.content_area.setObjectName("MemoryContent")
         # Enable link clicking (anchorClicked signal handles this)
-        self.content_area.anchorClicked.connect(self.handle_link_click) # Connect signal
+        self.content_area.anchorClicked.connect(self.handle_link_click)  # Connect signal
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -760,34 +814,58 @@ class CollapsibleMemoryWidget(QWidget):
         self.update_button_text()
         self.populate_content()
 
-    def update_button_text(self): prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"; count = len(self.memories); self.toggle_button.setText(f"{prefix} Retrieved Memories ({count})")
-    def toggle_content(self, checked): self.content_area.setVisible(checked); self.update_button_text(); self.adjustSize(); QTimer.singleShot(0, self._update_parent_layout)
+    def update_button_text(self):
+        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"; count = len(
+            self.memories); self.toggle_button.setText(f"{prefix} Retrieved Memories ({count})")
+
+    def toggle_content(self, checked):
+        self.content_area.setVisible(checked); self.update_button_text(); self.adjustSize(); QTimer.singleShot(0,
+                                                                                                               self._update_parent_layout)
+
     def _update_parent_layout(self):
         if self.parentWidget() and self.parentWidget().layout(): self.parentWidget().layout().activate()
+
     def populate_content(self):
         if not self.memories: self.content_area.setHtml("<small><i>No relevant memories retrieved.</i></small>"); return
         # Sort memories by final_activation score (descending), then timestamp as secondary key
-        html_content = ""; sorted_memories = sorted(self.memories, key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True)
+        html_content = "";
+        sorted_memories = sorted(self.memories, key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')),
+                                 reverse=True)
         for mem in sorted_memories:
-            ts_str = mem.get('timestamp', 'N/A'); node_type = mem.get('node_type', '?type'); act_score = mem.get('final_activation', -1.0); speaker = str(mem.get('speaker', '?')).replace('<', '&lt;').replace('>', '&gt;'); text = str(mem.get('text', '')).replace('<', '&lt;').replace('>', '&gt;'); text_multiline = text.replace('\n', '<br/>'); uuid_str = mem.get('uuid', '')[:8]; score_str = f"(Act: {act_score:.3f})" if act_score >= 0 else ""; time_desc = ts_str[:10]
-            try: dt_obj = datetime.fromisoformat(ts_str.replace('Z', '+00:00')); time_diff = datetime.now(timezone.utc) - dt_obj;
-            except (ValueError, TypeError): dt_obj = None; time_diff = None
+            ts_str = mem.get('timestamp', 'N/A');
+            node_type = mem.get('node_type', '?type');
+            act_score = mem.get('final_activation', -1.0);
+            speaker = str(mem.get('speaker', '?')).replace('<', '&lt;').replace('>', '&gt;');
+            text = str(mem.get('text', '')).replace('<', '&lt;').replace('>', '&gt;');
+            text_multiline = text.replace('\n', '<br/>');
+            uuid_str = mem.get('uuid', '')[:8];
+            score_str = f"(Act: {act_score:.3f})" if act_score >= 0 else "";
+            time_desc = ts_str[:10]
+            try:
+                dt_obj = datetime.fromisoformat(ts_str.replace('Z', '+00:00')); time_diff = datetime.now(
+                    timezone.utc) - dt_obj;
+            except (ValueError, TypeError):
+                dt_obj = None; time_diff = None
             if time_diff:
-                if time_diff < timedelta(minutes=1): time_desc = f"{int(time_diff.total_seconds())}s ago"
-                elif time_diff < timedelta(hours=1): time_desc = f"{int(time_diff.total_seconds() / 60)}m ago"
-                elif time_diff < timedelta(days=1): time_desc = f"{int(time_diff.total_seconds() / 3600)}h ago"
-                elif dt_obj: time_desc = dt_obj.strftime('%y-%m-%d')
+                if time_diff < timedelta(minutes=1):
+                    time_desc = f"{int(time_diff.total_seconds())}s ago"
+                elif time_diff < timedelta(hours=1):
+                    time_desc = f"{int(time_diff.total_seconds() / 60)}m ago"
+                elif time_diff < timedelta(days=1):
+                    time_desc = f"{int(time_diff.total_seconds() / 3600)}h ago"
+                elif dt_obj:
+                    time_desc = dt_obj.strftime('%y-%m-%d')
 
             # --- Add Saliency Links ---
             saliency_links = ""
-            if uuid_str: # Only add links if we have a full UUID
-                 increase_link = f'<a href="saliency://increase/{mem.get("uuid", "")}" style="color: #8FBC8F; text-decoration: none;">[+S]</a>' # Use full UUID
-                 decrease_link = f'<a href="saliency://decrease/{mem.get("uuid", "")}" style="color: #F08080; text-decoration: none;">[-S]</a>' # Use full UUID
-                 saliency_links = f"&nbsp;{increase_link}&nbsp;{decrease_link}"
+            if uuid_str:  # Only add links if we have a full UUID
+                increase_link = f'<a href="saliency://increase/{mem.get("uuid", "")}" style="color: #8FBC8F; text-decoration: none;">[+S]</a>'  # Use full UUID
+                decrease_link = f'<a href="saliency://decrease/{mem.get("uuid", "")}" style="color: #F08080; text-decoration: none;">[-S]</a>'  # Use full UUID
+                saliency_links = f"&nbsp;{increase_link}&nbsp;{decrease_link}"
 
             html_content += (
                 f"<div style='margin-bottom: 5px; border-left: 2px solid #555; padding-left: 5px;'>"
-                f"<small><i><b>{speaker}</b> [{node_type}] ({time_desc}) {score_str} [{uuid_str}]{saliency_links}</i></small>" # Add links here
+                f"<small><i><b>{speaker}</b> [{node_type}] ({time_desc}) {score_str} [{uuid_str}]{saliency_links}</i></small>"  # Add links here
                 f"<br/>{text_multiline}</div>"
             )
         self.content_area.setHtml(html_content)
@@ -797,8 +875,8 @@ class CollapsibleMemoryWidget(QWidget):
     def handle_link_click(self, url: QUrl):
         """Handles clicks on custom saliency links."""
         if url.scheme() == "saliency":
-            action = url.host() # 'increase' or 'decrease'
-            uuid = url.path().strip('/') # Get the UUID part
+            action = url.host()  # 'increase' or 'decrease'
+            uuid = url.path().strip('/')  # Get the UUID part
             if action in ['increase', 'decrease'] and uuid:
                 gui_logger.info(f"Saliency feedback link clicked: Action={action}, UUID={uuid}")
                 self.saliency_feedback_requested.emit(uuid, action)
@@ -815,6 +893,7 @@ class CollapsibleMemoryWidget(QWidget):
 
 class PasteLineEdit(QLineEdit):
     """A QLineEdit subclass that accepts pasted/dropped images/files via explicit reference."""
+
     # Add chat_window_ref argument to __init__
     def __init__(self, chat_window_ref, parent=None):
         super().__init__(parent)
@@ -826,40 +905,47 @@ class PasteLineEdit(QLineEdit):
     # --- Drag/Drop Handling ---
     def dragEnterEvent(self, event: QDragEnterEvent):
         mime_data = event.mimeData()
-        if mime_data.hasUrls() or mime_data.hasImage(): event.acceptProposedAction()
-        else: super().dragEnterEvent(event)
+        if mime_data.hasUrls() or mime_data.hasImage():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event: QDragMoveEvent):
         mime_data = event.mimeData()
-        if mime_data.hasUrls() or mime_data.hasImage(): event.acceptProposedAction()
-        else: super().dragMoveEvent(event)
+        if mime_data.hasUrls() or mime_data.hasImage():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
 
     def dropEvent(self, event: QDropEvent):
-       mime_data = event.mimeData(); gui_logger.debug("Drop event detected.")
-       if mime_data.hasUrls():
-           urls = mime_data.urls(); file_path = urls[0].toLocalFile() if urls else None; gui_logger.debug(f"Dropped URL path: {file_path}")
-           if file_path and os.path.isfile(file_path):
-               # Use the stored chat_window reference to handle the file path
-               if hasattr(self.chat_window, 'handle_attach_file_path'):
-                   gui_logger.debug("Calling chat_window.handle_attach_file_path for drop...")
-                   self.chat_window.handle_attach_file_path(file_path)
-                   event.acceptProposedAction()
-                   return
-               else:
-                   gui_logger.error("Drop Event: ChatWindow reference missing handle_attach_file_path method!")
-           else:
-               gui_logger.debug("Dropped URL path is not a valid file.")
-       elif mime_data.hasImage():
+        mime_data = event.mimeData();
+        gui_logger.debug("Drop event detected.")
+        if mime_data.hasUrls():
+            urls = mime_data.urls();
+            file_path = urls[0].toLocalFile() if urls else None;
+            gui_logger.debug(f"Dropped URL path: {file_path}")
+            if file_path and os.path.isfile(file_path):
+                # Use the stored chat_window reference to handle the file path
+                if hasattr(self.chat_window, 'handle_attach_file_path'):
+                    gui_logger.debug("Calling chat_window.handle_attach_file_path for drop...")
+                    self.chat_window.handle_attach_file_path(file_path)
+                    event.acceptProposedAction()
+                    return
+                else:
+                    gui_logger.error("Drop Event: ChatWindow reference missing handle_attach_file_path method!")
+            else:
+                gui_logger.debug("Dropped URL path is not a valid file.")
+        elif mime_data.hasImage():
             # Handle dropped image data directly (similar to paste)
             if self.handle_pasted_image_data(mime_data):
-                 event.acceptProposedAction()
-                 return
+                event.acceptProposedAction()
+                return
             else:
-                 gui_logger.warning("Dropped image data could not be handled.")
-       else:
-           gui_logger.debug("Drop does not contain URLs or Image data.")
+                gui_logger.warning("Dropped image data could not be handled.")
+        else:
+            gui_logger.debug("Drop does not contain URLs or Image data.")
 
-       super().dropEvent(event) # Pass to default if not handled
+        super().dropEvent(event)  # Pass to default if not handled
 
     # --- Handle Paste Directly in Key Press ---
     def keyPressEvent(self, event: QKeyEvent):
@@ -877,14 +963,15 @@ class PasteLineEdit(QLineEdit):
                 paste_handled = self.handle_pasted_image_data(mime_data)
             # 2. Handle File Path URLs
             elif mime_data.hasUrls() and not paste_handled:
-                 paste_handled = self.handle_pasted_urls(mime_data)
+                paste_handled = self.handle_pasted_urls(mime_data)
 
             if paste_handled:
                 gui_logger.debug("Paste event handled by custom logic.")
-                event.accept(); return # Consume event
+                event.accept();
+                return  # Consume event
 
         # If not handled, pass to default
-        #gui_logger.debug("Passing key event to default handler.")
+        # gui_logger.debug("Passing key event to default handler.")
         super().keyPressEvent(event)
 
     # --- Helper Methods for Paste Handling ---
@@ -898,21 +985,31 @@ class PasteLineEdit(QLineEdit):
 
         image_data = mime_data.imageData()
         if isinstance(image_data, QImage) and not image_data.isNull():
-            byte_array = QByteArray(); buffer = QBuffer(byte_array)
+            byte_array = QByteArray();
+            buffer = QBuffer(byte_array)
             if buffer.open(QIODevice.OpenModeFlag.WriteOnly):
-                saved_ok = image_data.save(buffer, "PNG"); buffer.close()
+                saved_ok = image_data.save(buffer, "PNG");
+                buffer.close()
                 if saved_ok:
                     try:
-                        image_bytes = byte_array.data(); base64_encoded_data = base64.b64encode(image_bytes); base64_string = base64_encoded_data.decode('utf-8'); image_data_url = f"data:image/png;base64,{base64_string}"
-                        payload = {"type": "image", "filename": "pasted_image.png", "data_url": image_data_url, "base64_string": base64_string}
+                        image_bytes = byte_array.data();
+                        base64_encoded_data = base64.b64encode(image_bytes);
+                        base64_string = base64_encoded_data.decode('utf-8');
+                        image_data_url = f"data:image/png;base64,{base64_string}"
+                        payload = {"type": "image", "filename": "pasted_image.png", "data_url": image_data_url,
+                                   "base64_string": base64_string}
                         gui_logger.debug("Calling chat_window.handle_attach_payload (from pasted image data).")
-                        self.chat_window.handle_attach_payload(payload) # Call using reference
-                        return True # Success
-                    except Exception as e: gui_logger.error(f"Error encoding/handling pasted image data: {e}", exc_info=True)
-                else: gui_logger.error("Failed to save QImage to buffer.")
-            else: gui_logger.error("Failed to open QBuffer for writing image data.")
-        else: gui_logger.warning("mimeData had image, but imageData() was null/invalid.")
-        return False # Failed
+                        self.chat_window.handle_attach_payload(payload)  # Call using reference
+                        return True  # Success
+                    except Exception as e:
+                        gui_logger.error(f"Error encoding/handling pasted image data: {e}", exc_info=True)
+                else:
+                    gui_logger.error("Failed to save QImage to buffer.")
+            else:
+                gui_logger.error("Failed to open QBuffer for writing image data.")
+        else:
+            gui_logger.warning("mimeData had image, but imageData() was null/invalid.")
+        return False  # Failed
 
     def handle_pasted_urls(self, mime_data: QMimeData) -> bool:
         """Processes URL list from clipboard, looking for image file paths."""
@@ -930,76 +1027,111 @@ class PasteLineEdit(QLineEdit):
                 # Let the main window handler decide if it's an image or generic file
                 gui_logger.debug("Calling chat_window.handle_attach_file_path (from pasted URL).")
                 self.chat_window.handle_attach_file_path(file_path)  # Call using reference
-                return True # Success # Corrected indentation
+                return True  # Success # Corrected indentation
             else:
                 gui_logger.debug("Pasted URL path is not a valid file.")
         else:
             gui_logger.debug("mimeData hasUrls() true, but URL list empty?")
         return False  # Failed
+
+
 # --- Main Chat Window ---
 class ChatWindow(QMainWindow):
     """Main application window."""
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Persistent Memory Chat") # Initial title
+        self.setWindowTitle("Persistent Memory Chat")  # Initial title
         self.setGeometry(100, 100, 850, 750)
 
         self.config_path = DEFAULT_CONFIG_PATH
-        self._load_style_config() # Load style config first
+        self._load_style_config()  # Load style config first
         # self.current_personality = self._load_default_personality() # Don't load default
-        self.current_personality = None # Start with no personality selected
+        self.current_personality = None  # Start with no personality selected
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(0,0,0,0)
+        self.layout.setContentsMargins(0, 0, 0, 0)
 
         self._create_menu_bar()
-        self._setup_ui_elements() # Setup UI elements first
-        self._setup_status_bar() # Setup status bar including indicator
-        self.apply_dark_theme() # Apply theme AFTER UI elements exist
+        self._setup_ui_elements()  # Setup UI elements first
+        self._setup_status_bar()  # Setup status bar including indicator
+        self.apply_dark_theme()  # Apply theme AFTER UI elements exist
 
-        self.worker = None # Worker thread instance
-        self.attached_file_path = None # Store path of file to attach
-        self.is_processing = False # Flag to prevent concurrent processing
-        self.awaiting_clarification = False # Flag for clarification state
-        self.pending_confirmation = None # NEW: Store details for pending confirmation {'action': str, 'args': dict}
+        self.worker = None  # Worker thread instance
+        self.attached_file_path = None  # Store path of file to attach
+        self.is_processing = False  # Flag to prevent concurrent processing
+        self.awaiting_clarification = False  # Flag for clarification state
+        self.pending_confirmation = None  # NEW: Store details for pending confirmation {'action': str, 'args': dict}
 
         # --- Initial State ---
-        self.set_input_enabled(False) # Start with input disabled
-        self.update_status_light(False) # Start with red light
+        self.set_input_enabled(False)  # Start with input disabled
+        self.update_status_light(False)  # Start with red light
         self.statusBar().showMessage("Please select a personality from the menu to begin.")
         # Add initial message to chat display
-        QTimer.singleShot(100, lambda: self.display_message("System", "Welcome! Please select a personality from the 'Personality' menu to load the AI."))
-
+        QTimer.singleShot(100, lambda: self.display_message("System",
+                                                            "Welcome! Please select a personality from the 'Personality' menu to load the AI."))
 
     def _load_style_config(self):
         """Loads GUI style parameters from the config file."""
         gui_logger.info(f"Loading GUI style config from: {self.config_path}")
         # Set defaults (including new thumbnail width)
-        self.bubble_max_width = "75%"; self.bubble_side_margin = 50; self.bubble_edge_margin = 5; self.bubble_min_width = 100; self.bubble_border_radius = 18; self.bubble_padding_tb = 6; self.bubble_padding_lr = 10; self.bubble_ts_color_user = "#E0E0E0"; self.bubble_ts_color_ai = "#B0B0B0"; self.input_border_radius = 15; self.input_padding = 8; self.button_border_radius = 15; self.button_padding_v = 8; self.button_padding_h = 16
-        self.thumbnail_max_width = 200 # Default thumbnail width
+        self.bubble_max_width = "75%";
+        self.bubble_side_margin = 50;
+        self.bubble_edge_margin = 5;
+        self.bubble_min_width = 100;
+        self.bubble_border_radius = 18;
+        self.bubble_padding_tb = 6;
+        self.bubble_padding_lr = 10;
+        self.bubble_ts_color_user = "#E0E0E0";
+        self.bubble_ts_color_ai = "#B0B0B0";
+        self.input_border_radius = 15;
+        self.input_padding = 8;
+        self.button_border_radius = 15;
+        self.button_padding_v = 8;
+        self.button_padding_h = 16
+        self.thumbnail_max_width = 200  # Default thumbnail width
 
         try:
-            with open(self.config_path, 'r') as f: config = yaml.safe_load(f)
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f)
             if config and 'gui_style' in config:
-                style_config = config['gui_style']; bubbles = style_config.get('bubbles', {}); input_field = style_config.get('input_field', {}); buttons = style_config.get('buttons', {})
-                self.bubble_max_width = f"{bubbles.get('max_width_percent', 75)}%"; self.bubble_side_margin = bubbles.get('side_margin_px', 50); self.bubble_edge_margin = bubbles.get('edge_margin_px', 5); self.bubble_min_width = bubbles.get('min_width_px', 100); self.bubble_border_radius = bubbles.get('border_radius_px', 18); self.bubble_padding_tb = bubbles.get('internal_padding_top_bottom_px', 6); self.bubble_padding_lr = bubbles.get('internal_padding_left_right_px', 10); self.bubble_ts_color_user = bubbles.get('timestamp_color_user', "#E0E0E0"); self.bubble_ts_color_ai = bubbles.get('timestamp_color_ai', "#B0B0B0")
-                self.thumbnail_max_width = bubbles.get('thumbnail_max_width_px', 200) # Load thumbnail width
+                style_config = config['gui_style'];
+                bubbles = style_config.get('bubbles', {});
+                input_field = style_config.get('input_field', {});
+                buttons = style_config.get('buttons', {})
+                self.bubble_max_width = f"{bubbles.get('max_width_percent', 75)}%";
+                self.bubble_side_margin = bubbles.get('side_margin_px', 50);
+                self.bubble_edge_margin = bubbles.get('edge_margin_px', 5);
+                self.bubble_min_width = bubbles.get('min_width_px', 100);
+                self.bubble_border_radius = bubbles.get('border_radius_px', 18);
+                self.bubble_padding_tb = bubbles.get('internal_padding_top_bottom_px', 6);
+                self.bubble_padding_lr = bubbles.get('internal_padding_left_right_px', 10);
+                self.bubble_ts_color_user = bubbles.get('timestamp_color_user', "#E0E0E0");
+                self.bubble_ts_color_ai = bubbles.get('timestamp_color_ai', "#B0B0B0")
+                self.thumbnail_max_width = bubbles.get('thumbnail_max_width_px', 200)  # Load thumbnail width
 
-                self.input_border_radius = input_field.get('border_radius_px', 15); self.input_padding = input_field.get('padding_px', 8)
-                self.button_border_radius = buttons.get('border_radius_px', 15); self.button_padding_v = buttons.get('padding_vertical_px', 8); self.button_padding_h = buttons.get('padding_horizontal_px', 16)
+                self.input_border_radius = input_field.get('border_radius_px', 15);
+                self.input_padding = input_field.get('padding_px', 8)
+                self.button_border_radius = buttons.get('border_radius_px', 15);
+                self.button_padding_v = buttons.get('padding_vertical_px', 8);
+                self.button_padding_h = buttons.get('padding_horizontal_px', 16)
                 gui_logger.info("GUI style config loaded successfully.")
-            else: gui_logger.warning("GUI style section not found in config. Using defaults.")
-        except FileNotFoundError: gui_logger.error(f"Config file not found at {self.config_path}. Using default styles.")
-        except (yaml.YAMLError, KeyError, TypeError) as e: gui_logger.error(f"Error loading GUI style config: {e}. Using defaults.")
-
+            else:
+                gui_logger.warning("GUI style section not found in config. Using defaults.")
+        except FileNotFoundError:
+            gui_logger.error(f"Config file not found at {self.config_path}. Using default styles.")
+        except (yaml.YAMLError, KeyError, TypeError) as e:
+            gui_logger.error(f"Error loading GUI style config: {e}. Using defaults.")
 
     def _load_default_personality(self):
         # (Implementation remains the same - not called in __init__ anymore)
         try:
-            with open(self.config_path, 'r') as f: config = yaml.safe_load(f); return config.get('default_personality') # Return None if not set
-        except Exception as e: gui_logger.error(f"Could not load default personality setting: {e}."); return None
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f); return config.get('default_personality')  # Return None if not set
+        except Exception as e:
+            gui_logger.error(f"Could not load default personality setting: {e}."); return None
 
     def _create_menu_bar(self):
         # (Implementation remains the same)
@@ -1008,34 +1140,69 @@ class ChatWindow(QMainWindow):
 
     def _rebuild_personality_menu(self):
         # (Implementation remains the same - marks current personality)
-        self.personality_menu.clear(); switch_action_group = QActionGroup(self); switch_action_group.setExclusive(True)
+        self.personality_menu.clear();
+        switch_action_group = QActionGroup(self);
+        switch_action_group.setExclusive(True)
         available = get_available_personalities(self.config_path)
         found_current = False
         for name in available:
             action = QAction(name, self, checkable=True)
             action.triggered.connect(lambda checked, p=name: self.switch_personality(p))
             if name == self.current_personality: action.setChecked(True); found_current = True
-            self.personality_menu.addAction(action); switch_action_group.addAction(action)
+            self.personality_menu.addAction(action);
+            switch_action_group.addAction(action)
         # If current_personality is None or not found (e.g., deleted), uncheck all
         if not found_current:
             if switch_action_group.checkedAction():
-                 switch_action_group.checkedAction().setChecked(False)
-        self.personality_menu.addSeparator(); create_action = QAction("&New Personality...", self); create_action.triggered.connect(self.create_new_personality); self.personality_menu.addAction(create_action)
+                switch_action_group.checkedAction().setChecked(False)
+        self.personality_menu.addSeparator();
+        create_action = QAction("&New Personality...", self);
+        create_action.triggered.connect(self.create_new_personality);
+        self.personality_menu.addAction(create_action)
 
     def _setup_ui_elements(self):
         # (Implementation mostly same, uses PasteLineEdit)
-        self.scroll_area = QScrollArea(); self.scroll_area.setObjectName("ScrollArea"); self.scroll_area.setWidgetResizable(True); self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll_widget = QWidget(); self.scroll_widget.setObjectName("ScrollWidget"); self.chat_layout = QVBoxLayout(self.scroll_widget); self.chat_layout.setContentsMargins(10, 10, 10, 10); self.chat_layout.setSpacing(8); self.chat_layout.addStretch(); self.scroll_area.setWidget(self.scroll_widget)
-        self.input_frame = QFrame(); self.input_frame.setObjectName("InputFrame"); self.input_layout = QHBoxLayout(self.input_frame); self.input_layout.setContentsMargins(5, 5, 5, 5); self.input_layout.setSpacing(5)
-        self.input_field = PasteLineEdit(self, self.input_frame) # Pass self as chat_window_ref, input_frame as parent
+        self.scroll_area = QScrollArea();
+        self.scroll_area.setObjectName("ScrollArea");
+        self.scroll_area.setWidgetResizable(True);
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_widget = QWidget();
+        self.scroll_widget.setObjectName("ScrollWidget");
+        self.chat_layout = QVBoxLayout(self.scroll_widget);
+        self.chat_layout.setContentsMargins(10, 10, 10, 10);
+        self.chat_layout.setSpacing(8);
+        self.chat_layout.addStretch();
+        self.scroll_area.setWidget(self.scroll_widget)
+        self.input_frame = QFrame();
+        self.input_frame.setObjectName("InputFrame");
+        self.input_layout = QHBoxLayout(self.input_frame);
+        self.input_layout.setContentsMargins(5, 5, 5, 5);
+        self.input_layout.setSpacing(5)
+        self.input_field = PasteLineEdit(self, self.input_frame)  # Pass self as chat_window_ref, input_frame as parent
         self.input_field.setPlaceholderText("Select a personality from the menu to start...")
         self.input_field.returnPressed.connect(self.send_message)
-        self.attach_button = QPushButton("+"); self.attach_button.setObjectName("AttachButton"); self.attach_button.setToolTip("Attach Image File"); self.attach_button.clicked.connect(self.handle_attach_file)
-        self.send_button = QPushButton("Send"); self.send_button.setObjectName("SendButton"); self.send_button.clicked.connect(self.send_message)
-        self.consolidate_button = QPushButton("Consolidate"); self.consolidate_button.setObjectName("ConsolidateButton"); self.consolidate_button.clicked.connect(self.request_consolidation); self.consolidate_button.setToolTip("Run consolidation for loaded personality")
-        self.reset_button = QPushButton("Reset Mem"); self.reset_button.setObjectName("ResetButton"); self.reset_button.clicked.connect(self.confirm_reset_memory); self.reset_button.setToolTip("Reset memory for loaded personality")
-        self.input_layout.addWidget(self.input_field, 1); self.input_layout.addWidget(self.attach_button); self.input_layout.addWidget(self.send_button); self.input_layout.addWidget(self.consolidate_button); self.input_layout.addWidget(self.reset_button)
-        self.layout.addWidget(self.scroll_area, 1); self.layout.addWidget(self.input_frame)
+        self.attach_button = QPushButton("+");
+        self.attach_button.setObjectName("AttachButton");
+        self.attach_button.setToolTip("Attach Image File");
+        self.attach_button.clicked.connect(self.handle_attach_file)
+        self.send_button = QPushButton("Send");
+        self.send_button.setObjectName("SendButton");
+        self.send_button.clicked.connect(self.send_message)
+        self.consolidate_button = QPushButton("Consolidate");
+        self.consolidate_button.setObjectName("ConsolidateButton");
+        self.consolidate_button.clicked.connect(self.request_consolidation);
+        self.consolidate_button.setToolTip("Run consolidation for loaded personality")
+        self.reset_button = QPushButton("Reset Mem");
+        self.reset_button.setObjectName("ResetButton");
+        self.reset_button.clicked.connect(self.confirm_reset_memory);
+        self.reset_button.setToolTip("Reset memory for loaded personality")
+        self.input_layout.addWidget(self.input_field, 1);
+        self.input_layout.addWidget(self.attach_button);
+        self.input_layout.addWidget(self.send_button);
+        self.input_layout.addWidget(self.consolidate_button);
+        self.input_layout.addWidget(self.reset_button)
+        self.layout.addWidget(self.scroll_area, 1);
+        self.layout.addWidget(self.input_frame)
 
         # --- Connect scrollbar signal for automatic scrolling ---
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom_on_range_change)
@@ -1043,8 +1210,8 @@ class ChatWindow(QMainWindow):
     def _setup_status_bar(self):
         """Creates the status bar and adds the status light widget."""
         # Status Light Indicator (Label with a circle character)
-        self.status_light = QLabel("●") # Use a unicode circle
-        self.status_light.setObjectName("StatusLight") # For styling
+        self.status_light = QLabel("●")  # Use a unicode circle
+        self.status_light.setObjectName("StatusLight")  # For styling
         # Add as a permanent widget to the right side
         self.statusBar().addPermanentWidget(self.status_light)
         # Initial message set in __init__
@@ -1174,16 +1341,15 @@ class ChatWindow(QMainWindow):
         if hasattr(self, 'scroll_widget'): self.scroll_widget.setObjectName("ScrollWidget")
         if hasattr(self, 'input_frame'): self.input_frame.setObjectName("InputFrame")
 
-
     def set_input_enabled(self, enabled: bool):
         """Enable or disable input field and buttons."""
         if hasattr(self, 'input_field'):
             self.input_field.setEnabled(enabled)
             # Update placeholder text based on state
             if enabled:
-                 self.input_field.setPlaceholderText("Type message, paste image, or /command...")
+                self.input_field.setPlaceholderText("Type message, paste image, or /command...")
             else:
-                 self.input_field.setPlaceholderText("Select a personality from the menu to start...")
+                self.input_field.setPlaceholderText("Select a personality from the menu to start...")
 
         if hasattr(self, 'send_button'): self.send_button.setEnabled(enabled)
         if hasattr(self, 'attach_button'): self.attach_button.setEnabled(enabled)
@@ -1194,20 +1360,19 @@ class ChatWindow(QMainWindow):
         if enabled and hasattr(self, 'input_field'):
             self.input_field.setFocus()
 
-
     def update_status_light(self, status: str):
         """Updates the status light color via dynamic property."""
         # status should be "ready", "not_ready", "loading", or "processing"
         if hasattr(self, 'status_light'):
             valid_statuses = ["ready", "not_ready", "loading", "processing"]
             if status not in valid_statuses:
-                gui_logger.warning(f"Invalid status '{status}' passed to update_status_light. Defaulting to 'not_ready'.")
+                gui_logger.warning(
+                    f"Invalid status '{status}' passed to update_status_light. Defaulting to 'not_ready'.")
                 status = "not_ready"
             self.status_light.setProperty("status", status)
             # Re-polish to apply the style based on the new property
             self.style().unpolish(self.status_light)
             self.style().polish(self.status_light)
-
 
     def switch_personality(self, name):
         """Handles switching to a different personality."""
@@ -1218,16 +1383,16 @@ class ChatWindow(QMainWindow):
         # For now, prevent switching if busy to avoid complex state issues.
         if self.is_processing:
             QMessageBox.warning(self, "Busy", "Cannot switch personality while processing.")
-            self._rebuild_personality_menu() # Fix menu check state
+            self._rebuild_personality_menu()  # Fix menu check state
             return
 
         gui_logger.info(f"Switching personality to: {name}")
         self.statusBar().showMessage(f"Loading '{name}'...")
-        self.set_input_enabled(False) # Disable input during switch
-        self.update_status_light("loading") # Yellow light while loading
+        self.set_input_enabled(False)  # Disable input during switch
+        self.update_status_light("loading")  # Yellow light while loading
         self.clear_chat_display()
         self.display_message("System", f"Loading personality: {name}...")
-        self.clear_attachment() # Clear any pending attachments
+        self.clear_attachment()  # Clear any pending attachments
 
         # Stop existing worker gracefully
         if self.worker and self.worker.isRunning():
@@ -1241,32 +1406,47 @@ class ChatWindow(QMainWindow):
         # Disconnect signals from the old worker instance
         if self.worker:
             # Simplified disconnection - disconnect all slots from this object
-            try: self.worker.signals.backend_ready.disconnect(self.on_backend_ready)
-            except TypeError: pass
-            try: self.worker.signals.response_ready.disconnect(self.display_response)
-            except TypeError: pass
-            try: self.worker.signals.modification_response_ready.disconnect(self.display_modification_confirmation)
-            except TypeError: pass
-            try: self.worker.signals.memory_reset_complete.disconnect(self.on_memory_reset_complete)
-            except TypeError: pass
-            try: self.worker.signals.consolidation_complete.disconnect(self.on_consolidation_complete)
-            except TypeError: pass
-            try: self.worker.signals.clarification_needed.disconnect(self.handle_clarification_request)
-            except TypeError: pass
-            try: self.worker.signals.error.disconnect(self.display_error)
-            except TypeError: pass
-            try: self.worker.signals.log_message.disconnect()
-            except TypeError: pass
-            self.worker = None # Clear reference
+            try:
+                self.worker.signals.backend_ready.disconnect(self.on_backend_ready)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.response_ready.disconnect(self.display_response)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.modification_response_ready.disconnect(self.display_modification_confirmation)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.memory_reset_complete.disconnect(self.on_memory_reset_complete)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.consolidation_complete.disconnect(self.on_consolidation_complete)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.clarification_needed.disconnect(self.handle_clarification_request)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.error.disconnect(self.display_error)
+            except TypeError:
+                pass
+            try:
+                self.worker.signals.log_message.disconnect()
+            except TypeError:
+                pass
+            self.worker = None  # Clear reference
 
         # Update personality state
         self.current_personality = name
         self.setWindowTitle(f"Persistent Memory Chat [{name}]")
-        self._rebuild_personality_menu() # Update menu check marks
+        self._rebuild_personality_menu()  # Update menu check marks
 
         # Start new worker (which will signal back when ready/failed)
         self.start_worker_for_personality(name)
-
 
     def create_new_personality(self):
         # (Implementation remains the same as previous version)
@@ -1276,15 +1456,20 @@ class ChatWindow(QMainWindow):
             sanitized_name = re.sub(r'[^\w\-]+', '_', name).strip('_.- ');
             if not sanitized_name: QMessageBox.warning(self, "Invalid Name", "Invalid name after sanitation."); return
             try:
-                with open(self.config_path, 'r') as f: config = yaml.safe_load(f)
-                base_path = config.get('base_memory_path', 'memory_sets'); new_path = os.path.join(base_path, sanitized_name)
-                if os.path.exists(new_path): QMessageBox.warning(self, "Exists", f"Personality '{sanitized_name}' already exists."); return
-                os.makedirs(new_path, exist_ok=True); gui_logger.info(f"Created dir: {new_path}")
+                with open(self.config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                base_path = config.get('base_memory_path', 'memory_sets');
+                new_path = os.path.join(base_path, sanitized_name)
+                if os.path.exists(new_path): QMessageBox.warning(self, "Exists",
+                                                                 f"Personality '{sanitized_name}' already exists."); return
+                os.makedirs(new_path, exist_ok=True);
+                gui_logger.info(f"Created dir: {new_path}")
                 self._rebuild_personality_menu()
                 for action in self.personality_menu.actions():
                     if action.text() == sanitized_name: action.trigger(); break
-            except Exception as e: gui_logger.error(f"Error creating personality '{sanitized_name}': {e}", exc_info=True); QMessageBox.critical(self, "Error", f"Could not create: {e}")
-
+            except Exception as e:
+                gui_logger.error(f"Error creating personality '{sanitized_name}': {e}",
+                                 exc_info=True); QMessageBox.critical(self, "Error", f"Could not create: {e}")
 
     def start_worker_for_personality(self, name):
         """Starts a new worker thread for the given personality name."""
@@ -1301,39 +1486,40 @@ class ChatWindow(QMainWindow):
         self.worker.signals.memory_reset_complete.connect(self.on_memory_reset_complete)
         self.worker.signals.consolidation_complete.connect(self.on_consolidation_complete)
         self.worker.signals.clarification_needed.connect(self.handle_clarification_request)
-        self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request) # NEW Connection
+        self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request)  # NEW Connection
         self.worker.signals.error.connect(self.display_error)
         self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
         self.worker.finished.connect(self.on_worker_finished)
 
-        self.worker.start() # Start the thread execution (calls run())
+        self.worker.start()  # Start the thread execution (calls run())
         # DO NOT enable input here - wait for backend_ready signal
 
-
-    @pyqtSlot(bool, str) # Slot for backend_ready signal
+    @pyqtSlot(bool, str)  # Slot for backend_ready signal
     def on_backend_ready(self, success: bool, personality_name: str):
         """Handles the signal indicating backend initialization status."""
-        gui_logger.info(f"Received backend_ready signal: Success={success}, Personality='{personality_name}' (Current: '{self.current_personality}')")
+        gui_logger.info(
+            f"Received backend_ready signal: Success={success}, Personality='{personality_name}' (Current: '{self.current_personality}')")
 
         # Only update UI if the signal is for the currently selected personality
         if personality_name == self.current_personality:
             if success:
                 gui_logger.info(f"Backend ready for '{personality_name}'. Enabling input.")
-                self.update_status_light("ready") # Green light
-                self.set_input_enabled(True) # Enable input fields and buttons
-                self.is_processing = False # No longer processing the load
+                self.update_status_light("ready")  # Green light
+                self.set_input_enabled(True)  # Enable input fields and buttons
+                self.is_processing = False  # No longer processing the load
                 self.statusBar().showMessage(f"'{personality_name}' loaded. Ready.", 5000)
             else:
                 gui_logger.error(f"Backend failed to initialize for '{personality_name}'.")
-                self.update_status_light("not_ready") # Red light
-                self.set_input_enabled(False) # Keep input disabled
-                self.is_processing = False # Loading failed
-                self.statusBar().showMessage(f"Error loading '{personality_name}'. Select another personality.", 0) # Persistent message
+                self.update_status_light("not_ready")  # Red light
+                self.set_input_enabled(False)  # Keep input disabled
+                self.is_processing = False  # Loading failed
+                self.statusBar().showMessage(f"Error loading '{personality_name}'. Select another personality.",
+                                             0)  # Persistent message
                 # Optionally display a more prominent error message
                 # self.display_error(f"Failed to load backend for {personality_name}. Check logs.")
         else:
-             gui_logger.warning(f"Received backend_ready signal for '{personality_name}', but current personality is '{self.current_personality}'. Ignoring.")
-
+            gui_logger.warning(
+                f"Received backend_ready signal for '{personality_name}', but current personality is '{self.current_personality}'. Ignoring.")
 
     @pyqtSlot()
     def on_worker_finished(self):
@@ -1346,34 +1532,35 @@ class ChatWindow(QMainWindow):
         # This logic might need refinement depending on desired behavior on worker crash.
         # If no worker is running for the current personality, set to not ready.
         if not self.worker or not self.worker.isRunning():
-             # Check if we are *expecting* it to be stopped (e.g., during switch) might be complex.
-             # Safest is perhaps to check if a personality is selected.
-             if self.current_personality:
-                  gui_logger.info(f"Worker stopped unexpectedly for {self.current_personality}. Setting status to not ready.")
-                  # self.update_status_light("not_ready")
-                  # self.set_input_enabled(False)
-                  # self.statusBar().showMessage(f"Worker for '{self.current_personality}' stopped.", 0)
-
+            # Check if we are *expecting* it to be stopped (e.g., during switch) might be complex.
+            # Safest is perhaps to check if a personality is selected.
+            if self.current_personality:
+                gui_logger.info(
+                    f"Worker stopped unexpectedly for {self.current_personality}. Setting status to not ready.")
+                # self.update_status_light("not_ready")
+                # self.set_input_enabled(False)
+                # self.statusBar().showMessage(f"Worker for '{self.current_personality}' stopped.", 0)
 
     def clear_chat_display(self):
         # (Implementation remains the same)
         while self.chat_layout.count() > 0:
-             item = self.chat_layout.takeAt(self.chat_layout.count() - 1);
-             if item is None: continue
-             widget = item.widget(); layout = item.layout()
-             if widget is not None: widget.deleteLater()
-             elif layout is not None:
-                  while layout.count() > 0:
-                       child_item = layout.takeAt(0);
-                       if child_item and child_item.widget(): child_item.widget().deleteLater()
-             elif isinstance(item, QSpacerItem): pass
+            item = self.chat_layout.takeAt(self.chat_layout.count() - 1);
+            if item is None: continue
+            widget = item.widget();
+            layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif layout is not None:
+                while layout.count() > 0:
+                    child_item = layout.takeAt(0);
+                    if child_item and child_item.widget(): child_item.widget().deleteLater()
+            elif isinstance(item, QSpacerItem):
+                pass
         self.chat_layout.addStretch()
-
 
     def show_startup_error(self, message):
         # (Implementation remains the same)
         QMessageBox.critical(None, "Startup Error", message)
-
 
     def send_message(self):
         """Sends user input and potentially attachment payload to worker."""
@@ -1451,18 +1638,31 @@ class ChatWindow(QMainWindow):
     def confirm_reset_memory(self):
         # (Implementation remains the same)
         if self.is_processing: self.statusBar().showMessage("Cannot reset while processing.", 3000); return
-        if not self.current_personality: QMessageBox.warning(self, "No Personality", "Please select a personality first."); return
-        reply = QMessageBox.warning(self, 'Confirm Reset', f"Reset ALL memory for '{self.current_personality}'?\nCannot be undone.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
-        if reply == QMessageBox.StandardButton.Yes: gui_logger.info(f"User confirmed memory reset for {self.current_personality}."); self.statusBar().showMessage("Resetting memory..."); self.set_input_enabled(False); self.is_processing = True; self.worker.request_memory_reset()
-        else: gui_logger.info("User cancelled memory reset."); self.statusBar().showMessage("Memory reset cancelled.", 3000)
-
+        if not self.current_personality: QMessageBox.warning(self, "No Personality",
+                                                             "Please select a personality first."); return
+        reply = QMessageBox.warning(self, 'Confirm Reset',
+                                    f"Reset ALL memory for '{self.current_personality}'?\nCannot be undone.",
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                                    QMessageBox.StandardButton.Cancel)
+        if reply == QMessageBox.StandardButton.Yes:
+            gui_logger.info(
+                f"User confirmed memory reset for {self.current_personality}."); self.statusBar().showMessage(
+                "Resetting memory..."); self.set_input_enabled(
+                False); self.is_processing = True; self.worker.request_memory_reset()
+        else:
+            gui_logger.info("User cancelled memory reset."); self.statusBar().showMessage("Memory reset cancelled.",
+                                                                                          3000)
 
     def request_consolidation(self):
         # (Implementation remains the same)
         if self.is_processing: self.statusBar().showMessage("Cannot consolidate while processing.", 3000); return
-        if not self.current_personality: QMessageBox.warning(self, "No Personality", "Please select a personality first."); return
-        gui_logger.info(f"User requested manual consolidation for {self.current_personality}."); self.statusBar().showMessage("Requesting consolidation..."); self.set_input_enabled(False); self.is_processing = True; self.worker.request_consolidation()
-
+        if not self.current_personality: QMessageBox.warning(self, "No Personality",
+                                                             "Please select a personality first."); return
+        gui_logger.info(f"User requested manual consolidation for {self.current_personality}.");
+        self.statusBar().showMessage("Requesting consolidation...");
+        self.set_input_enabled(False);
+        self.is_processing = True;
+        self.worker.request_consolidation()
 
     @pyqtSlot(str)
     def on_consolidation_complete(self, status_message):
@@ -1470,7 +1670,6 @@ class ChatWindow(QMainWindow):
         gui_logger.info(f"Consolidation complete signal received: {status_message}")
         self.display_message("System", status_message, object_name_suffix="ConfirmationMessage")
         self._finalize_display(status_msg="Consolidation Finished.", status_duration=5000)
-
 
     @pyqtSlot()
     def on_memory_reset_complete(self):
@@ -1480,12 +1679,11 @@ class ChatWindow(QMainWindow):
         self.display_message("System", "Memory has been reset.", object_name_suffix="ConfirmationMessage")
         self._finalize_display(status_msg="Memory Reset Complete.", status_duration=5000)
 
-
     @pyqtSlot(str, dict)
     def handle_confirmation_request(self, action_type: str, details: dict):
         """Handles the signal that user confirmation is needed for an action."""
         gui_logger.info(f"Confirmation needed: Type={action_type}, Details={details}")
-        self.pending_confirmation = {'action': action_type, 'args': details} # Store details
+        self.pending_confirmation = {'action': action_type, 'args': details}  # Store details
 
         confirm_msg = "Confirmation required."
         title = "Confirm Action"
@@ -1496,7 +1694,7 @@ class ChatWindow(QMainWindow):
 
         reply = QMessageBox.question(self, title, confirm_msg,
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                     QMessageBox.StandardButton.No) # Default to No
+                                     QMessageBox.StandardButton.No)  # Default to No
 
         if reply == QMessageBox.StandardButton.Yes:
             gui_logger.info("User confirmed action.")
@@ -1504,17 +1702,17 @@ class ChatWindow(QMainWindow):
                 # Queue the confirmed action task
                 # We need the original action type ('create_file') and args
                 confirmed_action_data = {
-                    'action': 'create_file', # The action to execute
+                    'action': 'create_file',  # The action to execute
                     'args': self.pending_confirmation['args']
                 }
                 self.worker.input_queue.append(('execute_action_confirmed', confirmed_action_data))
                 self.statusBar().showMessage("Executing confirmed action...")
-                self.is_processing = True # Mark as processing again
+                self.is_processing = True  # Mark as processing again
                 self.set_input_enabled(False)
             else:
                 gui_logger.error("Cannot execute confirmed action: Worker or pending data missing.")
                 self.display_error("Could not execute confirmed action.")
-                self._finalize_display() # Reset UI state
+                self._finalize_display()  # Reset UI state
         else:
             gui_logger.info("User cancelled action.")
             self.display_message("System", f"Action cancelled by user.", object_name_suffix="ConfirmationMessage")
@@ -1523,12 +1721,11 @@ class ChatWindow(QMainWindow):
         # Clear pending state regardless of choice
         self.pending_confirmation = None
 
-
     @pyqtSlot(str, list)
     def handle_clarification_request(self, original_action, missing_args):
         """Handles the signal that the backend needs more info for an action."""
         gui_logger.info(f"Clarification needed for action '{original_action}', missing: {missing_args}")
-        self.awaiting_clarification = True # Set the flag
+        self.awaiting_clarification = True  # Set the flag
 
         missing_str = ", ".join([f"'{arg}'" for arg in missing_args])
         clarification_msg = (
@@ -1540,14 +1737,13 @@ class ChatWindow(QMainWindow):
 
         # Update UI state persistently
         status_msg = f"Waiting for: {missing_str}"
-        self.statusBar().showMessage(status_msg, 0) # Persistent message
+        self.statusBar().showMessage(status_msg, 0)  # Persistent message
         if hasattr(self, 'input_field'):
             self.input_field.setPlaceholderText(f"Enter the missing info for '{original_action}'...")
         # Ensure input is enabled (it should be if we got here, but double-check)
         self.set_input_enabled(True)
-        self.update_status_light("loading") # Use yellow light to indicate waiting state
-        self.is_processing = False # No longer processing the initial request
-
+        self.update_status_light("loading")  # Use yellow light to indicate waiting state
+        self.is_processing = False  # No longer processing the initial request
 
     @pyqtSlot(str, str, list)
     def display_response(self, user_input, ai_response, memories):
@@ -1555,21 +1751,22 @@ class ChatWindow(QMainWindow):
         gui_logger.debug(f"GUI received AI response: {ai_response[:50]}...")
         self.display_message("AI", ai_response)
         if memories:
-             gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
-             try:
-                  memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
-                  # --- Connect the new signal ---
-                  memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
-                  # --- Add widget to layout ---
-                  mem_container_layout = QHBoxLayout()
-                  mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
-                  mem_container_layout.addWidget(memory_widget)
-                  self._add_widget_to_chat_layout(mem_container_layout)
-             except Exception as e:
-                  gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
-                  self.display_error(f"Failed display memories: {e}")
+            gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
+            try:
+                memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
+                # --- Connect the new signal ---
+                memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
+                # --- Add widget to layout ---
+                mem_container_layout = QHBoxLayout()
+                mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
+                mem_container_layout.addWidget(memory_widget)
+                self._add_widget_to_chat_layout(mem_container_layout)
+            except Exception as e:
+                gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
+                self.display_error(f"Failed display memories: {e}")
         else:
-             gui_logger.debug("No memories received for this interaction.")
+            gui_logger.debug("No memories received for this interaction.")
+
     # --- Removed duplicate @pyqtSlot decorator ---
     @pyqtSlot(str, str, list, str)
     def display_response(self, user_input, ai_response, memories, ai_node_uuid):
@@ -1578,80 +1775,83 @@ class ChatWindow(QMainWindow):
         # --- Pass ai_node_uuid to display_message ---
         self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
         if memories:
-             gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
-             try:
-                  memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
-                  # --- Connect the new signal ---
-                  memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
-                  # --- Add widget to layout ---
-                  mem_container_layout = QHBoxLayout()
-                  mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
-                  mem_container_layout.addWidget(memory_widget)
-                  self._add_widget_to_chat_layout(mem_container_layout)
-             except Exception as e:
-                  gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
-                  self.display_error(f"Failed display memories: {e}")
+            gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
+            try:
+                memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
+                # --- Connect the new signal ---
+                memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
+                # --- Add widget to layout ---
+                mem_container_layout = QHBoxLayout()
+                mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
+                mem_container_layout.addWidget(memory_widget)
+                self._add_widget_to_chat_layout(mem_container_layout)
+            except Exception as e:
+                gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
+                self.display_error(f"Failed display memories: {e}")
         else:
-             gui_logger.debug("No memories received for this interaction.")
+            gui_logger.debug("No memories received for this interaction.")
         self._finalize_display()
-
 
     @pyqtSlot(str, str, str, str)
     def display_modification_confirmation(self, user_input, confirmation_message, action_type, target_info):
         """Displays confirmation/result messages for actions, memory mods, etc., using a styled task bubble."""
-        gui_logger.debug(f"GUI received confirmation/result. Action Type: {action_type}, Target: {target_info}, Msg: {confirmation_message}")
+        gui_logger.debug(
+            f"GUI received confirmation/result. Action Type: {action_type}, Target: {target_info}, Msg: {confirmation_message}")
 
         # --- Determine Action Category and Status ---
-        parts = action_type.split('_'); type_prefix = parts[0]; success_suffix = parts[-1] if len(parts) > 1 else "unknown"
+        parts = action_type.split('_');
+        type_prefix = parts[0];
+        success_suffix = parts[-1] if len(parts) > 1 else "unknown"
         is_success = success_suffix == "success"
         is_fail = success_suffix in ["fail", "exception"]
-        is_file_action = type_prefix in ["create", "append", "read", "delete", "list"] # Include list
-        is_calendar_action = type_prefix in ["add", "read"] and "calendar" in action_type # Be more specific
+        is_file_action = type_prefix in ["create", "append", "read", "delete", "list"]  # Include list
+        is_calendar_action = type_prefix in ["add", "read"] and "calendar" in action_type  # Be more specific
         is_memory_action = type_prefix in ["delete", "edit", "forget"]
 
         # --- Create Task Bubble Frame ---
         task_frame = QFrame()
         task_frame.setObjectName("TaskBubbleFrame")
         task_layout = QVBoxLayout(task_frame)
-        task_layout.setContentsMargins(10, 8, 10, 8) # Slightly different margins
+        task_layout.setContentsMargins(10, 8, 10, 8)  # Slightly different margins
         task_layout.setSpacing(4)
 
         # --- Add Main Message Label ---
         # Use confirmation_message directly, but maybe shorten very long file reads?
         display_message = confirmation_message
         if action_type == "read_file_success" and len(confirmation_message) > 300:
-             display_message = confirmation_message[:300] + "\n... (file content truncated)"
+            display_message = confirmation_message[:300] + "\n... (file content truncated)"
 
         message_label = QLabel(display_message)
         message_label.setWordWrap(True)
-        message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse) # Allow selecting text
+        message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)  # Allow selecting text
         message_label.setObjectName("TaskLabel")
         task_layout.addWidget(message_label)
 
         # --- Add Clickable File Link (if applicable and successful) ---
         filename_to_link = None
-        if is_success and is_file_action and action_type != "list_files_success": # Don't link for list
+        if is_success and is_file_action and action_type != "list_files_success":  # Don't link for list
             # Extract filename from target_info or message if possible
             # target_info might be args dict string or just filename
-            filename_match = re.search(r"'(.*?)'", target_info) # Try to find quoted filename in target_info
+            filename_match = re.search(r"'(.*?)'", target_info)  # Try to find quoted filename in target_info
             if filename_match:
                 filename_to_link = filename_match.group(1)
             elif action_type in ["create_file_success", "append_file_success", "read_file_success"]:
-                 # Try extracting from the success message itself (less reliable)
-                 msg_match = re.search(r"'(.*?)'", confirmation_message)
-                 if msg_match: filename_to_link = msg_match.group(1)
+                # Try extracting from the success message itself (less reliable)
+                msg_match = re.search(r"'(.*?)'", confirmation_message)
+                if msg_match: filename_to_link = msg_match.group(1)
 
         if filename_to_link:
             # Construct the full path using file_manager helper
             # Use file_manager helper directly, avoid relying on self.config if worker isn't ready
-            workspace_path = file_manager.get_workspace_path(self.worker.client.config if self.worker and self.worker.client else {}, self.current_personality)
+            workspace_path = file_manager.get_workspace_path(
+                self.worker.client.config if self.worker and self.worker.client else {}, self.current_personality)
             if workspace_path:
                 full_file_path = os.path.join(workspace_path, filename_to_link)
                 if os.path.exists(full_file_path):
                     # Create file URL
                     file_url = QUrl.fromLocalFile(full_file_path).toString()
                     link_label = QLabel(f"<a href='{file_url}'>Open '{filename_to_link}'</a>")
-                    link_label.setOpenExternalLinks(False) # We handle the click
+                    link_label.setOpenExternalLinks(False)  # We handle the click
                     link_label.linkActivated.connect(self.open_local_link)
                     link_label.setObjectName("TaskFilenameLink")
                     link_label.setToolTip(f"Click to open file: {full_file_path}")
@@ -1661,24 +1861,27 @@ class ChatWindow(QMainWindow):
             else:
                 gui_logger.warning("Could not get workspace path to create file link.")
 
-
         # --- Add Task Bubble to Chat Layout ---
         # Use a simple row layout to allow alignment (optional, could add directly)
-        row_layout = QHBoxLayout(); row_layout.setSpacing(0); row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout = QHBoxLayout();
+        row_layout.setSpacing(0);
+        row_layout.setContentsMargins(0, 0, 0, 0)
         # Add some spacing before the task frame
-        row_layout.addSpacerItem(QSpacerItem(self.bubble_edge_margin + 10, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum))
+        row_layout.addSpacerItem(
+            QSpacerItem(self.bubble_edge_margin + 10, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum))
         row_layout.addWidget(task_frame)
-        row_layout.addStretch(1) # Push to left
+        row_layout.addStretch(1)  # Push to left
         self._add_widget_to_chat_layout(row_layout)
 
         # --- Finalize UI State ---
         # Determine status message based on success/failure
         final_status = "Action Completed." if is_success else "Action Failed."
-        if action_type == "none": final_status = "No action taken."
-        elif "clarify" in action_type: final_status = "Waiting for clarification..." # Should be handled by finalize_display logic
+        if action_type == "none":
+            final_status = "No action taken."
+        elif "clarify" in action_type:
+            final_status = "Waiting for clarification..."  # Should be handled by finalize_display logic
 
         self._finalize_display(status_msg=final_status, status_duration=4000)
-
 
     @pyqtSlot(str)
     def open_local_link(self, link_str: str):
@@ -1692,7 +1895,6 @@ class ChatWindow(QMainWindow):
                 QMessageBox.warning(self, "Open Failed", f"Could not open the file:\n{url.toLocalFile()}")
         else:
             gui_logger.warning(f"Link is not a local file: {link_str}")
-
 
     @pyqtSlot(str, str)
     def handle_saliency_feedback(self, uuid: str, direction: str):
@@ -1720,14 +1922,12 @@ class ChatWindow(QMainWindow):
             gui_logger.error("Cannot handle feedback click: Worker not running.")
             self.display_error("Cannot register feedback: Backend worker not active.")
 
-
     @pyqtSlot(str)
     def display_error(self, error_message):
         # (Implementation remains the same - calls display_message, re-enables via _finalize_display)
         gui_logger.error(f"GUI received error: {error_message}")
         self.display_message("Error", f"System Error: {error_message}")
         self._finalize_display(status_msg="Error occurred.", status_duration=5000)
-
 
     def _add_widget_to_chat_layout(self, widget_or_layout):
         # (Implementation remains the same)
@@ -1736,13 +1936,17 @@ class ChatWindow(QMainWindow):
             last_item = self.chat_layout.itemAt(self.chat_layout.count() - 1)
             if isinstance(last_item, QSpacerItem): stretch_item = self.chat_layout.takeAt(self.chat_layout.count() - 1)
         insert_index = self.chat_layout.count()
-        if isinstance(widget_or_layout, QWidget): self.chat_layout.insertWidget(insert_index, widget_or_layout)
-        elif isinstance(widget_or_layout, (QHBoxLayout, QVBoxLayout)): self.chat_layout.insertLayout(insert_index, widget_or_layout)
-        else: gui_logger.warning(f"Attempted to add unsupported item type to chat layout: {type(widget_or_layout)}")
-        if stretch_item: self.chat_layout.addItem(stretch_item)
-        else: self.chat_layout.addStretch()
+        if isinstance(widget_or_layout, QWidget):
+            self.chat_layout.insertWidget(insert_index, widget_or_layout)
+        elif isinstance(widget_or_layout, (QHBoxLayout, QVBoxLayout)):
+            self.chat_layout.insertLayout(insert_index, widget_or_layout)
+        else:
+            gui_logger.warning(f"Attempted to add unsupported item type to chat layout: {type(widget_or_layout)}")
+        if stretch_item:
+            self.chat_layout.addItem(stretch_item)
+        else:
+            self.chat_layout.addStretch()
         # QTimer.singleShot(50, self._scroll_to_bottom) # Removed: Scrolling handled by rangeChanged signal
-
 
     def _finalize_display(self, status_msg="Ready.", status_duration=3000):
         """ Common actions after displaying content or finishing a task. """
@@ -1754,14 +1958,14 @@ class ChatWindow(QMainWindow):
         final_status_msg = status_msg
         final_status_duration = status_duration
         final_placeholder = "Type message, paste image, or /command..."
-        final_light_status = "not_ready" # Default to red if no personality
+        final_light_status = "not_ready"  # Default to red if no personality
 
         if self.current_personality:
-            if self.is_processing: # Should generally not happen if called correctly, but handle defensively
+            if self.is_processing:  # Should generally not happen if called correctly, but handle defensively
                 final_status_msg = "Processing..."
-                final_status_duration = 0 # Persistent
+                final_status_duration = 0  # Persistent
                 final_placeholder = "Processing..."
-                final_light_status = "processing" # Orange while processing
+                final_light_status = "processing"  # Orange while processing
                 should_be_enabled = False
             elif self.awaiting_clarification:
                 # Find the missing args from the worker's pending state (if possible)
@@ -1772,37 +1976,38 @@ class ChatWindow(QMainWindow):
                     if missing: missing_args_str = ", ".join([f"'{arg}'" for arg in missing])
 
                 final_status_msg = f"Waiting for: {missing_args_str}"
-                final_status_duration = 0 # Persistent
+                final_status_duration = 0  # Persistent
                 final_placeholder = f"Enter the missing info..."
-                final_light_status = "loading" # Yellow while waiting for clarification
-                should_be_enabled = True # Input should be enabled to provide clarification
+                final_light_status = "loading"  # Yellow while waiting for clarification
+                should_be_enabled = True  # Input should be enabled to provide clarification
             else:
                 # Normal ready state
-                final_status_msg = status_msg # Use the message passed in (e.g., "Ready.", "Consolidation complete.")
+                final_status_msg = status_msg  # Use the message passed in (e.g., "Ready.", "Consolidation complete.")
                 final_status_duration = status_duration
                 final_placeholder = "Type message, paste image, or /command..."
-                final_light_status = "ready" # Green light
+                final_light_status = "ready"  # Green light
                 should_be_enabled = True
         else:
             # No personality loaded state
             final_status_msg = "Please select a personality from the menu."
-            final_status_duration = 0 # Persistent
+            final_status_duration = 0  # Persistent
             final_placeholder = "Select a personality from the menu to start..."
-            final_light_status = "not_ready" # Red light
+            final_light_status = "not_ready"  # Red light
             should_be_enabled = False
 
         # --- Apply Final UI State ---
         self.statusBar().showMessage(final_status_msg, final_status_duration)
-        self.set_input_enabled(should_be_enabled) # Handles placeholder text too
-        if hasattr(self, 'input_field'): # Update placeholder specifically if needed
-             self.input_field.setPlaceholderText(final_placeholder)
+        self.set_input_enabled(should_be_enabled)  # Handles placeholder text too
+        if hasattr(self, 'input_field'):  # Update placeholder specifically if needed
+            self.input_field.setPlaceholderText(final_placeholder)
         self.update_status_light(final_light_status)
-
 
     def _scroll_to_bottom(self):
         # (Implementation remains the same)
-        try: scrollbar = self.scroll_area.verticalScrollBar(); scrollbar.setValue(scrollbar.maximum())
-        except Exception as e: gui_logger.debug(f"Minor error during scroll to bottom: {e}")
+        try:
+            scrollbar = self.scroll_area.verticalScrollBar(); scrollbar.setValue(scrollbar.maximum())
+        except Exception as e:
+            gui_logger.debug(f"Minor error during scroll to bottom: {e}")
 
     @pyqtSlot(int, int)
     def _scroll_to_bottom_on_range_change(self, min_val, max_val):
@@ -1815,10 +2020,9 @@ class ChatWindow(QMainWindow):
         # Define a threshold (e.g., 95% scrolled down)
         threshold = 0.95
         if current_value >= threshold * maximum_value or current_value == maximum_value:
-             # Only scroll if already near or at the bottom
-             self._scroll_to_bottom()
+            # Only scroll if already near or at the bottom
+            self._scroll_to_bottom()
         # else: User might be scrolling up, don't force scroll down
-
 
     def handle_attach_file(self):
         """Opens a file dialog allowing any file type and calls the path handler."""
@@ -1830,12 +2034,12 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.info("File selection cancelled via dialog.")
 
-
     def handle_attach_file_path(self, file_path: str):
         """Handles attaching a file via path, differentiating images and other files."""
         if not file_path or not isinstance(file_path, str): gui_logger.warning("Invalid file path."); return
         file_name = os.path.basename(file_path)
-        if not os.path.isfile(file_path): gui_logger.error(f"Path not valid file: {file_path}"); QMessageBox.warning(self, "Invalid File Path", "Path not valid."); return
+        if not os.path.isfile(file_path): gui_logger.error(f"Path not valid file: {file_path}"); QMessageBox.warning(
+            self, "Invalid File Path", "Path not valid."); return
 
         # --- Check if it's an image ---
         file_extension = os.path.splitext(file_name)[1].lower()
@@ -1882,41 +2086,42 @@ class ChatWindow(QMainWindow):
             self.handle_attach_payload(payload)
 
 
-   def handle_attach_payload(self, payload: dict):
-       """Stores attachment payload and updates UI."""
-       if not payload or "type" not in payload or "filename" not in payload:
-           gui_logger.warning("Invalid payload received by handle_attach_payload.")
-           return
+    def handle_attach_payload(self, payload: dict):
+        """Stores attachment payload and updates UI."""
+        if not payload or "type" not in payload or "filename" not in payload:
+            gui_logger.warning("Invalid payload received by handle_attach_payload.")
+            return
 
-       try:
-           file_name = payload.get("filename", "attached_file")
-           file_type = payload.get("type") # 'image' or 'file'
+        try:
+            file_name = payload.get("filename", "attached_file")
+            file_type = payload.get("type")  # 'image' or 'file'
 
-           # --- Store payload ---
-           self.clear_attachment(clear_status=False)  # Clear previous first
-           self.attachment_payload = payload
-           gui_logger.info(f"Attachment payload stored: Type={file_type}, Name={file_name}")
+            # --- Store payload ---
+            self.clear_attachment(clear_status=False)  # Clear previous first
+            self.attachment_payload = payload
+            gui_logger.info(f"Attachment payload stored: Type={file_type}, Name={file_name}")
 
-           # --- Update UI ---
-           current_text = self.input_field.text()
-           # Clean any previous placeholder before adding new one
-           current_text = re.sub(r'(^|\s)\[(Image|File) Attached:\s*.*?\s*\](\s|$)', r'\1\3', current_text).strip()
+            # --- Update UI ---
+            current_text = self.input_field.text()
+            # Clean any previous placeholder before adding new one
+            current_text = re.sub(r'(^|\s)\[(Image|File) Attached:\s*.*?\s*\](\s|$)', r'\1\3', current_text).strip()
 
-           # Use appropriate placeholder text
-           placeholder_prefix = "Image" if file_type == "image" else "File"
-           placeholder_text = f" [{placeholder_prefix} Attached: {file_name}] "
+            # Use appropriate placeholder text
+            placeholder_prefix = "Image" if file_type == "image" else "File"
+            placeholder_text = f" [{placeholder_prefix} Attached: {file_name}] "
 
-           separator = " " if current_text and not current_text.endswith(" ") else ""
-           self.input_field.setText(current_text + separator + placeholder_text)
-           self.input_field.setFocus()
-           self.statusBar().showMessage(f"Ready to send with {placeholder_prefix.lower()}: {file_name}", 5000)
+            separator = " " if current_text and not current_text.endswith(" ") else ""
+            self.input_field.setText(current_text + separator + placeholder_text)
+            self.input_field.setFocus()
+            self.statusBar().showMessage(f"Ready to send with {placeholder_prefix.lower()}: {file_name}", 5000)
 
-       except Exception as e:
-           gui_logger.error(f"Error handling attachment payload for {payload.get('filename', '?')}: {e}", exc_info=True)
-           # Just log and clear, don't call display_error which might trigger finalize_display prematurely
-           self.clear_attachment()
+        except Exception as e:
+            gui_logger.error(f"Error handling attachment payload for {payload.get('filename', '?')}: {e}", exc_info=True)
+            # Just log and clear, don't call display_error which might trigger finalize_display prematurely
+            self.clear_attachment()
 
-    # --- Removed duplicate handle_attach_payload method ---
+        # --- Removed duplicate handle_attach_payload method ---
+
 
     def clear_attachment(self, clear_status=True):
         """Helper to clear the attachment payload and UI placeholder."""
@@ -1928,63 +2133,76 @@ class ChatWindow(QMainWindow):
             cleared = True
 
         # Still clear placeholder text
-        current_text = self.input_field.text(); cleaned_text = re.sub(r'(^|\s)\[(Image|File) Attached:\s*.*?\s*\](\s|$)', r'\1\3', current_text).strip()
+        current_text = self.input_field.text();
+        cleaned_text = re.sub(r'(^|\s)\[(Image|File) Attached:\s*.*?\s*\](\s|$)', r'\1\3', current_text).strip()
         if cleaned_text != current_text: self.input_field.setText(cleaned_text); cleared = True
         if cleared and clear_status: self.statusBar().showMessage("Attachment cleared.", 3000)
 
 
 
-   # --- Signature updated to accept attachment_info and ai_node_uuid ---
-   def display_message(self, speaker, text, attachment_info: dict | None = None, object_name_suffix="Message", ai_node_uuid: str | None = None):
-       """Adds a message bubble with optional text, image thumbnail or file placeholder, and timestamp."""
+        # --- Signature updated to accept attachment_info and ai_node_uuid ---
 
-       # --- Create Attachment Label (Image or File Placeholder) ---
-       attachment_label = None
-       if attachment_info:
-           file_type = attachment_info.get("type")
-           file_name = attachment_info.get("filename", "attached_file")
 
-           if file_type == "image":
-            # Get base64 string directly from the passed attachment_info
-            image_base64 = attachment_info.get('base64_string')
+    def display_message(self, speaker, text, attachment_info: dict | None = None, object_name_suffix="Message",
+                        ai_node_uuid: str | None = None):
+        """Adds a message bubble with optional text, image thumbnail or file placeholder, and timestamp."""
 
-            if image_base64:
-                try:
-                    # Decode and create pixmap
-                    image_bytes = base64.b64decode(image_base64)
-                    pixmap = QPixmap()
-                    loaded = pixmap.loadFromData(image_bytes)
+        # --- Create Attachment Label (Image or File Placeholder) ---
+        attachment_label = None
+        if attachment_info:
+            file_type = attachment_info.get("type")
+            file_name = attachment_info.get("filename", "attached_file")
 
-                    if loaded and not pixmap.isNull():
-                        # Scale pixmap to thumbnail size (using configured max width)
-                        scaled_pixmap = pixmap.scaledToWidth(
-                            self.thumbnail_max_width,
-                            Qt.TransformationMode.SmoothTransformation
-                        )
-                        attachment_label = QLabel()
-                        attachment_label.setPixmap(scaled_pixmap)
-                        attachment_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center image within label
-                        attachment_label.setStyleSheet("background-color: transparent; border: 1px solid #555; margin-bottom: 4px;")  # Add border/margin
-                    else:
-                        gui_logger.warning("Failed to load QPixmap from base64 data.")
-                        attachment_label = QLabel("[Image Error]")  # Fallback text
+            if file_type == "image":
+                # Get base64 string directly from the passed attachment_info
+                image_base64 = attachment_info.get('base64_string')
+
+                if image_base64:
+                    try:
+                        # Decode and create pixmap
+                        image_bytes = base64.b64decode(image_base64)
+                        pixmap = QPixmap()
+                        loaded = pixmap.loadFromData(image_bytes)
+
+                        if loaded and not pixmap.isNull():
+                            # Scale pixmap to thumbnail size (using configured max width)
+                            scaled_pixmap = pixmap.scaledToWidth(
+                                self.thumbnail_max_width,
+                                Qt.TransformationMode.SmoothTransformation
+                            )
+                            attachment_label = QLabel()
+                            attachment_label.setPixmap(scaled_pixmap)
+                            attachment_label.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center image within label
+                            attachment_label.setStyleSheet(
+                                "background-color: transparent; border: 1px solid #555; margin-bottom: 4px;")  # Add border/margin
+                        else:
+                            gui_logger.warning("Failed to load QPixmap from base64 data.")
+                            attachment_label = QLabel("[Image Error]")  # Fallback text
+                            attachment_label.setStyleSheet("color: #FF8C8C;")
+                    except Exception as e:
+                        gui_logger.error(f"Error processing image base64 for display: {e}", exc_info=True)
+                        attachment_label = QLabel("[Image Load Error]")
                         attachment_label.setStyleSheet("color: #FF8C8C;")
-                except Exception as e:
-                    gui_logger.error(f"Error processing image base64 for display: {e}", exc_info=True)
-                    attachment_label = QLabel("[Image Load Error]")
-                    attachment_label.setStyleSheet("color: #FF8C8C;")
-            else:
-                gui_logger.warning("Image attachment info provided, but base64 data missing for display.")
-                attachment_label = QLabel(f"[Image: {file_name}]")  # Show filename as fallback
-                attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic;")
+                else:
+                    gui_logger.warning("Image attachment info provided, but base64 data missing for display.")
+                    attachment_label = QLabel(f"[Image: {file_name}]")  # Show filename as fallback
+                    attachment_label.setStyleSheet("color: #AAAAAA; font-style: italic;")
 
-            elif file_type == "file":
-                # Display placeholder for generic files
-                attachment_label = QLabel(f"[File Attached: {file_name}]")
-                attachment_label.setStyleSheet(
-                    "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
-                )
+
+        elif file_type == "file":
+
+            # Display placeholder for generic files
+
+            attachment_label = QLabel(f"[File Attached: {file_name}]")
+
+            attachment_label.setStyleSheet(
+
+                "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
+
+            )
+
         else:
+
             gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
 
         # --- Create Main Message Label (if text provided) ---
@@ -2050,77 +2268,87 @@ class ChatWindow(QMainWindow):
             gui_logger.warning(f"Timestamp error: {e}")
             timestamp_label = None
 
-    # --- Create Feedback Buttons (only for AI messages with UUID) ---
-    feedback_layout = None
-    if speaker == "AI" and ai_node_uuid:
-        feedback_layout = QHBoxLayout()
-        feedback_layout.setSpacing(5)
-        feedback_layout.addStretch()  # Push buttons to the right
+        # --- Create Feedback Buttons (only for AI messages with UUID) ---
+        feedback_layout = None
+        if speaker == "AI" and ai_node_uuid:
+            feedback_layout = QHBoxLayout()
+            feedback_layout.setSpacing(5)
+            feedback_layout.addStretch()  # Push buttons to the right
 
-        thumb_up = QLabel("👍")
-        thumb_up.setToolTip("Good response")
-        thumb_up.setCursor(Qt.CursorShape.PointingHandCursor)
-        thumb_up.mousePressEvent = lambda event, u=ai_node_uuid, t="up": self.handle_feedback_click(u, t)
+            thumb_up = QLabel("👍")
+            thumb_up.setToolTip("Good response")
+            thumb_up.setCursor(Qt.CursorShape.PointingHandCursor)
+            thumb_up.mousePressEvent = lambda event, u=ai_node_uuid, t="up": self.handle_feedback_click(u, t)
 
-        thumb_down = QLabel("👎")
-        thumb_down.setToolTip("Bad response")
-        thumb_down.setCursor(Qt.CursorShape.PointingHandCursor)
-        thumb_down.mousePressEvent = lambda event, u=ai_node_uuid, t="down": self.handle_feedback_click(u, t)
+            thumb_down = QLabel("👎")
+            thumb_down.setToolTip("Bad response")
+            thumb_down.setCursor(Qt.CursorShape.PointingHandCursor)
+            thumb_down.mousePressEvent = lambda event, u=ai_node_uuid, t="down": self.handle_feedback_click(u, t)
 
-        feedback_layout.addWidget(thumb_up)
-        feedback_layout.addWidget(thumb_down)
-        # Add timestamp label to the feedback layout as well
-        if timestamp_label:
-            feedback_layout.addWidget(timestamp_label)
-        else:  # Add spacer if no timestamp
-            feedback_layout.addSpacerItem(QSpacerItem(10, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+            feedback_layout.addWidget(thumb_up)
+            feedback_layout.addWidget(thumb_down)
+            # Add timestamp label to the feedback layout as well
+            if timestamp_label:
+                feedback_layout.addWidget(timestamp_label)
+            else:  # Add spacer if no timestamp
+                feedback_layout.addSpacerItem(QSpacerItem(10, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
-    # --- Assemble Bubble Content ---
-    if not attachment_label and not message_label:
-        return  # Don't display anything if both attachment and text are missing/failed
+        # --- Assemble Bubble Content ---
+        if not attachment_label and not message_label:
+            return  # Don't display anything if both attachment and text are missing/failed
 
-    bubble_frame = QFrame() # Corrected indentation
-    bubble_layout = QVBoxLayout(bubble_frame) # Corrected indentation
-    bubble_layout.setContentsMargins(self.bubble_padding_lr, self.bubble_padding_tb, self.bubble_padding_lr, self.bubble_padding_tb) # Corrected indentation
-       bubble_layout.setSpacing(2) # Small spacing between elements
+        bubble_frame = QFrame()  # Corrected indentation
+        bubble_layout = QVBoxLayout(bubble_frame)  # Corrected indentation
+        bubble_layout.setContentsMargins(self.bubble_padding_lr, self.bubble_padding_tb, self.bubble_padding_lr,
+                                         self.bubble_padding_tb)  # Corrected indentation
+        bubble_layout.setSpacing(2)  # Small spacing between elements
 
-       if attachment_label:
-           bubble_layout.addWidget(attachment_label) # Add attachment placeholder/image first
-       if message_label:
-           bubble_layout.addWidget(message_label) # Add text second
+        if attachment_label:
+            bubble_layout.addWidget(attachment_label)  # Add attachment placeholder/image first
+        if message_label:
+            bubble_layout.addWidget(message_label)  # Add text second
 
-       # --- Add Feedback Layout (or just timestamp if no feedback) ---
-       if feedback_layout: # Corrected indentation
-           bubble_layout.addLayout(feedback_layout) # Add feedback buttons + timestamp
-       elif timestamp_label: # Corrected indentation
+        # --- Add Feedback Layout (or just timestamp if no feedback) ---
+        if feedback_layout:  # Corrected indentation
+            bubble_layout.addLayout(feedback_layout)  # Add feedback buttons + timestamp
+        elif timestamp_label:  # Corrected indentation
             # Add timestamp directly if no feedback buttons needed
-            bubble_layout.addWidget(timestamp_label, alignment=Qt.AlignmentFlag.AlignRight) # Corrected indentation
+            bubble_layout.addWidget(timestamp_label, alignment=Qt.AlignmentFlag.AlignRight)  # Corrected indentation
 
-       # --- Determine Frame Object Name ---
-       frame_name = "AIBubbleFrame"; # Corrected indentation
-       if speaker == "User": frame_name = "UserBubbleFrame" # Corrected indentation
-       elif "Confirmation" in object_name_suffix: frame_name = "AIConfirmationBubbleFrame" # Corrected indentation
+        # --- Determine Frame Object Name ---
+        frame_name = "AIBubbleFrame";  # Corrected indentation
+        if speaker == "User":
+            frame_name = "UserBubbleFrame"  # Corrected indentation
+        elif "Confirmation" in object_name_suffix:
+            frame_name = "AIConfirmationBubbleFrame"  # Corrected indentation
         elif speaker == "AI": frame_name = "AIBubbleFrame"
         elif speaker == "System": frame_name = "AIBubbleFrame"
         elif speaker == "Error": frame_name = "ErrorBubbleFrame"
-       bubble_frame.setObjectName(frame_name) # Corrected indentation
+        bubble_frame.setObjectName(frame_name)  # Corrected indentation
 
-       # --- Row Layout (remains the same) ---
-       row_layout = QHBoxLayout(); row_layout.setSpacing(0); row_layout.setContentsMargins(0, 0, 0, 0) # Corrected indentation
-       if speaker == "User": row_layout.addStretch(1); row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignRight) # Corrected indentation
-       else: row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignLeft); row_layout.addStretch(1) # Corrected indentation
+        # --- Row Layout (remains the same) ---
+        row_layout = QHBoxLayout();
+        row_layout.setSpacing(0);
+        row_layout.setContentsMargins(0, 0, 0, 0)  # Corrected indentation
+        if speaker == "User":
+            row_layout.addStretch(1); row_layout.addWidget(bubble_frame, stretch=1,
+                                                           alignment=Qt.AlignmentFlag.AlignRight)  # Corrected indentation
+        else:
+            row_layout.addWidget(bubble_frame, stretch=1, alignment=Qt.AlignmentFlag.AlignLeft); row_layout.addStretch(
+                1)  # Corrected indentation
 
-       self._add_widget_to_chat_layout(row_layout) # Corrected indentation
+        self._add_widget_to_chat_layout(row_layout)  # Corrected indentation
 
 
-
-    def closeEvent(self, event):
-        # (Implementation remains the same)
-        gui_logger.info("Close event triggered. Stopping worker thread...")
-        if self.worker and self.worker.isRunning(): self.worker.stop();
-        if not self.worker or not self.worker.wait(5000): gui_logger.warning("Worker thread did not stop gracefully on close.")
-        else: gui_logger.info("Worker thread stopped on close.")
-        event.accept()
+        def closeEvent(self, event):
+            # (Implementation remains the same)
+            gui_logger.info("Close event triggered. Stopping worker thread...")
+            if self.worker and self.worker.isRunning(): self.worker.stop();
+            if not self.worker or not self.worker.wait(5000):
+                gui_logger.warning("Worker thread did not stop gracefully on close.")
+            else:
+                gui_logger.info("Worker thread stopped on close.")
+            event.accept()
 
 
 # --- Main Execution ---
@@ -2128,14 +2356,17 @@ if __name__ == "__main__":
     # (Keep DPI setting removed from previous fix)
     try:
         app = QApplication(sys.argv)
-        font = QFont(); font.setPointSize(10); app.setFont(font)
+        font = QFont();
+        font.setPointSize(10);
+        app.setFont(font)
         window = ChatWindow()
         window.show()
         sys.exit(app.exec())
     except Exception as e:
-         gui_logger.critical(f"Failed to start application: {e}", exc_info=True)
-         try:
-             if 'app' not in locals(): app = QApplication(sys.argv)
-             QMessageBox.critical(None, "Application Startup Error", f"Failed to start application:\n{e}")
-         except Exception as msg_e: print(f"CRITICAL STARTUP ERROR: {e}\nMsgBox Error: {msg_e}", file=sys.stderr)
-         sys.exit(1)
+        gui_logger.critical(f"Failed to start application: {e}", exc_info=True)
+        try:
+            if 'app' not in locals(): app = QApplication(sys.argv)
+            QMessageBox.critical(None, "Application Startup Error", f"Failed to start application:\n{e}")
+        except Exception as msg_e:
+            print(f"CRITICAL STARTUP ERROR: {e}\nMsgBox Error: {msg_e}", file=sys.stderr)
+        sys.exit(1)
