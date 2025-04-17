@@ -3281,6 +3281,12 @@ class GraphMemoryClient:
             # Use the initialized ai_node_uuid which might be None if error occurred before assignment
             return parsed_response, memory_chain_data, ai_node_uuid, False
 
+        # Failsafe return in case of unexpected exit before try/except returns
+        logger.error(f"PROCESS_INTERACTION reached failsafe return for interaction {interaction_id[:8]}. This indicates an unexpected error path.")
+        # Ensure variables used in the return tuple have default values assigned earlier
+        # Default values assigned at the start: parsed_response="Error: Processing failed.", memory_chain_data=[], ai_node_uuid=None
+        return parsed_response, memory_chain_data, ai_node_uuid, False
+
 
     # --- Consolidation ---
     # (Keep _select_nodes_for_consolidation and run_consolidation from previous version)
