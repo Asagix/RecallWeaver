@@ -2511,10 +2511,22 @@ class GraphMemoryClient:
             logger.error(f"Tokenization error for final prompt: {e}") # Corrected logger name
             final_tok_count = -1 # Indicate error
 
+        # --- Write final prompt to debug log file ---
+        try:
+            log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            last_prompt_file = os.path.join(log_dir, 'last_prompt.txt')
+            with open(last_prompt_file, 'w', encoding='utf-8') as f:
+                f.write(f"--- Prompt for Personality: {self.personality} at {datetime.now(timezone.utc).isoformat()} ---\n\n")
+                f.write(final_prompt)
+            logger.debug(f"Wrote final prompt to {last_prompt_file}")
+        except Exception as e:
+            logger.error(f"Failed to write last_prompt.txt: {e}", exc_info=True)
+
         # --- Tuning Log: Prompt Construction Result ---
         log_tuning_event("PROMPT_CONSTRUCTION_RESULT", {
             "personality": self.personality,
-            "user_input_preview": user_input[:100],
+            "user_input_preview": strip_emojis(user_input[:100]), # Strip emojis
             "included_memory_uuids": included_mem_uuids, # From memory construction block
             "included_history_turns": included_hist_count, # From history construction block
             "final_token_count": final_tok_count,
