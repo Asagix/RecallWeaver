@@ -2183,8 +2183,8 @@ class GraphMemoryClient:
             logger.error("Failed to load action analysis prompt template. Cannot analyze action.")
             return {'action': 'error', 'reason': 'Action analysis prompt template missing.'}
 
+        # The prompt template now contains the descriptions directly.
         full_prompt = prompt_template.format(
-            tool_descriptions=tool_descriptions,
             request_text=request_text
         )
 
