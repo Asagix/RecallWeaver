@@ -83,12 +83,13 @@ def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
 class WorkerSignals(QObject):
     # Added backend_ready signal
     backend_ready = pyqtSignal(bool, str) # success_flag, personality_name
-    response_ready = pyqtSignal(str, str, list)
+    response_ready = pyqtSignal(str, str, list, str) # Added ai_node_uuid (str or None)
     modification_response_ready = pyqtSignal(str, str, str, str)
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
     clarification_needed = pyqtSignal(str, list)
     confirmation_needed = pyqtSignal(str, dict) # NEW: action_type, details_dict
+    feedback_provided = pyqtSignal(str, str) # NEW: node_uuid, feedback_type ('up'/'down')
     error = pyqtSignal(str)
     log_message = pyqtSignal(str)
 
@@ -166,7 +167,8 @@ class Worker(QThread):
                     elif task_type == 'consolidate': self.handle_consolidation_task()
                     elif task_type == 'execute_action': self.handle_execute_action_task(data)
                     elif task_type == 'execute_action_confirmed': self.handle_confirmed_action_task(data)
-                    elif task_type == 'saliency_update': self.handle_saliency_update_task(data) # NEW Handler
+                    elif task_type == 'saliency_update': self.handle_saliency_update_task(data)
+                    elif task_type == 'feedback': self.handle_feedback_task(data) # NEW Handler
                     # --- Add handler for memory maintenance ---
                     elif task_type == 'memory_maintenance': self.handle_memory_maintenance_task()
                     else:
@@ -206,10 +208,12 @@ class Worker(QThread):
 
         ai_response_text = "Error: Could not get response."
         memory_chain_data = []
+        ai_node_uuid = None # Initialize AI node UUID
         interaction_successful = False # Flag to track if LLM call succeeded
 
         try:
-            ai_response_text, memory_chain_data = self.client.process_interaction(
+            # process_interaction now returns (response, memories, ai_node_uuid)
+            ai_response_text, memory_chain_data, ai_node_uuid = self.client.process_interaction(
                 user_input=user_input_text,
                 conversation_history=self.current_conversation,
                 attachment_data=attachment
@@ -228,10 +232,13 @@ class Worker(QThread):
             # user_uuid_from_backend = ...
             # ai_uuid_from_backend = ...
             # if user_uuid_from_backend: user_turn_data['uuid'] = user_uuid_from_backend
-            # if ai_uuid_from_backend: ai_turn_data['uuid'] = ai_uuid_from_backend
+            # if ai_uuid_from_backend: ai_turn_data['uuid'] = ai_uuid_from_backend # No longer needed here
+            if ai_node_uuid:
+                 ai_turn_data['uuid'] = ai_node_uuid # Store UUID if returned
+                 gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
 
-            # Emit result signal
-            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data)
+            # Emit result signal (including AI node UUID)
+            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid)
             interaction_successful = True # Mark as successful
 
         except Exception as e:
@@ -283,6 +290,30 @@ class Worker(QThread):
                 backend_logger.error(error_msg, exc_info=True)
         else:
             error_msg = "Backend client not available for memory maintenance."
+            self.signals.error.emit(error_msg)
+            backend_logger.error(error_msg)
+
+    def handle_feedback_task(self, data: dict):
+        """Handles the task to apply user feedback to a node via the backend."""
+        uuid = data.get('uuid')
+        feedback_type = data.get('type')
+        if not uuid or not feedback_type:
+            gui_logger.error(f"Invalid data for feedback task: {data}")
+            return
+
+        gui_logger.info(f"Worker handling feedback: UUID={uuid}, Type={feedback_type}")
+        if self.client:
+            try:
+                # Call the backend method
+                self.client.apply_feedback(uuid, feedback_type)
+                # Optionally emit a signal back to GUI? For now, just log.
+                self.signals.log_message.emit(f"Feedback processed for {uuid[:8]}.")
+            except Exception as e:
+                error_msg = f"Error during feedback processing for {uuid}: {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+        else:
+            error_msg = "Backend client not available for feedback processing."
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg)
 
@@ -1467,6 +1498,31 @@ class ChatWindow(QMainWindow):
              gui_logger.debug("No memories received for this interaction.")
         self._finalize_display()
 
+    # --- Slot signature updated to accept ai_node_uuid ---
+    @pyqtSlot(str, str, list, str)
+    def display_response(self, user_input, ai_response, memories, ai_node_uuid):
+        # (Implementation remains the same - calls display_message, re-enables via _finalize_display)
+        gui_logger.debug(f"GUI received AI response: {ai_response[:50]}... (UUID: {ai_node_uuid})")
+        # --- Pass ai_node_uuid to display_message ---
+        self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
+        if memories:
+             gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
+             try:
+                  memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
+                  # --- Connect the new signal ---
+                  memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
+                  # --- Add widget to layout ---
+                  mem_container_layout = QHBoxLayout()
+                  mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
+                  mem_container_layout.addWidget(memory_widget)
+                  self._add_widget_to_chat_layout(mem_container_layout)
+             except Exception as e:
+                  gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
+                  self.display_error(f"Failed display memories: {e}")
+        else:
+             gui_logger.debug("No memories received for this interaction.")
+        self._finalize_display()
+
 
     @pyqtSlot(str, str, str, str)
     def display_modification_confirmation(self, user_input, confirmation_message, action_type, target_info):
@@ -1502,6 +1558,20 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.error("Cannot handle saliency feedback: Worker not running.")
             self.display_error("Cannot update saliency: Backend worker not active.")
+
+    def handle_feedback_click(self, node_uuid: str, feedback_type: str):
+        """Handles clicks on feedback buttons and signals the worker."""
+        gui_logger.info(f"Feedback button clicked: UUID={node_uuid}, Type={feedback_type}")
+        if self.worker and self.worker.isRunning():
+            # Find the specific label that was clicked to potentially disable it
+            # This requires storing references or finding the widget, which is complex here.
+            # For now, just send the signal and provide status bar feedback.
+            self.worker.input_queue.append(('feedback', {'uuid': node_uuid, 'type': feedback_type}))
+            self.statusBar().showMessage(f"Feedback ({feedback_type}) registered for message.", 3000)
+            # TODO: Visually disable/change the clicked button?
+        else:
+            gui_logger.error("Cannot handle feedback click: Worker not running.")
+            self.display_error("Cannot register feedback: Backend worker not active.")
 
 
     @pyqtSlot(str)
@@ -1742,6 +1812,32 @@ class ChatWindow(QMainWindow):
                 timestamp_label.setObjectName(ts_object_name); timestamp_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         except Exception as e: gui_logger.warning(f"Timestamp error: {e}"); timestamp_label = None
 
+        # --- Create Feedback Buttons (only for AI messages with UUID) ---
+        feedback_layout = None
+        if speaker == "AI" and ai_node_uuid:
+            feedback_layout = QHBoxLayout()
+            feedback_layout.setSpacing(5)
+            feedback_layout.addStretch() # Push buttons to the right
+
+            thumb_up = QLabel("👍")
+            thumb_up.setToolTip("Good response")
+            thumb_up.setCursor(Qt.CursorShape.PointingHandCursor)
+            thumb_up.mousePressEvent = lambda event, u=ai_node_uuid, t='up': self.handle_feedback_click(u, t)
+
+            thumb_down = QLabel("👎")
+            thumb_down.setToolTip("Bad response")
+            thumb_down.setCursor(Qt.CursorShape.PointingHandCursor)
+            thumb_down.mousePressEvent = lambda event, u=ai_node_uuid, t='down': self.handle_feedback_click(u, t)
+
+            feedback_layout.addWidget(thumb_up)
+            feedback_layout.addWidget(thumb_down)
+            # Add timestamp label to the feedback layout as well
+            if timestamp_label:
+                 feedback_layout.addWidget(timestamp_label)
+            else: # Add spacer if no timestamp
+                 feedback_layout.addSpacerItem(QSpacerItem(10, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+
+
         # --- Assemble Bubble Content ---
         if not image_label and not message_label:
             return # Don't display anything if both image and text are missing/failed
@@ -1755,8 +1851,13 @@ class ChatWindow(QMainWindow):
             bubble_layout.addWidget(image_label) # Add image first
         if message_label:
             bubble_layout.addWidget(message_label) # Add text second
-        if timestamp_label:
-             bubble_layout.addWidget(timestamp_label) # Add timestamp last
+
+        # --- Add Feedback Layout (or just timestamp if no feedback) ---
+        if feedback_layout:
+            bubble_layout.addLayout(feedback_layout) # Add feedback buttons + timestamp
+        elif timestamp_label:
+             # Add timestamp directly if no feedback buttons needed
+             bubble_layout.addWidget(timestamp_label, alignment=Qt.AlignmentFlag.AlignRight)
 
         # --- Determine Frame Object Name ---
         frame_name = "AIBubbleFrame";

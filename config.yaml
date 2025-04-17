@@ -249,6 +249,14 @@ subconscious_drives:
       Control: -0.15   # Positive deviation (competent) -> decreases arousal (calm control). Negative (loss of control) -> increases arousal (agitation). (Changed sign from 0.15)
     max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
 
+# --- Feedback System ---
+feedback_system:
+  enable: true # Enable/disable user feedback processing
+  # --- Saliency Influence ---
+  # Additive adjustments to saliency score based on feedback
+  saliency_upvote_boost: 0.1
+  saliency_downvote_penalty: 0.15 # Penalty is subtracted
+
 # --- Saliency Calculation ---
 saliency:
   initial_scores: # Base scores by node type

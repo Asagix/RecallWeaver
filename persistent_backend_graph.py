@@ -653,7 +653,9 @@ class GraphMemoryClient:
                 activation_level=0.0, # Initial activation, updated during retrieval
                 last_accessed_ts=current_time, # Timestamp of last access/creation
                 # --- NEW: Decay Resistance ---
-                decay_resistance_factor=self.config.get('forgetting', {}).get('decay_resistance', {}).get(node_type, 1.0)
+                decay_resistance_factor=self.config.get('forgetting', {}).get('decay_resistance', {}).get(node_type, 1.0),
+                # --- NEW: Feedback Score ---
+                user_feedback_score=0 # Initialize feedback score
             )
             # Access node data *after* adding it to the graph
             node_data = self.graph.nodes[node_uuid]
@@ -1546,6 +1548,57 @@ class GraphMemoryClient:
                  logger.error(f"Error updating saliency for node {node_uuid[:8]}: {e}", exc_info=True)
         else:
             logger.warning(f"update_node_saliency called for non-existent node: {node_uuid}")
+
+    def apply_feedback(self, node_uuid: str, feedback_type: str):
+        """
+        Applies user feedback (thumbs up/down) to a node, primarily by adjusting saliency.
+        """
+        feedback_cfg = self.config.get('feedback_system', {})
+        if not feedback_cfg.get('enable', False):
+            logger.debug("Feedback system disabled. Ignoring feedback.")
+            return
+
+        if node_uuid not in self.graph:
+            logger.warning(f"Cannot apply feedback to non-existent node: {node_uuid}")
+            return
+
+        logger.info(f"Applying feedback '{feedback_type}' to node {node_uuid[:8]}")
+        node_data = self.graph.nodes[node_uuid]
+        current_feedback_score = node_data.get('user_feedback_score', 0)
+        current_saliency = node_data.get('saliency_score', 0.0)
+        new_feedback_score = current_feedback_score
+        saliency_adjustment = 0.0
+
+        try:
+            if feedback_type == 'up':
+                new_feedback_score += 1
+                saliency_adjustment = feedback_cfg.get('saliency_upvote_boost', 0.1)
+            elif feedback_type == 'down':
+                new_feedback_score -= 1
+                saliency_adjustment = -feedback_cfg.get('saliency_downvote_penalty', 0.15) # Penalty is subtractive
+            else:
+                logger.warning(f"Invalid feedback type received: {feedback_type}")
+                return
+
+            # Update feedback score
+            node_data['user_feedback_score'] = new_feedback_score
+            logger.debug(f"  Updated feedback score: {current_feedback_score} -> {new_feedback_score}")
+
+            # Update saliency score
+            if abs(saliency_adjustment) > 1e-4:
+                new_saliency = current_saliency + saliency_adjustment
+                new_saliency = max(0.0, min(1.0, new_saliency)) # Clamp 0-1
+                if new_saliency != current_saliency:
+                    node_data['saliency_score'] = new_saliency
+                    logger.info(f"  Adjusted saliency due to feedback: {current_saliency:.3f} -> {new_saliency:.3f} (Adj: {saliency_adjustment:.3f})")
+                else:
+                    logger.debug("  Saliency unchanged (at limit or no effective change).")
+
+            # Save changes
+            self._save_memory()
+
+        except Exception as e:
+            logger.error(f"Error applying feedback to node {node_uuid[:8]}: {e}", exc_info=True)
 
 
     # --- Forgetting Mechanism ---
@@ -3106,8 +3159,8 @@ class GraphMemoryClient:
             separator = "\n\n" if final_response_to_gui else ""
             final_response_to_gui += separator + action_result_message
 
-        # Return the combined response and the memory chain
-        return final_response_to_gui, memory_chain_data
+        # Return the combined response, memory chain, and AI node UUID
+        return final_response_to_gui, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None
 
 
     # --- Consolidation ---

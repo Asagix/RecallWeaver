@@ -195,6 +195,16 @@ This document tracks the implementation progress and outlines future enhancement
         -   [x] GUI: Add `[+S]/[-S]` links and signal to `CollapsibleMemoryWidget`.
         -   [x] GUI: Connect signal and add handler slot in `ChatWindow`.
         -   [x] GUI: Add worker method and task handler for saliency updates.
+    -   [x] Add UI for user feedback on AI responses (Thumbs Up/Down):
+        -   [x] Config: Add `feedback_system` section (enable, saliency factors).
+        -   [x] Backend: Add `user_feedback_score` to nodes.
+        -   [x] Backend: Implement `apply_feedback` method.
+        -   [x] Backend: Modify `process_interaction` to return AI node UUID.
+        -   [x] GUI: Add `feedback_provided` signal to `WorkerSignals`.
+        -   [x] GUI: Add `handle_feedback_task` to `Worker`.
+        -   [x] GUI: Modify `display_message` to show feedback buttons linked to UUID.
+        -   [x] GUI: Add `handle_feedback_click` slot to `ChatWindow`.
+        -   [x] GUI: Update `handle_chat_task` and `display_response` to handle AI node UUID.
     -   [ ] Add basic graph visualization capabilities.
 
 ## Phase 3: Configuration & Refinement
