@@ -4847,11 +4847,28 @@ class GraphMemoryClient:
                     subj_uuid = concept_node_map.get(subj_text)
                     obj_uuid = concept_node_map.get(obj_text)
 
+                    # --- Attempt to add unknown concepts ---
+                    if not subj_uuid:
+                        logger.info(f"Rich Relation: Subject concept '{subj_text}' not found. Attempting add.")
+                        subj_uuid = self._add_or_find_concept_node(subj_text, concept_node_map)
+                        if subj_uuid: logger.info(f"Added/Found subject concept: {subj_uuid[:8]}")
+                        else: logger.warning(f"Failed to add/find subject concept '{subj_text}'. Skipping relation."); continue
+                    if not obj_uuid:
+                        logger.info(f"Rich Relation: Object concept '{obj_text}' not found. Attempting add.")
+                        obj_uuid = self._add_or_find_concept_node(obj_text, concept_node_map)
+                        if obj_uuid: logger.info(f"Added/Found object concept: {obj_uuid[:8]}")
+                        else: logger.warning(f"Failed to add/find object concept '{obj_text}'. Skipping relation."); continue
+                    # --- End attempt to add unknown concepts ---
+
+                    # Check again if nodes exist in graph after potential add
                     if subj_uuid and obj_uuid and subj_uuid in self.graph and obj_uuid in self.graph:
-                        # No status check needed before adding edge
                         try:
-                            if not self.graph.has_edge(subj_uuid, obj_uuid) or self.graph.edges[subj_uuid, obj_uuid].get("type") != rel_type:
-                                base_strength = 0.7
+                            # Check if edge exists OR if the reverse edge exists with the same type
+                            edge_exists = self.graph.has_edge(subj_uuid, obj_uuid) and self.graph.edges[subj_uuid, obj_uuid].get("type") == rel_type
+                            reverse_edge_exists = self.graph.has_edge(obj_uuid, subj_uuid) and self.graph.edges[obj_uuid, subj_uuid].get("type") == rel_type
+
+                            if not edge_exists and not reverse_edge_exists: # Add only if neither direction exists with this type
+                                base_strength = 0.65 # Slightly lower strength for LLM relations?
                                 self.graph.add_edge(
                                     subj_uuid,
                                     obj_uuid,
@@ -4880,6 +4897,40 @@ class GraphMemoryClient:
                 else:
                     logger.warning(f"Skipping invalid LLM relation object in list: {rel}")
             logger.info(f"Added {added_llm_edge_count} new LLM-derived typed relationship edges.")
+
+    def _add_or_find_concept_node(self, concept_text: str, concept_node_map: dict) -> str | None:
+        """
+        Checks if a concept exists (or is very similar). If not, adds it.
+        Updates concept_node_map and returns the UUID.
+        """
+        if not concept_text: return None
+
+        # Check if already in the map for this consolidation run
+        existing_uuid = concept_node_map.get(concept_text)
+        if existing_uuid: return existing_uuid
+
+        # Search for existing similar nodes in the graph
+        concept_sim_threshold = self.config.get('consolidation', {}).get('concept_similarity_threshold', 0.3)
+        similar_concepts = self._search_similar_nodes(concept_text, k=1, node_type_filter='concept')
+
+        if similar_concepts and similar_concepts[0][1] <= concept_sim_threshold:
+            found_uuid = similar_concepts[0][0]
+            logger.info(f"Found existing similar node {found_uuid[:8]} for '{concept_text}'. Using existing.")
+            concept_node_map[concept_text] = found_uuid # Add to map for this run
+            # Update access time?
+            if found_uuid in self.graph: self.graph.nodes[found_uuid]['last_accessed_ts'] = time.time()
+            return found_uuid
+        else:
+            # Add as a new concept node
+            # Use slightly lower base strength for concepts added implicitly during relation extraction?
+            new_concept_uuid = self.add_memory_node(concept_text, "System", 'concept', base_strength=0.75)
+            if new_concept_uuid:
+                logger.info(f"Added new concept node {new_concept_uuid[:8]} for '{concept_text}' during relation extraction.")
+                concept_node_map[concept_text] = new_concept_uuid # Add to map for this run
+                return new_concept_uuid
+            else:
+                logger.error(f"Failed to add new concept node '{concept_text}' during relation extraction.")
+                return None
 
     def _load_prompt(self, filename: str) -> str:
         """Loads a prompt template from the prompts directory."""
