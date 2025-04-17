@@ -603,14 +603,39 @@ class Worker(QThread):
              # Log error during analysis but potentially fall through to check modification/chat
              gui_logger.error(f"Error during action request analysis: {e}", exc_info=True)
              self.signals.error.emit(f"Failed to analyze for file/calendar actions: {e}")
-             # Fall through to check memory modification
+             # Fall through to check memory modification (currently disabled)
 
         # --- If not a file/calendar action, analyze for memory modification ---
-        try:
-            mod_analysis_result = self.client.analyze_memory_modification_request(text)
-            mod_action = mod_analysis_result.get("action")
+        # --- DISABLED Memory Modification Analysis ---
+        # try:
+        #     mod_analysis_result = self.client.analyze_memory_modification_request(text)
+        #     mod_action = mod_analysis_result.get("action")
+        #
+        #     if mod_action == "error":
+        #         self.signals.error.emit(f"Memory Modification Analysis Error: {mod_analysis_result.get('reason', '?')}")
+        #         # Proceed with chat? Or stop? Let's proceed with chat for now.
+        #         mod_action = "none" # Treat error as no mod action
+        #
+        #     if mod_action != "none":
+        #         # If a specific memory modification action is identified, queue it
+        #         # Clear any potentially stale clarification state
+        #         if self.pending_clarification:
+        #             gui_logger.debug("Clearing stale pending clarification due to modification request.")
+        #             self.pending_clarification = None
+        #         gui_logger.info(f"Memory modification action '{mod_action}' detected by LLM. Queuing modify task.")
+        #         # Don't add user input to history here, let handle_modify_task decide
+        #         # Pass the *original text* to the modify handler, as it expects the raw command
+        #         self.input_queue.append(('modify', text))
+        #         return # Don't queue chat task
+        #
+        # except Exception as e:
+        #      # Log error during analysis but fall through to chat
+        #      gui_logger.error(f"Error during memory modification analysis: {e}", exc_info=True)
+        #      self.signals.error.emit(f"Failed to analyze for memory modification actions: {e}")
+        # --- END DISABLED Memory Modification Analysis ---
 
-            if mod_action == "error":
+        # --- If not action or modification (both analyses returned "none" or errored), treat as regular chat ---
+        gui_logger.info("No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
                 self.signals.error.emit(f"Memory Modification Analysis Error: {mod_analysis_result.get('reason', '?')}")
                 # Proceed with chat? Or stop? Let's proceed with chat for now.
                 mod_action = "none" # Treat error as no mod action
