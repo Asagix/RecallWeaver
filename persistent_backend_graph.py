@@ -3233,11 +3233,11 @@ class GraphMemoryClient:
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)
             logger.error(f"Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-            # Assign error message to both ai_response and parsed_response
-            ai_response = f"Error during processing: {e}"
-            parsed_response = ai_response # Ensure parsed_response has a value
-            memory_chain_data = [] # Clear memory chain data on error
-            # --- Tuning Log: Interaction Error ---
+                # Assign error message to both ai_response and parsed_response
+                ai_response = f"Error during processing: {e}"
+                parsed_response = ai_response # Ensure parsed_response has a value
+                memory_chain_data = [] # Clear memory chain data on error
+                # --- Tuning Log: Interaction Error ---
             log_tuning_event("INTERACTION_ERROR", {
                 "interaction_id": interaction_id,
                 "personality": self.personality,
@@ -3329,9 +3329,9 @@ class GraphMemoryClient:
         return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
 
     except Exception as e:
-        # Catch errors during interaction processing (e.g., the ValueError)
-        logger.error(f"Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-        # Assign error message to both ai_response and parsed_response
+            # Catch errors during interaction processing (e.g., the ValueError)
+            logger.error(f"Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
+            # Assign error message to both ai_response and parsed_response
         ai_response = f"Error during processing: {e}"
         parsed_response = ai_response # Ensure parsed_response has a value
         memory_chain_data = [] # Clear memory chain data on error
@@ -3340,10 +3340,10 @@ class GraphMemoryClient:
             "interaction_id": interaction_id,
             "personality": self.personality,
             "stage": "main_processing_loop",
-            "error": str(e),
-        })
-        # Ensure needs_planning is False on error exit from this block
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
+                "error": str(e),
+            })
+            # Ensure needs_planning is False on error exit from this block
+            return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
 
 
     # --- Consolidation ---
