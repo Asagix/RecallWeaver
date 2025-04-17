@@ -4207,7 +4207,7 @@ class GraphMemoryClient:
                 summary_created = True
                 logger.info(f"Added summary node {summary_node_uuid[:8]}. Adding 'SUMMARY_OF' edges...")
                 current_time = time.time()
-                for orig_uuid in active_nodes_to_process: # Use the correct parameter name
+                for orig_uuid in processed_node_uuids: # Use the correct parameter name
                     if orig_uuid in self.graph:
                         try:
                             self.graph.add_edge(summary_node_uuid, orig_uuid, type='SUMMARY_OF', base_strength=0.9,
