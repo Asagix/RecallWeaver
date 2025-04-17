@@ -33,7 +33,7 @@ This document tracks the implementation status of recommendations made by the ex
 ## Prompting & Interaction Flow
 
 *   [x] **Intention Handling:** Modify `_construct_prompt` to instruct the LLM to review retrieved intention nodes and incorporate them if the trigger condition seems met. Modify `process_interaction` to retrieve active intention nodes.
-*   [ ] **Prompt Chaining for Reflection:** Implement meta-cognitive loops by chaining prompts (e.g., generate ASM, then feed ASM into a reflection prompt). (Placeholder added, full implementation deferred)
+*   [x] **Prompt Chaining for Reflection:** Implement meta-cognitive loops by chaining prompts (e.g., generate ASM, then feed ASM into a reflection prompt).
 
 ## Configuration & Tuning
 

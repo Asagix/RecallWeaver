@@ -198,6 +198,15 @@ llm_models:
     top_p: 0.95
     top_k: 60
     min_p: 0.0
+  # --- Reflection Generation (NEW) ---
+  reflection_generation:
+    api_type: "generate" # Or chat_completions if preferred
+    model_name: "koboldcpp-default"
+    max_length: 512 # Allow reasonable length for reflective response
+    temperature: 0.7 # Balance coherence and creativity
+    top_p: 0.95
+    top_k: 60
+    min_p: 0.0
 
 
 # --- Feature Flags ---
