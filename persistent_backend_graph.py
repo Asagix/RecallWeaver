@@ -6460,10 +6460,11 @@ class GraphMemoryClient:
                     recent_concept_uuids=list(concepts_for_retrieval),
                     current_mood=mood_for_retrieval
                 )
-                # Unpack the tuple returned by retrieve_memory_chain
-                retrieved_nodes, _ = memory_chain_data # We only need the nodes list here
-                memory_chain_data = retrieved_nodes # Assign the list of nodes
-            logger.info(f"Retrieved {len(memory_chain_data)} memories for planning context.")
+                # Unpack the tuple: retrieve_memory_chain returns (nodes_list, effective_mood)
+                retrieved_nodes, _ = memory_chain_data # memory_chain_data currently holds the tuple
+                memory_chain_data = retrieved_nodes # Now memory_chain_data holds the list of nodes
+            # If initial_uuids was empty, memory_chain_data remains []
+            logger.info(f"Retrieved {len(memory_chain_data)} memories for planning context.") # This should now use the list
 
             # 2. Prepare Planning Prompt Context
             planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Strip emojis
