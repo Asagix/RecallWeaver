@@ -35,9 +35,9 @@ except ImportError:
     logging.warning("text2emotion library not found. Emotion analysis will be disabled. Run `pip install text2emotion`")
     te = None
 
-# *** Import file manager & Workspace Agent ***
+# *** Import file manager ***
 import file_manager # Assuming file_manager.py exists in the same directory
-from workspace_agent import WorkspaceAgent # Import the new agent
+# WorkspaceAgent will be imported later if needed by plan_and_execute
 
 # --- Configuration ---
 DEFAULT_CONFIG_PATH = "config.yaml"
@@ -3263,8 +3263,8 @@ class GraphMemoryClient:
             "workspace_actions_attempted": len(workspace_action_results),
         })
 
-        # Return conversational response, memories, AI node UUID, and workspace action results
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, workspace_action_results
+        # Return conversational response, memories, AI node UUID, and the planning flag
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
 
 
     # --- Consolidation ---
@@ -5250,16 +5250,106 @@ class GraphMemoryClient:
             saved_in_consolidation = True
 
         # --- Tuning Log: Consolidation End ---
-        log_tuning_event("CONSOLIDATION_END", {
-            "personality": self.personality,
-            "status": "completed",
-            "nodes_processed_count": len(nodes_to_process),
-            "summary_created": summary_created,
-            "concepts_added_count": len(newly_added_concepts) if 'newly_added_concepts' in locals() else 0,
-            # Add counts for relations if available from helpers
-            "pruned_node_count": pruned_count if 'pruned_count' in locals() else 0,
             "memory_saved": saved_in_consolidation,
         })
+
+    # --- NEW: Separate Planning & Execution Method ---
+    def plan_and_execute(self, user_input: str, conversation_history: list) -> list[tuple[bool, str, str]]:
+        """
+        Plans and executes workspace actions based on user input and conversation context.
+        Called separately by the worker thread if flagged by process_interaction.
+        """
+        logger.info(f"--- Starting Separate Workspace Planning & Execution for input: '{user_input[:50]}...' ---")
+        workspace_action_results = [] # Initialize results list
+
+        try:
+            # 1. Retrieve Relevant Memories (similar to process_interaction, maybe simpler?)
+            #    We need some context for the planning prompt. Let's retrieve based on user input.
+            query_type = self._classify_query_type(user_input)
+            max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
+            initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
+            initial_uuids = [uid for uid, score in initial_nodes]
+            memory_chain_data = []
+            if initial_uuids:
+                # Use current mood/concepts if available, otherwise defaults
+                concepts_for_retrieval = self.last_interaction_concept_uuids
+                mood_for_retrieval = self.last_interaction_mood
+                memory_chain_data = self.retrieve_memory_chain(
+                    initial_node_uuids=initial_uuids,
+                    recent_concept_uuids=list(concepts_for_retrieval),
+                    current_mood=mood_for_retrieval
+                )
+            logger.info(f"Retrieved {len(memory_chain_data)} memories for planning context.")
+
+            # 2. Prepare Planning Prompt Context
+            planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in conversation_history[-5:]]) # Limit history
+            planning_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {mem.get('text', '')}" for mem in memory_chain_data])
+            if not planning_memory_text: planning_memory_text = "[No relevant memories retrieved]"
+
+            planning_prompt_template = self._load_prompt("workspace_planning_prompt.txt")
+            if not planning_prompt_template:
+                logger.error("Workspace planning prompt template missing. Cannot generate plan.")
+                workspace_action_results.append((False, "Internal Error: Planning prompt missing.", "planning_error"))
+                return workspace_action_results
+
+            planning_prompt = planning_prompt_template.format(
+                user_request=user_input, # Use the original user input that triggered planning
+                history_text=planning_history_text,
+                memory_text=planning_memory_text
+            )
+            logger.debug(f"Sending workspace planning prompt:\n{planning_prompt[:300]}...")
+
+            # 3. Call Planning LLM
+            plan_response_str = self._call_configured_llm('workspace_planning', prompt=planning_prompt)
+
+            # 4. Parse Plan
+            parsed_plan = None
+            if plan_response_str and not plan_response_str.startswith("Error:"):
+                try:
+                    logger.debug(f"Raw workspace plan response: ```{plan_response_str}```")
+                    match = re.search(r'(\[.*?\])', plan_response_str, re.DOTALL | re.MULTILINE)
+                    if match:
+                        plan_json_str = match.group(1)
+                        parsed_plan = json.loads(plan_json_str)
+                        if not isinstance(parsed_plan, list):
+                            logger.error(f"Parsed plan is not a list: {parsed_plan}")
+                            parsed_plan = None
+                    else:
+                        logger.warning(f"Could not extract JSON list '[]' from planning response. Raw: '{plan_response_str}'")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON plan response: {e}. Raw: '{plan_response_str}'")
+                    parsed_plan = None
+            elif plan_response_str.startswith("Error:"):
+                 logger.error(f"Workspace planning LLM call failed: {plan_response_str}")
+                 workspace_action_results.append((False, f"Planning Error: {plan_response_str}", "planning_llm_error"))
+                 return workspace_action_results # Return LLM error result
+
+            # 5. Execute Plan (if valid)
+            if parsed_plan is not None:
+                if isinstance(parsed_plan, list) and len(parsed_plan) > 0:
+                    logger.info(f"Workspace plan parsed with {len(parsed_plan)} step(s). Executing...")
+                    # Import agent here to avoid circular dependency at top level if needed
+                    from workspace_agent import WorkspaceAgent
+                    agent = WorkspaceAgent(self.config, self.personality)
+                    workspace_action_results = agent.execute_plan(parsed_plan)
+                    logger.info(f"Workspace plan execution finished. Results: {workspace_action_results}")
+                elif isinstance(parsed_plan, list) and len(parsed_plan) == 0:
+                    logger.info("LLM generated an empty plan (no workspace actions needed).")
+                    # Return empty results list, indicating no actions taken
+                else: # Plan parsed but invalid (e.g., not list)
+                     logger.error("Parsed plan was invalid (not a list). No actions executed.")
+                     workspace_action_results.append((False, "Internal Error: Invalid plan generated by LLM.", "planning_invalid_plan"))
+            else: # Plan parsing failed or no plan found
+                 logger.info("No valid workspace plan found or parsed. No actions executed.")
+                 # Return empty results list, indicating no actions taken
+
+        except Exception as plan_exec_e:
+             logger.error(f"Unexpected error during plan_and_execute: {plan_exec_e}", exc_info=True)
+             workspace_action_results.append((False, f"Internal Error during planning/execution: {plan_exec_e}", "planning_exception"))
+
+        logger.info(f"--- Finished Separate Workspace Planning & Execution ---")
+        return workspace_action_results
+
 
 #Function call
 if __name__ == "__main__":

@@ -189,10 +189,13 @@ class Worker(QThread):
                     elif task_type == 'saliency_update':
                         self.handle_saliency_update_task(data)
                     elif task_type == 'feedback':
-                        self.handle_feedback_task(data)  # NEW Handler
+                        self.handle_feedback_task(data)
                     # --- Add handler for memory maintenance ---
                     elif task_type == 'memory_maintenance':
                         self.handle_memory_maintenance_task()
+                    # --- NEW: Add handler for separate planning task ---
+                    elif task_type == 'plan_and_execute_workspace':
+                        self.handle_plan_and_execute_task(data)
                     else:
                         gui_logger.warning(f"Unknown task type received in worker queue: {task_type}")
 
@@ -359,6 +362,48 @@ class Worker(QThread):
             error_msg = "Backend client not available for feedback processing."
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg)
+
+    # --- NEW Task Handler for Planning/Execution ---
+    def handle_plan_and_execute_task(self, context_data: dict):
+        """Handles the separate task for planning and executing workspace actions."""
+        user_input = context_data.get('user_input', '')
+        history_context = context_data.get('history', []) # Get history context
+        gui_logger.info(f"Worker handling plan_and_execute task for input: '{user_input[:50]}...'")
+        self.signals.log_message.emit("Planning workspace actions...") # Update status
+
+        if self.client:
+            try:
+                # Call the new backend method
+                workspace_results = self.client.plan_and_execute(user_input, history_context)
+
+                # Emit results using modification_response_ready signal for each result
+                if workspace_results:
+                    gui_logger.info(f"Received {len(workspace_results)} results from plan_and_execute.")
+                    for result_tuple in workspace_results:
+                        if isinstance(result_tuple, tuple) and len(result_tuple) == 3:
+                            success, message, action_suffix = result_tuple
+                            # Use placeholders for user_input and target_info
+                            action_name = action_suffix.split('_')[0] if '_' in action_suffix else action_suffix
+                            placeholder_input = f"Workspace Action: {action_name}"
+                            placeholder_target = "" # Target info not directly available here
+                            self.signals.modification_response_ready.emit(placeholder_input, message, action_suffix, placeholder_target)
+                        else:
+                            gui_logger.error(f"Invalid result format from plan_and_execute: {result_tuple}")
+                            self.signals.error.emit(f"Received invalid workspace result format: {result_tuple}")
+                    self.signals.log_message.emit("Workspace actions finished.")
+                else:
+                    gui_logger.info("plan_and_execute returned no results (no plan or empty plan).")
+                    self.signals.log_message.emit("No workspace actions were needed.")
+
+            except Exception as e:
+                error_msg = f"Error during workspace plan/execute task: {e}"
+                self.signals.error.emit(error_msg)
+                backend_logger.error(error_msg, exc_info=True)
+        else:
+            error_msg = "Backend client not available for workspace planning."
+            self.signals.error.emit(error_msg)
+            backend_logger.error(error_msg)
+
 
     def handle_modify_task(self, user_input):
         # (Implementation remains the same - no interaction counter increment)
