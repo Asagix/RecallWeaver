@@ -14,7 +14,7 @@ Analyze the following conversation context and the extracted key concepts. Ident
 - Only include concepts from the list in the pairs.
 - **CRITICAL:** If no analogies are found between the provided concepts based on the context, output **only** an empty JSON list `[]`.
 - Do NOT invent analogies or use concepts not in the list.
-- Ensure the output is a single, valid JSON list of lists.
+- **CRITICAL:** Ensure the output is a single, valid JSON list of lists. **Strict JSON format is required.** Do not include trailing commas. Example: `[["Concept A", "Concept B"], ["Concept C", "Concept D"]]`
 
 **Example Output (for different concepts/context):**
 ```json

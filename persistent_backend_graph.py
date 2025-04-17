@@ -5071,21 +5071,52 @@ class GraphMemoryClient:
                     parsed_list = json.loads(json_str) # Attempt to parse the extracted string
 
                     if isinstance(parsed_list, list):
-                        # Validate inner lists (Keep existing validation)
-                        valid_chains = []
+                        # --- Process chains, adding new concepts if found ---
+                        processed_chains = []
                         for chain in parsed_list:
-                            # Validate format: list of strings, length >= 2
-                            if isinstance(chain, list) and len(chain) >= 2 and all(isinstance(item, str) for item in chain):
-                                # CRITICAL VALIDATION: Check if ALL concepts in the chain exist in the provided map
-                                if all(item in concept_node_map for item in chain):
-                                    valid_chains.append(chain)
-                                else:
-                                    unknown_concepts = [item for item in chain if item not in concept_node_map]
-                                    logger.warning(f"Skipping chain with unknown/unprovided concepts: {chain} (Unknown: {unknown_concepts})")
-                            else:
+                            if not isinstance(chain, list) or len(chain) < 2 or not all(isinstance(item, str) for item in chain):
                                 logger.warning(f"Skipping invalid chain format: {chain}")
-                        extracted_chains = valid_chains
-                        logger.info(f"Successfully parsed {len(extracted_chains)} valid causal chains from LLM.")
+                                continue
+
+                            chain_valid = True
+                            concepts_in_chain = [] # Store (text, uuid) tuples for this chain
+                            for concept_text in chain:
+                                concept_uuid = concept_node_map.get(concept_text)
+                                if not concept_uuid:
+                                    # Concept not found - try adding it
+                                    logger.info(f"Concept '{concept_text}' from causal chain not found. Attempting to add.")
+                                    # Search if a very similar concept already exists to avoid near duplicates
+                                    concept_sim_threshold = self.config.get('consolidation', {}).get('concept_similarity_threshold', 0.3)
+                                    similar_concepts = self._search_similar_nodes(concept_text, k=1, node_type_filter='concept')
+                                    if similar_concepts and similar_concepts[0][1] <= concept_sim_threshold:
+                                         existing_uuid = similar_concepts[0][0]
+                                         logger.info(f"Found existing similar node {existing_uuid[:8]} for '{concept_text}'. Using existing.")
+                                         concept_uuid = existing_uuid
+                                         concept_node_map[concept_text] = concept_uuid # Add to map for this consolidation run
+                                    else:
+                                         # Add as a new concept node
+                                         new_concept_uuid = self.add_memory_node(concept_text, "System", 'concept', base_strength=0.8) # Slightly lower strength?
+                                         if new_concept_uuid:
+                                             logger.info(f"Added new concept node {new_concept_uuid[:8]} for '{concept_text}' from causal chain.")
+                                             concept_uuid = new_concept_uuid
+                                             concept_node_map[concept_text] = concept_uuid # Add to map for this consolidation run
+                                         else:
+                                             logger.error(f"Failed to add new concept node '{concept_text}' from causal chain. Skipping chain.")
+                                             chain_valid = False
+                                             break # Stop processing this chain
+
+                                if concept_uuid:
+                                     concepts_in_chain.append((concept_text, concept_uuid))
+                                else: # Should not happen if add_memory_node worked or existing was found
+                                     logger.error(f"Failed to get UUID for concept '{concept_text}' in chain. Skipping chain.")
+                                     chain_valid = False
+                                     break
+
+                            if chain_valid:
+                                processed_chains.append(concepts_in_chain) # Add list of (text, uuid) tuples
+
+                        extracted_chains = processed_chains # Use the processed chains with UUIDs
+                        logger.info(f"Successfully processed {len(extracted_chains)} causal chains (added new concepts if needed).")
                     else:
                         logger.warning(f"LLM response was valid JSON but not a list. Raw: {llm_response_str}")
                 else:
@@ -5096,17 +5127,15 @@ class GraphMemoryClient:
                 logger.error(f"Unexpected error processing causal chains response: {e}", exc_info=True)
 
         added_edge_count = 0
-        if extracted_chains:
+        if extracted_chains: # This now contains lists of (text, uuid) tuples
             current_time = time.time()
-            for chain in extracted_chains:
+            for chain_with_uuids in extracted_chains:
                 # Add CAUSES edges between consecutive elements in the chain
-                for i in range(len(chain) - 1):
-                    cause_text = chain[i]
-                    effect_text = chain[i+1]
-                    cause_uuid = concept_node_map.get(cause_text)
-                    effect_uuid = concept_node_map.get(effect_text)
+                for i in range(len(chain_with_uuids) - 1):
+                    cause_text, cause_uuid = chain_with_uuids[i]
+                    effect_text, effect_uuid = chain_with_uuids[i+1]
 
-                    # Should always have UUIDs due to validation above, but check anyway
+                    # UUIDs should be valid because they were just added/retrieved
                     if cause_uuid and effect_uuid and cause_uuid in self.graph and effect_uuid in self.graph:
                         try:
                             # Add edge if it doesn't exist, or update timestamp if it does
