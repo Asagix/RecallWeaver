@@ -283,8 +283,8 @@ class Worker(QThread):
             error_timestamp = datetime.now(timezone.utc).isoformat()
             self.current_conversation.append(
                 {"speaker": "Error", "text": f"Failed to process interaction: {e}", "timestamp": error_timestamp})
-            # Emit error response, potentially using the original history text for context
-            self.signals.response_ready.emit(history_text, f"Error generating response: {e}", [])
+            # Emit error response, providing defaults for missing arguments
+            self.signals.response_ready.emit(history_text, f"Error generating response: {e}", [], None, False) # Pass None for UUID, False for needs_planning
             interaction_successful = False  # Mark as failed
 
         # --- Trigger Maintenance Tasks AFTER interaction attempt ---
