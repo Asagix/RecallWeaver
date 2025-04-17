@@ -5349,6 +5349,17 @@ class GraphMemoryClient:
             planning_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {strip_emojis(mem.get('text', ''))}" for mem in memory_chain_data]) # Strip emojis
             if not planning_memory_text: planning_memory_text = "[No relevant memories retrieved]"
 
+            # --- Get current workspace files ---
+            workspace_files, list_msg = file_manager.list_files(self.config, self.personality)
+            if workspace_files is None:
+                logger.error(f"Failed to list workspace files for planning context: {list_msg}")
+                workspace_files_list_str = "[Error retrieving file list]"
+            elif not workspace_files:
+                workspace_files_list_str = "[Workspace is empty]"
+            else:
+                workspace_files_list_str = "\n".join([f"- {fname}" for fname in sorted(workspace_files)])
+            logger.debug(f"Workspace files for planning prompt:\n{workspace_files_list_str}")
+
             planning_prompt_template = self._load_prompt("workspace_planning_prompt.txt")
             if not planning_prompt_template:
                 logger.error("Workspace planning prompt template missing. Cannot generate plan.")
@@ -5356,11 +5367,12 @@ class GraphMemoryClient:
                 return workspace_action_results
 
             planning_prompt = planning_prompt_template.format(
-                user_request=user_input, # Use the original user input that triggered planning
+                user_request=user_input,
                 history_text=planning_history_text,
-                memory_text=planning_memory_text
+                memory_text=planning_memory_text,
+                workspace_files_list=workspace_files_list_str # Add file list here
             )
-            logger.debug(f"Sending workspace planning prompt:\n{planning_prompt[:300]}...")
+            logger.debug(f"Sending workspace planning prompt (with file list):\n{planning_prompt[:400]}...")
 
             # 3. Call Planning LLM
             plan_response_str = self._call_configured_llm('workspace_planning', prompt=planning_prompt)
