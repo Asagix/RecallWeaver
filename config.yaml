@@ -128,21 +128,21 @@ forgetting:
   # --- Forgettability Score Weights (used to calculate strength reduction) ---
   weights:
     # Factors increasing forgettability score (leading to more strength reduction):
-    recency_factor: 0.3      # How long since last access (older = more forgettable)
-    activation_factor: 0.2   # Low activation = more forgettable
+    recency_factor: 0.4      # Increased from 0.3
+    activation_factor: 0.3   # Increased from 0.2
     node_type_factor: 0.1    # e.g., 'turn' nodes are more forgettable than others
     # Factors decreasing forgettability (Resistance):
-    saliency_factor: 0.2     # Higher saliency = less forgettable (Placeholder)
+    saliency_factor: 0.15    # Decreased from 0.2
     emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
-    connectivity_factor: 0.1 # Higher degree = less forgettable (Placeholder)
-    access_count_factor: 0.0 # Higher access count = less forgettable (Placeholder, add weight if desired)
+    connectivity_factor: 0.05 # Decreased from 0.1
+    access_count_factor: 0.05 # Added small weight
     # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
     recency_decay_constant: 0.000005 # Example value (adjust based on desired time scale, e.g., for seconds)
 
 # --- Memory Strength Parameters ---
 memory_strength:
   initial_value: 1.0 # Starting strength for new nodes
-  decay_rate: 0.1 # Factor applied to forgettability score for strength reduction (e.g., new_strength = old_strength * (1 - forget_score * decay_rate))
+  decay_rate: 0.15 # Increased from 0.1 - Factor applied to forgettability score for strength reduction
   purge_threshold: 0.01 # Strength below which nodes are eligible for permanent deletion by purge_weak_nodes
   purge_min_age_days: 60 # Minimum age (in days) before a node below threshold can be purged
 
