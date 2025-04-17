@@ -1724,6 +1724,7 @@ class GraphMemoryClient:
         else:
             logger.info("No node strengths were reduced in this maintenance cycle.")
 
+        # --- Moved Logging Block ---
         logger.info(f"--- Memory Maintenance Finished ({strength_reduced_count} strengths reduced) ---")
         # --- Tuning Log: Maintenance End ---
         log_tuning_event("MAINTENANCE_STRENGTH_END", {
@@ -1731,6 +1732,7 @@ class GraphMemoryClient:
             "strength_reduced_count": strength_reduced_count,
             "nodes_changed": nodes_changed,
         })
+        # --- End Moved Logging Block ---
 
 
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
@@ -3775,14 +3777,7 @@ class GraphMemoryClient:
             # Make sure rebuild respects status='active'
             self._rebuild_index_from_graph_embeddings()  # Rebuild should only include 'active' nodes now
             self._save_memory()  # Save changes after maintenance
-
-        logger.info(f"--- Memory Maintenance Finished ({strength_reduced_count} strengths reduced) ---")
-        # --- Tuning Log: Maintenance End ---
-        log_tuning_event("MAINTENANCE_STRENGTH_END", {
-            "personality": self.personality,
-            "strength_reduced_count": strength_reduced_count,
-            "nodes_changed": nodes_changed,
-        })
+        # --- Logging block moved from here ---
 
 
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
