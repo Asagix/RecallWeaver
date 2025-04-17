@@ -923,10 +923,10 @@ class PasteLineEdit(QLineEdit):
             return False
 
         urls = mime_data.urls()
-       # urls = mime_data.urls() # Removed duplicate line
-       if urls: # Corrected indentation
-           file_path = urls[0].toLocalFile()
-           gui_logger.debug(f"Checking URL path: {file_path}")
+        # urls = mime_data.urls() # Removed duplicate line
+        if urls: # Corrected indentation
+            file_path = urls[0].toLocalFile()
+            gui_logger.debug(f"Checking URL path: {file_path}")
            if file_path and os.path.isfile(file_path):
                # Let the main window handler decide if it's an image or generic file
                gui_logger.debug("Calling chat_window.handle_attach_file_path (from pasted URL).")
@@ -1101,6 +1101,37 @@ class ChatWindow(QMainWindow):
             #MemoryDeleteIndicator {{ color: #FF8C8C; }}
             #MemoryEditIndicator {{ color: #AAAAAA; }}
             #MemoryNeutralIndicator {{ color: #90CAF9; }}
+
+            /* --- NEW: Task Bubble Styles --- */
+            #TaskBubbleFrame {{
+                background-color: #2C2C2E; /* Slightly different background */
+                color: #B0B0B0; /* Lighter grey text */
+                border: 1px solid #444;
+                border-radius: 8px; /* Less rounded than chat bubbles */
+                margin-left: {self.bubble_edge_margin + 10}px; /* Indent slightly */
+                margin-right: {self.bubble_edge_margin + 10}px;
+                margin-top: 6px;
+                margin-bottom: 6px;
+                padding: 8px 12px; /* More padding */
+            }}
+            #TaskBubbleFrame QLabel {{ /* General labels inside */
+                background-color: transparent;
+                border: none;
+                padding: 0px;
+                color: #B0B0B0;
+            }}
+            #TaskLabel {{ /* The main message label */
+                font-style: italic;
+            }}
+            #TaskFilenameLink a {{ /* Style for the filename link */
+                color: #77AADD; /* Link color */
+                text-decoration: none;
+                font-weight: bold;
+            }}
+            #TaskFilenameLink a:hover {{
+                text-decoration: underline;
+            }}
+            /* --- End Task Bubble Styles --- */
 
             /* Input Frame */
             #InputFrame {{ background-color: #1E1E1E; border-top: 1px solid #333; padding: 5px; }}
@@ -1560,25 +1591,99 @@ class ChatWindow(QMainWindow):
 
     @pyqtSlot(str, str, str, str)
     def display_modification_confirmation(self, user_input, confirmation_message, action_type, target_info):
-         # (Implementation remains the same - calls display_message, adds indicator, re-enables via _finalize_display)
-         gui_logger.debug(f"GUI received confirmation. Action Type: {action_type}, Target: {target_info}, Msg: {confirmation_message}")
-         self.display_message("System", confirmation_message, object_name_suffix="ConfirmationMessage")
-         indicator_label = None; indicator_text = ""; object_name = "MemoryActionIndicator"
-         parts = action_type.split('_'); type_prefix = parts[0]; success_suffix = parts[-1] if len(parts) > 1 else "unknown"
-         action_category = "Memory";
-         if type_prefix in ["create", "append", "read", "file"]: action_category = "File"
-         elif type_prefix in ["add", "cal"]: action_category = "Calendar"
-         elif type_prefix in ["delete", "edit", "forget"]: action_category = "Memory"
-         action_desc = type_prefix.capitalize(); target_display = str(target_info)[:30] + ('...' if len(str(target_info)) > 30 else '')
-         if success_suffix == "success": indicator_text = f"[{action_category} Action: {action_desc} OK]"; object_name = "MemoryEditIndicator"
-         elif success_suffix == "fail" or success_suffix == "exception": indicator_text = f"[{action_category} Action: {action_desc} Failed]"; object_name = "MemoryDeleteIndicator"
-         elif success_suffix == "clarify": object_name = "MemoryNeutralIndicator"; indicator_text = f"[Needs Info for {action_desc}]"
-         elif type_prefix == "none": indicator_text = "[No Action Taken]"; object_name = "MemoryNeutralIndicator"
-         elif success_suffix == "unknown" or type_prefix in ["analysis", "processing", "error"]: indicator_text = "[Action Status Unknown/Error]"; object_name = "MemoryDeleteIndicator"
-         else: indicator_text = f"[Action: {action_type}]"
-         if indicator_text: indicator_label = QLabel(indicator_text); indicator_label.setWordWrap(True); indicator_label.setObjectName(object_name)
-         if indicator_label: indicator_layout = QHBoxLayout(); indicator_layout.setContentsMargins(self.bubble_edge_margin + 10, 0, self.bubble_side_margin, 0); indicator_layout.addWidget(indicator_label, 0, Qt.AlignmentFlag.AlignLeft); indicator_layout.addStretch(1); self._add_widget_to_chat_layout(indicator_layout)
-         self._finalize_display()
+        """Displays confirmation/result messages for actions, memory mods, etc., using a styled task bubble."""
+        gui_logger.debug(f"GUI received confirmation/result. Action Type: {action_type}, Target: {target_info}, Msg: {confirmation_message}")
+
+        # --- Determine Action Category and Status ---
+        parts = action_type.split('_'); type_prefix = parts[0]; success_suffix = parts[-1] if len(parts) > 1 else "unknown"
+        is_success = success_suffix == "success"
+        is_fail = success_suffix in ["fail", "exception"]
+        is_file_action = type_prefix in ["create", "append", "read", "delete", "list"] # Include list
+        is_calendar_action = type_prefix in ["add", "read"] and "calendar" in action_type # Be more specific
+        is_memory_action = type_prefix in ["delete", "edit", "forget"]
+
+        # --- Create Task Bubble Frame ---
+        task_frame = QFrame()
+        task_frame.setObjectName("TaskBubbleFrame")
+        task_layout = QVBoxLayout(task_frame)
+        task_layout.setContentsMargins(10, 8, 10, 8) # Slightly different margins
+        task_layout.setSpacing(4)
+
+        # --- Add Main Message Label ---
+        # Use confirmation_message directly, but maybe shorten very long file reads?
+        display_message = confirmation_message
+        if action_type == "read_file_success" and len(confirmation_message) > 300:
+             display_message = confirmation_message[:300] + "\n... (file content truncated)"
+
+        message_label = QLabel(display_message)
+        message_label.setWordWrap(True)
+        message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse) # Allow selecting text
+        message_label.setObjectName("TaskLabel")
+        task_layout.addWidget(message_label)
+
+        # --- Add Clickable File Link (if applicable and successful) ---
+        filename_to_link = None
+        if is_success and is_file_action and action_type != "list_files_success": # Don't link for list
+            # Extract filename from target_info or message if possible
+            # target_info might be args dict string or just filename
+            filename_match = re.search(r"'(.*?)'", target_info) # Try to find quoted filename in target_info
+            if filename_match:
+                filename_to_link = filename_match.group(1)
+            elif action_type in ["create_file_success", "append_file_success", "read_file_success"]:
+                 # Try extracting from the success message itself (less reliable)
+                 msg_match = re.search(r"'(.*?)'", confirmation_message)
+                 if msg_match: filename_to_link = msg_match.group(1)
+
+        if filename_to_link:
+            # Construct the full path using file_manager helper
+            workspace_path = file_manager.get_workspace_path(self.config, self.current_personality)
+            if workspace_path:
+                full_file_path = os.path.join(workspace_path, filename_to_link)
+                if os.path.exists(full_file_path):
+                    # Create file URL
+                    file_url = QUrl.fromLocalFile(full_file_path).toString()
+                    link_label = QLabel(f"<a href='{file_url}'>Open '{filename_to_link}'</a>")
+                    link_label.setOpenExternalLinks(False) # We handle the click
+                    link_label.linkActivated.connect(self.open_local_link)
+                    link_label.setObjectName("TaskFilenameLink")
+                    link_label.setToolTip(f"Click to open file: {full_file_path}")
+                    task_layout.addWidget(link_label)
+                else:
+                    gui_logger.warning(f"File path for link does not exist: {full_file_path}")
+            else:
+                gui_logger.warning("Could not get workspace path to create file link.")
+
+
+        # --- Add Task Bubble to Chat Layout ---
+        # Use a simple row layout to allow alignment (optional, could add directly)
+        row_layout = QHBoxLayout(); row_layout.setSpacing(0); row_layout.setContentsMargins(0, 0, 0, 0)
+        # Add some spacing before the task frame
+        row_layout.addSpacerItem(QSpacerItem(self.bubble_edge_margin + 10, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum))
+        row_layout.addWidget(task_frame)
+        row_layout.addStretch(1) # Push to left
+        self._add_widget_to_chat_layout(row_layout)
+
+        # --- Finalize UI State ---
+        # Determine status message based on success/failure
+        final_status = "Action Completed." if is_success else "Action Failed."
+        if action_type == "none": final_status = "No action taken."
+        elif "clarify" in action_type: final_status = "Waiting for clarification..." # Should be handled by finalize_display logic
+
+        self._finalize_display(status_msg=final_status, status_duration=4000)
+
+
+    @pyqtSlot(str)
+    def open_local_link(self, link_str: str):
+        """Opens a local file link using QDesktopServices."""
+        gui_logger.info(f"Attempting to open local link: {link_str}")
+        url = QUrl(link_str)
+        if url.isLocalFile():
+            opened = QDesktopServices.openUrl(url)
+            if not opened:
+                gui_logger.error(f"Failed to open local file link: {link_str}")
+                QMessageBox.warning(self, "Open Failed", f"Could not open the file:\n{url.toLocalFile()}")
+        else:
+            gui_logger.warning(f"Link is not a local file: {link_str}")
 
 
     @pyqtSlot(str, str)
