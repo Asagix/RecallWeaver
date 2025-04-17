@@ -236,17 +236,17 @@ subconscious_drives:
     # Positive deviation = drive level is *higher* than baseline (need potentially met/overshot).
     # Negative deviation = drive level is *lower* than baseline (need potentially unmet).
     valence_factors: # How deviation affects Pleasantness (-1 to +1)
-      Connection: 0.15  # High connection satisfaction increases pleasantness. Low connection decreases it.
-      Safety: -0.25     # High safety frustration (low level) strongly decreases pleasantness. High safety satisfaction slightly increases it.
-      Understanding: 0.1 # High understanding satisfaction increases pleasantness. Frustration decreases it.
-      Novelty: 0.05    # High novelty satisfaction slightly increases pleasantness.
-      Control: 0.1     # High control satisfaction increases pleasantness. Frustration decreases it.
+      Connection: 0.15  # Positive deviation (met) -> more pleasant. Negative (unmet) -> less pleasant.
+      Safety: -0.25     # Positive deviation (safe) -> slightly less pleasant (complacent?). Negative (unsafe) -> much less pleasant.
+      Understanding: 0.1 # Positive deviation (understanding) -> more pleasant. Negative (confused) -> less pleasant.
+      Novelty: 0.1     # Positive deviation (stimulated) -> more pleasant. Negative (bored) -> less pleasant. (Changed sign from 0.05)
+      Control: 0.1     # Positive deviation (in control) -> more pleasant. Negative (loss of control) -> less pleasant.
     arousal_factors: # How deviation affects Activation/Energy (0 to 1)
-      Connection: 0.05 # High connection satisfaction slightly increases arousal.
-      Safety: -0.3     # High safety frustration (low level) strongly *increases* arousal (anxiety). High safety satisfaction decreases arousal (calm).
-      Understanding: 0.05 # Understanding satisfaction slightly increases arousal (engagement).
-      Novelty: 0.2     # High novelty satisfaction increases arousal (excitement). Frustration decreases it (boredom).
-      Control: 0.15    # High control satisfaction increases arousal (confidence). Frustration increases it (agitation).
+      Connection: 0.1  # Both high satisfaction and high frustration might increase arousal slightly. (Increased from 0.05)
+      Safety: -0.3     # Positive deviation (safe) -> decreases arousal (calm). Negative (unsafe) -> increases arousal (anxiety). (Correct)
+      Understanding: 0.1 # Positive deviation (engaged) -> increases arousal. Negative (confused) -> increases arousal (frustration). (Increased from 0.05)
+      Novelty: 0.25    # Positive deviation (excited) -> increases arousal. Negative (bored) -> decreases arousal. (Increased from 0.2)
+      Control: -0.15   # Positive deviation (competent) -> decreases arousal (calm control). Negative (loss of control) -> increases arousal (agitation). (Changed sign from 0.15)
     max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
 
 # --- Saliency Calculation ---

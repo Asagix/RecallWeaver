@@ -2098,7 +2098,9 @@ class GraphMemoryClient:
             "    - For `append_file`: Use `[ACTION: {\"action\": \"append_file\", \"args\": {\"filename\": \"target_file.txt\", \"content\": \"Text to append...\"}}]` (Generate the actual content to append).",
             "    - For `add_calendar_event`: Use `[ACTION: {\"action\": \"add_calendar_event\", \"args\": {\"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"description\": \"Event details...\"}}]`.",
             "    - **For `create_file`:** Signal your *intent* by providing a brief description. The system will handle filename/content generation separately. Use `[ACTION: {\"action\": \"create_file\", \"args\": {\"description\": \"Brief description of what to save, e.g., 'List of project ideas'\"}}]`.",
-            "  Only use the ACTION tag if you decide an action is necessary based on the context.]"
+            "  Only use the ACTION tag if you decide an action is necessary based on the context.]",
+            # --- NEW: Instruction for handling retrieved intentions ---
+            "[System Note: If you see a retrieved memory starting with 'Remember:', check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]"
         ]
         # Add each instruction line as a separate system turn for clarity
         for instruction in system_instructions:
@@ -2956,19 +2958,24 @@ class GraphMemoryClient:
                                             action_result_message = f"[System: Action 'create_file' ({generated_filename}) {'succeeded' if action_success else 'failed'}. {action_message}]"
                                         else:
                                             logger.error("Generated file content JSON missing filename or content.")
-                                            action_result_message = "[System: Error - Failed to generate valid filename/content for file creation.]"
+                                            # More specific user feedback
+                                            action_result_message = f"[System: I intended to create a file about '{ai_description}', but failed to generate a valid filename or content.]"
                                     else:
                                          logger.error(f"Could not extract JSON from file generation response: {gen_response}")
-                                         action_result_message = "[System: Error - Invalid response format from file generation.]"
+                                         # More specific user feedback
+                                         action_result_message = f"[System: I intended to create a file about '{ai_description}', but received an invalid format from the content generator.]"
                                 except json.JSONDecodeError as e:
                                     logger.error(f"Failed to parse JSON from file generation response: {e}. String: '{gen_json_str if 'gen_json_str' in locals() else gen_response}'")
-                                    action_result_message = "[System: Error - Failed to parse file generation response.]"
+                                    # More specific user feedback
+                                    action_result_message = f"[System: I intended to create a file about '{ai_description}', but failed to parse the generated content.]"
                                 except Exception as e:
                                      logger.error(f"Error during file content generation/execution: {e}", exc_info=True)
-                                     action_result_message = f"[System: Error during file generation - {e}]"
+                                     # More specific user feedback
+                                     action_result_message = f"[System: I intended to create a file about '{ai_description}', but encountered an error: {e}]"
                             else:
                                 logger.error("Failed to load generate_file_content_prompt.txt")
-                                action_result_message = "[System: Error - Cannot generate file content, prompt missing.]"
+                                # More specific user feedback
+                                action_result_message = f"[System: I intended to create a file about '{ai_description}', but the content generation prompt is missing.]"
 
                         # --- Handle Other AI-Requested Actions ---
                         elif isinstance(action_data, dict) and "action" in action_data and "args" in action_data:
