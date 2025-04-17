@@ -3227,27 +3227,26 @@ class GraphMemoryClient:
                     else:
                         logger.error("Failed to add intention node to graph.")
             except Exception as intent_e:
-                 logger.error(f"Error during intention analysis/storage: {intent_e}", exc_info=True)
-
-
-        except Exception as e:
-            # Catch errors during interaction processing (e.g., the ValueError)
-            logger.error(f"Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-            # Assign error message to both ai_response and parsed_response
-            ai_response = f"Error during processing: {e}"
-            parsed_response = ai_response # Ensure parsed_response has a value
-            memory_chain_data = [] # Clear memory chain data on error
-            # --- Tuning Log: Interaction Error ---
-            log_tuning_event("INTERACTION_ERROR", {
-                "interaction_id": interaction_id,
-                "personality": self.personality,
-                "stage": "main_processing_loop",
-                "error": str(e),
-            })
-
         # --- Workspace Planning & Execution ---
-        workspace_action_results = [] # Initialize list for results
-        try:
+        # This is now handled separately by plan_and_execute, triggered by the needs_planning flag.
+        # The code block below is removed as it duplicates logic and is called separately.
+        # workspace_action_results = [] # Initialize list for results
+        # try:
+        #     logger.info("Checking for workspace plan generation...")
+        #     # ... (rest of the planning/execution logic within process_interaction was here) ...
+        # except Exception as plan_e:
+        #      logger.error(f"Unexpected error during workspace planning phase: {plan_e}", exc_info=True)
+
+        # --- Tuning Log: Interaction End ---
+        log_tuning_event("INTERACTION_END", {
+            "interaction_id": interaction_id,
+            "personality": self.personality,
+            "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
+            "retrieved_memory_count": len(memory_chain_data),
+            "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
+            "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
+            # "workspace_actions_attempted": len(workspace_action_results), # Removed
+        })
             logger.info("Checking for workspace plan generation...")
             # Prepare context for planning prompt
             planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in conversation_history[-5:]]) # Limit history for planning prompt
@@ -3326,12 +3325,12 @@ class GraphMemoryClient:
             logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
 
         # Return conversational response, memories, AI node UUID, and the planning flag
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None #needs_planning
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
 
         except Exception as e:
-        # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
-        logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-        # Assign error message to both ai_response and parsed_response
+            # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
+            logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
+            # Assign error message to both ai_response and parsed_response
         ai_response = f"Error during processing: {e}"
         parsed_response = ai_response # Ensure parsed_response has a value
         memory_chain_data = [] # Clear memory chain data on error
