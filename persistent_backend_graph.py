@@ -5831,8 +5831,9 @@ class GraphMemoryClient:
 
         except Exception as plan_exec_e:
              logger.error(f"Unexpected error during plan_and_execute: {plan_exec_e}", exc_info=True)
-             # Return 4-tuple for consistency
-             workspace_action_results.append((False, f"Internal Error during planning/execution: {plan_exec_e}", "planning_exception", False))
+             # Return 4-tuple for consistency - include exception type in message
+             error_type = type(plan_exec_e).__name__
+             workspace_action_results.append((False, f"Internal Error during planning/execution ({error_type}): {plan_exec_e}", "planning_exception", False))
 
         logger.info(f"--- Finished Separate Workspace Planning & Execution ---")
         return workspace_action_results
