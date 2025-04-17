@@ -401,21 +401,35 @@ class Worker(QThread):
                 # Call the new backend method
                 workspace_results = self.client.plan_and_execute(user_input, history_context)
 
-                # Emit results using modification_response_ready signal for each result
+                # Emit results using modification_response_ready signal for each result, unless silent & successful
                 if workspace_results:
                     gui_logger.info(f"Received {len(workspace_results)} results from plan_and_execute.")
+                    actions_reported = 0
                     for result_tuple in workspace_results:
-                        if isinstance(result_tuple, tuple) and len(result_tuple) == 3:
-                            success, message, action_suffix = result_tuple
-                            # Use placeholders for user_input and target_info
+                        # Expecting 4-tuple: (success, message, action_suffix, silent_and_successful)
+                        if isinstance(result_tuple, tuple) and len(result_tuple) == 4:
+                            success, message, action_suffix, silent_and_successful = result_tuple
+
+                            if silent_and_successful:
+                                gui_logger.info(f"Skipping GUI notification for silent successful action: {action_suffix}")
+                                continue # Skip emitting signal for this action
+
+                            # If not silent or if failed, emit the signal
+                            actions_reported += 1
                             action_name = action_suffix.split('_')[0] if '_' in action_suffix else action_suffix
                             placeholder_input = f"Workspace Action: {action_name}"
                             placeholder_target = "" # Target info not directly available here
                             self.signals.modification_response_ready.emit(placeholder_input, strip_emojis(message), action_suffix, placeholder_target) # Strip emojis from message
                         else:
-                            gui_logger.error(f"Invalid result format from plan_and_execute: {result_tuple}")
+                            gui_logger.error(f"Invalid result format (expected 4-tuple) from plan_and_execute: {result_tuple}")
                             self.signals.error.emit(f"Received invalid workspace result format: {result_tuple}")
-                    self.signals.log_message.emit("Workspace actions finished.")
+
+                    if actions_reported > 0:
+                        self.signals.log_message.emit(f"Workspace actions finished ({actions_reported} reported).")
+                    else:
+                        # This case means either no actions were planned, or all planned actions were silent and successful.
+                        gui_logger.info("No workspace action results to report to GUI (empty plan or all silent successes).")
+                        self.signals.log_message.emit("Workspace actions finished silently.") # Provide some feedback
                 else:
                     gui_logger.info("plan_and_execute returned no results (no plan or empty plan).")
                     self.signals.log_message.emit("No workspace actions were needed.")

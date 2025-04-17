@@ -34,13 +34,14 @@ class WorkspaceAgent:
 
         Returns:
             A list of result tuples for each executed action:
-            [(success: bool, message: str, action_suffix: str), ...]
+            [(success: bool, message: str, action_suffix: str, silent_and_successful: bool), ...]
             Execution stops after the first failure.
         """
         results = []
         if not isinstance(plan, list):
             logger.error(f"Invalid plan format received: Expected list, got {type(plan)}")
-            results.append((False, "Internal Error: Invalid plan format received.", "plan_error"))
+            # Return 4-tuple for consistency
+            results.append((False, "Internal Error: Invalid plan format received.", "plan_error", False))
             return results
 
         logger.info(f"Executing workspace plan with {len(plan)} step(s)...")
@@ -48,13 +49,17 @@ class WorkspaceAgent:
         for i, step in enumerate(plan):
             action_result = None
             action_name = "unknown"
+            args = {} # Initialize args here
+            is_silent_request = False # Initialize silent flag
             try:
                 if not isinstance(step, dict) or "action" not in step or "args" not in step:
                     logger.error(f"Invalid action step format in plan (Step {i+1}): {step}")
-                    action_result = (False, f"Internal Error: Invalid action format in step {i+1}.", "step_error")
+                    # Return 4-tuple for consistency
+                    action_result = (False, f"Internal Error: Invalid action format in step {i+1}.", "step_error", False)
                 else:
                     action_name = step.get("action", "unknown")
-                    args = step.get("args", {})
+                    args = step.get("args", {}) # Assign args here
+                    is_silent_request = args.get("silent", False) is True # Check silent flag from args
                     logger.info(f"Executing Step {i+1}/{len(plan)}: Action='{action_name}', Args={args}")
 
                     # Dispatch to specific execution method
@@ -76,25 +81,37 @@ class WorkspaceAgent:
                         action_result = self._execute_consolidate_files(args)
                     else:
                         logger.error(f"Unsupported action '{action_name}' in plan (Step {i+1}).")
-                        action_result = (False, f"Error: Action '{action_name}' is not supported.", f"{action_name}_unsupported")
+                        # Return 4-tuple for consistency
+                        action_result = (False, f"Error: Action '{action_name}' is not supported.", f"{action_name}_unsupported", False)
 
             except Exception as e:
                 logger.error(f"Unexpected exception executing plan step {i+1} (Action: {action_name}): {e}", exc_info=True)
-                action_result = (False, f"Internal error during execution of '{action_name}': {e}", f"{action_name}_exception")
+                # Return 4-tuple for consistency
+                action_result = (False, f"Internal error during execution of '{action_name}': {e}", f"{action_name}_exception", False)
 
             # Append result and check for failure
             if action_result:
-                results.append(action_result)
-                if not action_result[0]: # Check success flag (index 0)
+                # Determine the 4th element (silent_and_successful)
+                success, _, _, _ = action_result # Unpack to get success status
+                silent_and_successful = success and is_silent_request
+                # Reconstruct the tuple with the 4th element
+                final_result_tuple = (action_result[0], action_result[1], action_result[2], silent_and_successful)
+                results.append(final_result_tuple)
+                if not success: # Check success flag (index 0)
                     logger.warning(f"Plan execution stopped at step {i+1} due to failure.")
                     break # Stop execution on first failure
             else:
                 # Should not happen if logic is correct, but handle defensively
                 logger.error(f"Action result was None for step {i+1} (Action: {action_name}). Stopping plan.")
-                results.append((False, f"Internal Error: No result returned for action '{action_name}'.", f"{action_name}_internal_error"))
+                # Return 4-tuple for consistency
+                results.append((False, f"Internal Error: No result returned for action '{action_name}'.", f"{action_name}_internal_error", False))
                 break
 
         logger.info(f"Workspace plan execution finished. {len(results)} step(s) attempted.")
+        # Log which actions were silent and successful
+        silent_success_count = sum(1 for r in results if r[3])
+        if silent_success_count > 0:
+            logger.info(f"  {silent_success_count} action(s) were executed silently and successfully.")
         return results
 
     # --- Private Execution Helper Methods ---
