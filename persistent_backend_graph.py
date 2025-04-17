@@ -2013,7 +2013,7 @@ class GraphMemoryClient:
         # Add instruction about temporal awareness AND action capability
         system_instructions = [
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
-            "[System Note: You can perform actions like managing files or calendar events. To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`. Available actions: `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `add_calendar_event`, `read_calendar`. Generate appropriate filenames and content based on the conversation. Only use the ACTION tag if you decide an action is necessary based on the context.]"
+            "[System Note: You can perform actions like managing files or calendar events. To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`. Available actions: `create_file` (overwrites), `append_file`, `list_files`, `read_file`, `delete_file`, `add_calendar_event`, `read_calendar`. To edit a file, first `read_file`, then use `create_file` with the modified content. Generate appropriate filenames and content based on the conversation. Only use the ACTION tag if you decide an action is necessary based on the context.]" # Removed edit_file, added instruction
         ]
         final_parts.append(f"{model_tag}{system_instructions[0]}{end_turn}\n")
         final_parts.append(f"{model_tag}{system_instructions[1]}{end_turn}\n")
