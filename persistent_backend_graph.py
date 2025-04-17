@@ -298,15 +298,20 @@ class GraphMemoryClient:
              # Consider if this should be a fatal error preventing initialization
              # raise # Or handle more gracefully
 
-        # Load Tokenizer
-        try:
-             logger.info(f"Loading tokenizer: {tokenizer_name}")
-             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
-             logger.info("Tokenizer loaded.")
-        except Exception as e:
-             logger.error(f"Failed loading tokenizer '{tokenizer_name}': {e}", exc_info=True)
-             self.tokenizer = None # Ensure tokenizer is None if loading fails
-             # Decide if this is fatal
+        # Load Tokenizer (only if tokenizer_name was successfully loaded from config)
+        if tokenizer_name:
+            try:
+                 logger.info(f"Loading tokenizer from: {tokenizer_name}")
+                 # Use the path loaded from config
+                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+                 logger.info("Tokenizer loaded.")
+            except Exception as e:
+                 logger.error(f"Failed loading tokenizer from '{tokenizer_name}': {e}", exc_info=True)
+                 self.tokenizer = None # Ensure tokenizer is None if loading fails
+                 # Decide if this is fatal
+        else:
+             # Tokenizer name was missing from config, already logged error
+             self.tokenizer = None
 
         self._load_memory() # Loads data from self.data_dir
         self._load_initial_history() # Load initial history after main memory load
