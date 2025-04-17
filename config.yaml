@@ -250,6 +250,11 @@ activation:
     similarity_threshold: 0.25 # Max FAISS L2 distance for neighbors to interfere (Lower = more similar)
     penalty_factor: 0.90 # Multiplicative factor applied to activation of interfered nodes (e.g., 0.9 reduces activation by 10%)
     max_neighbors_check: 5 # How many nearest neighbors to check for interference
+
+    # --- Saliency Guarantee Threshold (Activation Spreading) ---
+    # Nodes with saliency >= this value are included in retrieval regardless of activation level.
+    guaranteed_saliency_threshold: 0.95 # Increased from 0.85
+
   # --- Emotional Context Bias ---
   emotional_context:
     enable: true
