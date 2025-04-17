@@ -19,6 +19,9 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer
 from networkx.readwrite import json_graph
 from datetime import datetime, timezone, timedelta
+
+from workspace_agent import WorkspaceAgent
+
 # Import zoneinfo safely
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -3264,7 +3267,7 @@ class GraphMemoryClient:
         })
 
         # Return conversational response, memories, AI node UUID, and the planning flag
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
+        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None #needs_planning
 
 
     # --- Consolidation ---
@@ -5238,20 +5241,22 @@ class GraphMemoryClient:
 
 
         # --- Update Autobiographical Model after consolidation ---
-        self._generate_autobiographical_model()
+            self._generate_autobiographical_model()
 
-        # --- Infer Second-Order Relationships ---
-        self._infer_second_order_relations()
+            # --- Infer Second-Order Relationships ---
+            self._infer_second_order_relations()
 
-        # --- Final Save (if not already saved by pruning) ---
-        saved_in_consolidation = False
-        if not (prune_summarized and summary_created and pruned_count > 0):
-            self._save_memory() # Save all changes (summary, concepts, relations, drives, ASM, inference)
-            saved_in_consolidation = True
+            # --- Final Save (if not already saved by pruning) ---
+            saved_in_consolidation = False
+            if not (prune_summarized and summary_created and pruned_count > 0):
+                self._save_memory() # Save all changes (summary, concepts, relations, drives, ASM, inference)
+                saved_in_consolidation = True
 
-        # --- Tuning Log: Consolidation End ---
-            "memory_saved": saved_in_consolidation,
-        })
+            # --- Tuning Log: Consolidation End ---
+            log_tuning_event("CONSOLIDATION_END", {
+                "personality": self.personality,
+                "memory_saved": saved_in_consolidation
+            })
 
     # --- NEW: Separate Planning & Execution Method ---
     def plan_and_execute(self, user_input: str, conversation_history: list) -> list[tuple[bool, str, str]]:
