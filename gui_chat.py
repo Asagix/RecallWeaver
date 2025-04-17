@@ -1797,10 +1797,9 @@ class ChatWindow(QMainWindow):
            self.statusBar().showMessage(f"Ready to send with {placeholder_prefix.lower()}: {file_name}", 5000)
 
        except Exception as e:
-           gui_logger.error(f"Error handling attachment payload for {payload.get('filename', '?')}: {e}",
-                            exc_info=True)
-            self.display_error(f"Error attaching file: {e}")
-            self.clear_attachment()
+           gui_logger.error(f"Error handling attachment payload for {payload.get('filename', '?')}: {e}", exc_info=True)
+           # Just log and clear, don't call display_error which might trigger finalize_display prematurely
+           self.clear_attachment()
 
     # --- Removed duplicate handle_attach_payload method ---
 
