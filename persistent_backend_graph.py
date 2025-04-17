@@ -3414,7 +3414,8 @@ class GraphMemoryClient:
                              logger.info(f"Retrieved {len(active_intentions)} active intention nodes (no initial search results).")
                         except Exception as intent_e: logger.error(f"Error retrieving intention nodes: {intent_e}", exc_info=True)
                         memory_chain_data = active_intentions # Only intentions if no other memories
-                        effective_mood_used = mood_for_retrieval # Use the mood passed in if retrieval didn't run fully
+                        # Use the mood stored in the instance attribute directly when no retrieval happened
+                        effective_mood_used = self.last_interaction_mood
                 else:
                     logger.warning("Input started with [Image:] but wasn't handled as attachment? Proceeding without memory.")
 
