@@ -2144,7 +2144,10 @@ class GraphMemoryClient:
                     ws_parts.append("[Remaining files omitted due to context length limit]")
                     break # Stop adding files
 
-            workspace_context_str = f"{model_tag}{'\n'.join(ws_parts)}{end_turn}\n"
+            # Join the parts into a single string first
+            workspace_content = "\n".join(ws_parts)
+            # Then use the joined string in the f-string
+            workspace_context_str = f"{model_tag}{workspace_content}{end_turn}\n"
 
         # Recalculate memory/history budget based on actual workspace tokens used
         try: actual_ws_tokens = len(tokenizer.encode(workspace_context_str))
