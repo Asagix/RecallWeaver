@@ -42,8 +42,57 @@ import file_manager # Assuming file_manager.py exists in the same directory
 DEFAULT_CONFIG_PATH = "config.yaml"
 
 # --- Logging Setup ---
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__) # Define logger for this module
+# General logger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s') # Set default level higher
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO) # Set level for general logger
+
+# --- Dedicated Tuning Logger ---
+# Logs structured data for parameter analysis to a separate file
+tuning_logger = logging.getLogger('TuningLogger')
+tuning_logger.setLevel(logging.DEBUG) # Capture all tuning events
+tuning_logger.propagate = False # Prevent tuning logs from going to the main handler
+
+# Remove existing handlers for tuning_logger if any (e.g., during reload)
+for handler in tuning_logger.handlers[:]:
+    tuning_logger.removeHandler(handler)
+    handler.close()
+
+# Add a specific handler for the tuning log file
+try:
+    # Ensure the log directory exists (relative to this script)
+    log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    tuning_log_file = os.path.join(log_dir, 'tuning_log.jsonl')
+
+    # Use FileHandler to append to the tuning log file
+    tuning_handler = logging.FileHandler(tuning_log_file, mode='a', encoding='utf-8')
+    # Use a simple formatter that just outputs the message (which will be JSON)
+    tuning_formatter = logging.Formatter('%(message)s')
+    tuning_handler.setFormatter(tuning_formatter)
+    tuning_logger.addHandler(tuning_handler)
+    tuning_logger.info(json.dumps({"event_type": "TUNING_LOG_INIT", "timestamp": datetime.now(timezone.utc).isoformat()}))
+except Exception as e:
+    logger.error(f"!!! Failed to configure tuning logger: {e}. Tuning logs will not be saved. !!!", exc_info=True)
+    # Optionally disable tuning logging if setup fails
+    tuning_logger.disabled = True
+
+
+# --- Helper for Tuning Log ---
+def log_tuning_event(event_type: str, data: dict):
+    """Logs a structured event to the tuning log file."""
+    if tuning_logger.disabled: return
+    try:
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": event_type,
+            "data": data # The specific data for this event type
+        }
+        tuning_logger.debug(json.dumps(log_entry)) # Use debug level for events
+    except Exception as e:
+        # Log error to the main logger if tuning log fails
+        logger.error(f"Error logging tuning event '{event_type}': {e}", exc_info=True)
+
 
 class GraphMemoryClient:
     """ Manages the persistent graph memory system, loading config from YAML. """
@@ -913,6 +962,19 @@ class GraphMemoryClient:
         emo_penalty = emo_ctx_cfg.get('penalty_factor', 0.0) # Subtractive penalty
 
         logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (SalInf: {activation_influence:.2f}, GuarSal>=: {guaranteed_saliency_threshold}, FocusBoost: {context_focus_boost}, RecentConcepts: {len(recent_concept_uuids_set)}, EmoCtx: {emo_ctx_enabled})")
+        # --- Tuning Log: Retrieval Start ---
+        # Note: interaction_id is not directly available here, log context separately
+        log_tuning_event("RETRIEVAL_START", {
+            "personality": self.personality,
+            "initial_node_uuids": initial_node_uuids,
+            "recent_concept_uuids": list(recent_concept_uuids_set),
+            "current_mood": effective_mood, # Log the potentially adjusted mood
+            "saliency_influence": activation_influence,
+            "guaranteed_saliency_threshold": guaranteed_saliency_threshold,
+            "context_focus_boost": context_focus_boost,
+            "emotional_context_enabled": emo_ctx_enabled,
+        })
+
         if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
 
         activation_levels = defaultdict(float)
@@ -1151,6 +1213,13 @@ class GraphMemoryClient:
                  logger.info("No interference applied in this retrieval.")
         else:
              logger.debug("Interference simulation disabled or index unavailable.")
+        # --- Tuning Log: Interference Result ---
+        log_tuning_event("RETRIEVAL_INTERFERENCE_RESULT", {
+            "personality": self.personality,
+            "initial_node_uuids": initial_node_uuids, # Include for context
+            "interference_applied_count": interference_applied_count if 'interference_applied_count' in locals() else 0,
+            "penalized_node_uuids": list(penalized_nodes) if 'penalized_nodes' in locals() else [],
+        })
 
 
         # --- Final Selection & Update ---
@@ -1298,6 +1367,25 @@ class GraphMemoryClient:
             logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Str:{strength_str} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{node.get('text', 'N/A')[:80]}...'")
         logger.debug("------------------------------------")
 
+        # --- Tuning Log: Retrieval Result ---
+        final_retrieved_data = [{
+            "uuid": n['uuid'],
+            "type": n.get('node_type'),
+            "final_activation": n.get('final_activation'),
+            "saliency_score": n.get('saliency_score'),
+            "guaranteed": n.get('guaranteed_inclusion'),
+            "text_preview": n.get('text', '')[:50]
+        } for n in relevant_nodes]
+
+        log_tuning_event("RETRIEVAL_RESULT", {
+            "personality": self.personality,
+            "initial_node_uuids": initial_node_uuids, # Include for context
+            "activation_threshold": activation_threshold,
+            "guaranteed_saliency_threshold": guaranteed_saliency_threshold,
+            "final_retrieved_count": len(relevant_nodes),
+            "final_retrieved_nodes": final_retrieved_data,
+        })
+
         return relevant_nodes
 
 
@@ -1340,6 +1428,15 @@ class GraphMemoryClient:
                 if new_saliency != current_saliency:
                     self.graph.nodes[node_uuid]['saliency_score'] = new_saliency
                     logger.info(f"Updated saliency for {node_uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f}")
+                    # --- Tuning Log: Saliency Update ---
+                    log_tuning_event("SALIENCY_UPDATE", {
+                        "personality": self.personality,
+                        "node_uuid": node_uuid,
+                        "direction": direction,
+                        "feedback_factor": feedback_factor,
+                        "old_saliency": current_saliency,
+                        "new_saliency": new_saliency,
+                    })
                     # Save memory after update? Could be frequent. Maybe defer saving?
                     # Let's save for now to ensure persistence.
                     self._save_memory()
@@ -1406,8 +1503,21 @@ class GraphMemoryClient:
             candidate_uuids.append(uuid)
 
         logger.info(f"Found {len(candidate_uuids)} candidate nodes for potential strength reduction.")
+        # --- Tuning Log: Maintenance Candidates ---
+        log_tuning_event("MAINTENANCE_STRENGTH_CANDIDATES", {
+            "personality": self.personality,
+            "candidate_count": len(candidate_uuids),
+            "candidate_uuids": candidate_uuids, # Log all candidates
+        })
+
         if not candidate_uuids:
             logger.info("--- Memory Maintenance Finished (No candidates) ---")
+            # --- Tuning Log: Maintenance End ---
+            log_tuning_event("MAINTENANCE_STRENGTH_END", {
+                "personality": self.personality,
+                "strength_reduced_count": 0,
+                "nodes_changed": False,
+            })
             return
 
         # 3. Calculate Forgettability Score and Reduce Strength for each candidate:
@@ -1418,6 +1528,14 @@ class GraphMemoryClient:
             node_data = self.graph.nodes[uuid]
             forget_score = self._calculate_forgettability(uuid, node_data, current_time, weights)
             logger.debug(f"  Node {uuid[:8]} ({node_data.get('node_type')}): Forgettability Score = {forget_score:.3f}")
+            # --- Tuning Log: Forgettability Score ---
+            log_tuning_event("MAINTENANCE_FORGETTABILITY_SCORE", {
+                "personality": self.personality,
+                "node_uuid": uuid,
+                "node_type": node_data.get('node_type'),
+                "forgettability_score": forget_score,
+                # Optionally log contributing factors if needed, but might be too verbose
+            })
 
             # 4. Reduce memory_strength based on score and decay rate
             current_strength = node_data.get('memory_strength', 1.0)
@@ -1431,6 +1549,16 @@ class GraphMemoryClient:
                 strength_reduced_count += 1
                 nodes_changed = True
                 logger.info(f"  Reduced strength for node {uuid[:8]} from {current_strength:.3f} to {new_strength:.3f} (ForgetScore: {forget_score:.3f}, Rate: {strength_decay_rate})")
+                # --- Tuning Log: Strength Reduced ---
+                log_tuning_event("MAINTENANCE_STRENGTH_REDUCED", {
+                    "personality": self.personality,
+                    "node_uuid": uuid,
+                    "node_type": node_data.get('node_type'),
+                    "forgettability_score": forget_score,
+                    "old_strength": current_strength,
+                    "new_strength": new_strength,
+                    "decay_rate": strength_decay_rate,
+                })
             # else:
                 # logger.debug(f"  Strength for node {uuid[:8]} remains {current_strength:.3f} (Reduction: {strength_reduction:.3f})")
 
@@ -1442,6 +1570,12 @@ class GraphMemoryClient:
             logger.info("No node strengths were reduced in this maintenance cycle.")
 
         logger.info(f"--- Memory Maintenance Finished ({strength_reduced_count} strengths reduced) ---")
+        # --- Tuning Log: Maintenance End ---
+        log_tuning_event("MAINTENANCE_STRENGTH_END", {
+            "personality": self.personality,
+            "strength_reduced_count": strength_reduced_count,
+            "nodes_changed": nodes_changed,
+        })
 
 
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
@@ -1577,6 +1711,12 @@ class GraphMemoryClient:
         min_age_seconds = min_age_days * 24 * 3600
 
         logger.warning(f"--- Purging Weak Nodes (Strength < {purge_threshold}, Age > {min_age_days} days) ---")
+        # --- Tuning Log: Purge Start ---
+        log_tuning_event("PURGE_START", {
+            "personality": self.personality,
+            "strength_threshold": purge_threshold,
+            "min_age_days": min_age_days,
+        })
 
         purge_count = 0
         current_time = time.time()
@@ -1619,6 +1759,13 @@ class GraphMemoryClient:
             # delete_memory_entry already rebuilds/saves if successful.
         else:
             logger.info("--- Purge Complete: No weak nodes met the criteria for purging. ---")
+
+        # --- Tuning Log: Purge End ---
+        log_tuning_event("PURGE_END", {
+            "personality": self.personality,
+            "purged_count": purge_count,
+            "purged_uuids": nodes_to_purge, # Log UUIDs that were targeted
+        })
 
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
@@ -1711,6 +1858,18 @@ class GraphMemoryClient:
         mem_budget = int(avail_budget * mem_budget_ratio)
         hist_budget = avail_budget - mem_budget
         logger.debug(f"Token Budget Allocation: Memory={mem_budget}, History={hist_budget}") # Corrected logger name
+        # --- Tuning Log: Prompt Budgeting ---
+        # Note: interaction_id not available here
+        log_tuning_event("PROMPT_BUDGETING", {
+            "personality": self.personality,
+            "user_input_preview": user_input[:100],
+            "max_context_tokens": max_context_tokens,
+            "fixed_tokens": fixed_tokens,
+            "headroom": context_headroom,
+            "available_budget": avail_budget,
+            "memory_budget": mem_budget,
+            "history_budget": hist_budget,
+        })
 
         # --- Memory Context Construction ---
         # (This part remains the same - assumes it uses 'logger' correctly if needed internally)
@@ -1842,6 +2001,19 @@ class GraphMemoryClient:
                  logger.warning(f"Final prompt ({final_tok_count} tokens) close to max context ({max_context_tokens}). Less headroom ({max_context_tokens-final_tok_count}).") # Corrected logger name
         except Exception as e:
             logger.error(f"Tokenization error for final prompt: {e}") # Corrected logger name
+            final_tok_count = -1 # Indicate error
+
+        # --- Tuning Log: Prompt Construction Result ---
+        log_tuning_event("PROMPT_CONSTRUCTION_RESULT", {
+            "personality": self.personality,
+            "user_input_preview": user_input[:100],
+            "included_memory_uuids": included_mem_uuids, # From memory construction block
+            "included_history_turns": included_hist_count, # From history construction block
+            "final_token_count": final_tok_count,
+            "max_context_tokens": max_context_tokens,
+            "prompt_preview_start": final_prompt[:200],
+            "prompt_preview_end": final_prompt[-200:],
+        })
 
         return final_prompt
 
@@ -2335,11 +2507,28 @@ class GraphMemoryClient:
     def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> tuple[str, list]:
         """Processes user input (text and optional image attachment), calls appropriate LLM API, updates memory."""
         logger.debug(f"PROCESS_INTERACTION START: Has embedder? {hasattr(self, 'embedder')}")
+        # --- Tuning Log: Interaction Start ---
+        interaction_id = str(uuid.uuid4()) # Unique ID for this interaction
+        log_tuning_event("INTERACTION_START", {
+            "interaction_id": interaction_id,
+            "personality": self.personality,
+            "user_input_preview": user_input[:100],
+            "has_attachment": bool(attachment_data),
+            "attachment_type": attachment_data.get('type') if attachment_data else None,
+        })
+
         if not hasattr(self, 'embedder') or self.embedder is None:
              logger.error("PROCESS_INTERACTION ERROR: Cannot proceed without embedder!")
+             # --- Tuning Log: Interaction Error ---
+             log_tuning_event("INTERACTION_ERROR", {
+                 "interaction_id": interaction_id,
+                 "personality": self.personality,
+                 "stage": "embedder_check",
+                 "error": "Embedder not initialized",
+             })
              return "Error: Backend embedder not initialized correctly.", []
 
-        logger.info(f"Processing interaction: Input='{user_input[:50]}...' Has Attachment: {bool(attachment_data)}")
+        logger.info(f"Processing interaction (ID: {interaction_id[:8]}): Input='{user_input[:50]}...' Has Attachment: {bool(attachment_data)}")
         if attachment_data: logger.debug(f"Attachment details: type={attachment_data.get('type')}, filename={attachment_data.get('filename')}")
 
         # Initialize variables that might not be assigned in all paths
@@ -2393,6 +2582,13 @@ class GraphMemoryClient:
                 if not user_input.strip().startswith("[Image:"):
                     # --- Classify Query Type ---
                     query_type = self._classify_query_type(user_input) # Classify before search
+                    # --- Tuning Log: Query Classification ---
+                    log_tuning_event("QUERY_CLASSIFICATION", {
+                        "interaction_id": interaction_id,
+                        "personality": self.personality,
+                        "query_preview": user_input[:100],
+                        "classified_type": query_type,
+                    })
 
                     logger.info(f"Searching initial nodes (Query Type: {query_type})...")
                     max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
@@ -2400,6 +2596,16 @@ class GraphMemoryClient:
                     initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
                     initial_uuids = [uid for uid, score in initial_nodes]
                     logger.info(f"Initial UUIDs: {initial_uuids}")
+                    # --- Tuning Log: Initial Search Results ---
+                    log_tuning_event("INITIAL_SEARCH_RESULT", {
+                        "interaction_id": interaction_id,
+                        "personality": self.personality,
+                        "query_preview": user_input[:100],
+                        "query_type": query_type,
+                        "initial_node_scores": initial_nodes, # List of (uuid, score)
+                        "initial_uuids_selected": initial_uuids,
+                    })
+
 
                     if initial_uuids:
                         # --- Use context from PREVIOUS interaction for retrieval bias ---
@@ -2515,11 +2721,28 @@ class GraphMemoryClient:
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError)
-            logger.error(f"Error during process_interaction: {e}", exc_info=True)
+            logger.error(f"Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
             # Assign error message to both ai_response and parsed_response
             ai_response = f"Error during processing: {e}"
             parsed_response = ai_response # Ensure parsed_response has a value
             memory_chain_data = [] # Clear memory chain data on error
+            # --- Tuning Log: Interaction Error ---
+            log_tuning_event("INTERACTION_ERROR", {
+                "interaction_id": interaction_id,
+                "personality": self.personality,
+                "stage": "main_processing_loop",
+                "error": str(e),
+            })
+
+        # --- Tuning Log: Interaction End ---
+        log_tuning_event("INTERACTION_END", {
+            "interaction_id": interaction_id,
+            "personality": self.personality,
+            "final_response_preview": parsed_response[:100],
+            "retrieved_memory_count": len(memory_chain_data),
+            "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
+            "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
+        })
 
         # Return the response to be displayed and the memory chain (even if empty)
         return parsed_response, memory_chain_data
@@ -4021,6 +4244,9 @@ class GraphMemoryClient:
         relation extraction, and pruning.
         """
         logger.info("--- Running Consolidation ---")
+        # --- Tuning Log: Consolidation Start ---
+        log_tuning_event("CONSOLIDATION_START", {"personality": self.personality})
+
         consolidation_cfg = self.config.get('consolidation', {})
         min_nodes_for_consolidation = consolidation_cfg.get('min_nodes', 5)
         turn_count_for_consolidation = consolidation_cfg.get('turn_count', 10)
@@ -4052,9 +4278,22 @@ class GraphMemoryClient:
         if len(nodes_to_process) < min_nodes_for_consolidation:
             logger.info(
                 f"Consolidation skipped: Only {len(nodes_to_process)} suitable nodes found (min: {min_nodes_for_consolidation}).")
+            # --- Tuning Log: Consolidation End (Skipped) ---
+            log_tuning_event("CONSOLIDATION_END", {
+                "personality": self.personality,
+                "status": "skipped_min_nodes",
+                "nodes_processed_count": len(nodes_to_process),
+                "min_nodes_required": min_nodes_for_consolidation,
+            })
             return
 
         logger.info(f"Consolidating {len(nodes_to_process)} nodes: {nodes_to_process}")
+        # --- Tuning Log: Consolidation Nodes Selected ---
+        log_tuning_event("CONSOLIDATION_NODES_SELECTED", {
+            "personality": self.personality,
+            "selected_node_uuids": nodes_to_process,
+        })
+
 
         # --- 2. Prepare Context ---
         nodes_data.sort(key=lambda x: x.get('timestamp', ''))  # Ensure chronological order for context
@@ -4064,9 +4303,21 @@ class GraphMemoryClient:
         # --- 3. Summarization ---
         summary_node_uuid, summary_created = self._consolidate_summarize(context_text, nodes_data,
                                                                          nodes_to_process) # Use correct variable
+        # --- Tuning Log: Consolidation Summary ---
+        log_tuning_event("CONSOLIDATION_SUMMARY", {
+            "personality": self.personality,
+            "summary_created": summary_created,
+            "summary_node_uuid": summary_node_uuid,
+            "source_node_uuids": nodes_to_process,
+        })
 
         # --- 4. Concept Extraction (LLM) ---
         llm_concepts = self._consolidate_extract_concepts(context_text)
+        # --- Tuning Log: Consolidation Concepts ---
+        log_tuning_event("CONSOLIDATION_CONCEPTS_EXTRACTED", {
+            "personality": self.personality,
+            "llm_extracted_concepts": llm_concepts,
+        })
 
         # --- 5. Concept Deduplication & Node Management ---
         concept_node_map = {}  # Map: concept_text -> concept_node_uuid
@@ -4109,6 +4360,12 @@ class GraphMemoryClient:
                         logger.error(f"Failed to add new concept node for '{concept_text}'")
             logger.info(
                 f"Processed LLM concepts. Map size: {len(concept_node_map)}. New concepts added: {len(newly_added_concepts)}")
+            # --- Tuning Log: Consolidation Concepts Processed ---
+            log_tuning_event("CONSOLIDATION_CONCEPTS_PROCESSED", {
+                "personality": self.personality,
+                "final_concept_map": concept_node_map, # text -> uuid
+                "newly_added_concept_uuids": newly_added_concepts,
+            })
         else:
             logger.info("No concepts extracted by LLM.")
 
@@ -4180,6 +4437,11 @@ class GraphMemoryClient:
                 self._consolidate_extract_analogies(context_text, concept_node_map)
         else:
             logger.info("Skipping relation extraction as no concepts were identified.")
+            # --- Tuning Log: Consolidation Relations Skipped ---
+            log_tuning_event("CONSOLIDATION_RELATIONS_SKIPPED", {
+                "personality": self.personality,
+                "reason": "no_concepts_identified",
+            })
 
         # --- 7b. Emotion Analysis (Optional) ---
         if emotion_analysis_enabled and te:
@@ -4210,6 +4472,14 @@ class GraphMemoryClient:
                     logger.warning(f"Failed to prune summarized node {uuid_to_prune[:8]} (might have been deleted already).")
 
             logger.info(f"Pruned {pruned_count} summarized turn nodes.")
+            # --- Tuning Log: Consolidation Pruning ---
+            log_tuning_event("CONSOLIDATION_PRUNING", {
+                "personality": self.personality,
+                "pruning_enabled": prune_summarized,
+                "summary_created": summary_created,
+                "pruned_node_count": pruned_count,
+                "pruned_node_uuids": nodes_to_process[:pruned_count], # Assuming they were pruned in order
+            })
             # Note: delete_memory_entry already rebuilds the index and saves memory,
             # so no explicit rebuild/save needed here if pruning happened.
             # If no pruning happened, we still need to save other consolidation changes.
@@ -4248,9 +4518,22 @@ class GraphMemoryClient:
         self._infer_second_order_relations()
 
         # --- Final Save (if not already saved by pruning) ---
-        # Check if pruning happened and saved already
+        saved_in_consolidation = False
         if not (prune_summarized and summary_created and pruned_count > 0):
             self._save_memory() # Save all changes (summary, concepts, relations, drives, ASM, inference)
+            saved_in_consolidation = True
+
+        # --- Tuning Log: Consolidation End ---
+        log_tuning_event("CONSOLIDATION_END", {
+            "personality": self.personality,
+            "status": "completed",
+            "nodes_processed_count": len(nodes_to_process),
+            "summary_created": summary_created,
+            "concepts_added_count": len(newly_added_concepts) if 'newly_added_concepts' in locals() else 0,
+            # Add counts for relations if available from helpers
+            "pruned_node_count": pruned_count if 'pruned_count' in locals() else 0,
+            "memory_saved": saved_in_consolidation,
+        })
 
 #Function call
 if __name__ == "__main__":
