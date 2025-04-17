@@ -2350,7 +2350,7 @@ class GraphMemoryClient:
         logger.debug(f"Token counts: Max={max_context_tokens}, Fixed={fixed_tokens}, Headroom={context_headroom}, Total Available={total_available_budget}")
 
         if total_available_budget <= 0:
-            logger.warning(f"Low token budget ({avail_budget}). Only including current input and time.") # Corrected logger name
+            logger.warning(f"Low token budget ({total_available_budget}). Only including current input and time.") # Use total_available_budget
             final_prompt = time_info_block + user_input_fmt + final_model_tag
             logger.debug(f"Final Prompt (Low Budget): '{final_prompt[:150]}...'") # Corrected logger name
         # --- Calculate Budgets (Memory & History first, Workspace gets remainder) ---
@@ -2630,7 +2630,7 @@ class GraphMemoryClient:
 
         try:
             final_tok_count = len(tokenizer.encode(final_prompt))
-            logger.info(f"Constructed prompt final token count: {final_tok_count} (Budget Available: {avail_budget})") # Corrected logger name
+            logger.info(f"Constructed prompt final token count: {final_tok_count} (Budget Available: {total_available_budget})") # Use total_available_budget
             if final_tok_count > max_context_tokens:
                  logger.error(f"CRITICAL: Final prompt ({final_tok_count} tokens) EXCEEDS max context ({max_context_tokens}).") # Corrected logger name
             elif final_tok_count > max_context_tokens - context_headroom:
