@@ -1627,7 +1627,7 @@ class ChatWindow(QMainWindow):
         else: gui_logger.warning(f"Attempted to add unsupported item type to chat layout: {type(widget_or_layout)}")
         if stretch_item: self.chat_layout.addItem(stretch_item)
         else: self.chat_layout.addStretch()
-        QTimer.singleShot(50, self._scroll_to_bottom)
+        # QTimer.singleShot(50, self._scroll_to_bottom) # Removed: Scrolling handled by rangeChanged signal
 
 
     def _finalize_display(self, status_msg="Ready.", status_duration=3000):
