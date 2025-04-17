@@ -3225,36 +3225,6 @@ class GraphMemoryClient:
 
             # --- Check for Intention Request (if not handled as action/mod) ---
             # This check happens *after* adding the user/AI nodes, using the original user_input
-            for turn_uuid in nodes_to_check_for_concepts:
-                if turn_uuid and turn_uuid in self.graph:
-                    try:
-                        # Check outgoing edges for MENTIONS_CONCEPT
-                        for successor_uuid in self.graph.successors(turn_uuid):
-                            edge_data = self.graph.get_edge_data(turn_uuid, successor_uuid)
-                            if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
-                                if successor_uuid in self.graph and self.graph.nodes[successor_uuid].get('node_type') == 'concept':
-                                    current_turn_concept_uuids.add(successor_uuid)
-                                    # logger.debug(f"Identified concept '{successor_uuid[:8]}' mentioned by turn '{turn_uuid[:8]}' for next bias")
-                    except Exception as concept_find_e:
-                         logger.warning(f"Error finding concepts linked from turn {turn_uuid[:8]} for next bias: {concept_find_e}")
-            logger.info(f"Storing {len(current_turn_concept_uuids)} concepts for next interaction's bias.")
-            self.last_interaction_concept_uuids = current_turn_concept_uuids # Update state
-
-            current_turn_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
-            mood_nodes_found = 0
-            total_valence = 0.0
-            total_arousal = 0.0
-            for node_uuid in [user_node_uuid, ai_node_uuid]:
-                if node_uuid and node_uuid in self.graph:
-                    node_data = self.graph.nodes[node_uuid]
-                    default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
-                    default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
-                    total_valence += node_data.get('emotion_valence', default_v)
-                    total_arousal += node_data.get('emotion_arousal', default_a)
-                    mood_nodes_found += 1
-            if mood_nodes_found > 0:
-                current_turn_mood = (total_valence / mood_nodes_found, total_arousal / mood_nodes_found)
-            logger.info(f"Storing mood (Avg V/A): {current_turn_mood[0]:.2f} / {current_turn_mood[1]:.2f} for next interaction's bias.")
             # We might want to move this earlier if intention analysis should prevent normal response generation.
             # For V1, let's just store it alongside the normal interaction flow.
             try:
@@ -3334,6 +3304,7 @@ class GraphMemoryClient:
         current_turn_concept_uuids = set()
         nodes_to_check_for_concepts = [uuid for uuid in [user_node_uuid, ai_node_uuid] if uuid] # Filter out None UUIDs
 
+        # --- Find Concepts Mentioned in Current Turn ---
         for turn_uuid in nodes_to_check_for_concepts:
             if turn_uuid in self.graph:
                 try:
@@ -3349,11 +3320,12 @@ class GraphMemoryClient:
         logger.info(f"Storing {len(current_turn_concept_uuids)} concepts for next interaction's bias.")
         self.last_interaction_concept_uuids = current_turn_concept_uuids # Update state
 
+        # --- Calculate Average Mood of Current Turn ---
         current_turn_mood = (0.0, 0.1) # Default: Neutral valence, low arousal
         mood_nodes_found = 0
         total_valence = 0.0
         total_arousal = 0.0
-        for node_uuid in nodes_to_check_for_concepts:
+        for node_uuid in nodes_to_check_for_concepts: # Iterate over the same nodes used for concepts
             if node_uuid in self.graph:
                 node_data = self.graph.nodes[node_uuid]
                 default_v = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
