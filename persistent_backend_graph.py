@@ -201,6 +201,7 @@ class GraphMemoryClient:
             "short_term": {}, # {drive_name: activation_level} - Fluctuates based on recent events
             "long_term": {}   # {drive_name: level} - Stable, reflects core tendencies
         }
+        self.initial_history_turns = [] # Store last N turns from previous session
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
