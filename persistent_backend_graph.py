@@ -2883,11 +2883,14 @@ class GraphMemoryClient:
     # --- Main Interaction Loop ---
     # (Keep process_interaction from previous version - returns memory chain)
 
-    def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> tuple[str, list]:
+    def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> tuple[str, list, str | None, bool]:
         """Processes user input (text and optional image attachment), calls appropriate LLM API, updates memory."""
         logger.debug(f"PROCESS_INTERACTION START: Has embedder? {hasattr(self, 'embedder')}")
-        # --- Tuning Log: Interaction Start ---
         interaction_id = str(uuid.uuid4()) # Unique ID for this interaction
+        ai_node_uuid = None # Initialize ai_node_uuid here
+        user_node_uuid = None # Initialize user_node_uuid here
+
+        # --- Tuning Log: Interaction Start ---
         log_tuning_event("INTERACTION_START", {
             "interaction_id": interaction_id,
             "personality": self.personality,
@@ -3274,7 +3277,8 @@ class GraphMemoryClient:
             "error": str(e),
         })
         # Ensure needs_planning is False on error exit from this block
-        return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, False
+        # Use the initialized ai_node_uuid which might be None if error occurred before assignment
+        return parsed_response, memory_chain_data, ai_node_uuid, False
 
 
     # --- Consolidation ---
