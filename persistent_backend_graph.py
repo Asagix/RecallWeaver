@@ -3026,26 +3026,32 @@ class GraphMemoryClient:
                                                 "action": "create_file",
                                                 "args": {"filename": generated_filename, "content": generated_content}
                                             }
-                                            action_success, action_message, _ = self.execute_action(create_action_data)
+                                            action_success, action_message, _ = self.execute_action(create_action_data) # execute_action returns suffix, but we might override
                                             action_result_message = f"[System: Action 'create_file' ({generated_filename}) {'succeeded' if action_success else 'failed'}. {action_message}]"
+                                            action_suffix_for_info = f"create_file_{'success' if action_success else 'fail'}" # <<< Set suffix here
                                         else:
                                             logger.error("Generated file content JSON missing filename or content.")
+                                            action_suffix_for_info = "create_file_fail" # Set suffix for error case
                                             # More specific user feedback
                                             action_result_message = f"[System: I intended to create a file about '{ai_description}', but failed to generate a valid filename or content.]"
                                     else:
                                          logger.error(f"Could not extract JSON from file generation response: {gen_response}")
+                                         action_suffix_for_info = "create_file_fail" # Set suffix for error case
                                          # More specific user feedback
                                          action_result_message = f"[System: I intended to create a file about '{ai_description}', but received an invalid format from the content generator.]"
                                 except json.JSONDecodeError as e:
                                     logger.error(f"Failed to parse JSON from file generation response: {e}. String: '{gen_json_str if 'gen_json_str' in locals() else gen_response}'")
+                                    action_suffix_for_info = "create_file_fail" # Set suffix for error case
                                     # More specific user feedback
                                     action_result_message = f"[System: I intended to create a file about '{ai_description}', but failed to parse the generated content.]"
                                 except Exception as e:
                                      logger.error(f"Error during file content generation/execution: {e}", exc_info=True)
+                                     action_suffix_for_info = "create_file_exception" # Set suffix for error case
                                      # More specific user feedback
                                      action_result_message = f"[System: I intended to create a file about '{ai_description}', but encountered an error: {e}]"
                             else:
                                 logger.error("Failed to load generate_file_content_prompt.txt")
+                                action_suffix_for_info = "create_file_fail" # Set suffix for error case
                                 # More specific user feedback
                                 action_result_message = f"[System: I intended to create a file about '{ai_description}', but the content generation prompt is missing.]"
 
@@ -3053,18 +3059,39 @@ class GraphMemoryClient:
                         elif isinstance(action_data, dict) and "action" in action_data and "args" in action_data:
                             # Execute other actions directly as before
                             logger.info(f"Executing AI-requested action: {action_data.get('action')} with args: {action_data.get('args')}")
-                            action_success, action_message, _ = self.execute_action(action_data)
+                            action_success, action_message, returned_suffix = self.execute_action(action_data) # <<< Capture suffix
                             action_result_message = f"[System: Action '{action_data.get('action')}' {'succeeded' if action_success else 'failed'}. {action_message}]"
+                            action_suffix_for_info = returned_suffix # <<< Use returned suffix
                             logger.info(f"AI Action Result: {action_result_message}")
                         else:
                             logger.error(f"Invalid JSON structure in AI action request: {action_json_str}")
+                            action_suffix_for_info = "action_parse_fail" # Set suffix for error case
                             action_result_message = "[System: Error - Invalid action request format received from AI.]"
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse JSON from AI action request: {e}. String: '{action_json_str}'")
                         action_result_message = "[System: Error - Failed to parse action request from AI.]"
+                    except json.JSONDecodeError as e:
+                        # ... (handle JSON error) ...
+                        action_result_message = "[System: Error - Failed to parse action request from AI.]" # Set message
+                        action_suffix_for_info = "action_parse_fail" # Set suffix
                     except Exception as e:
-                         logger.error(f"Error executing AI-requested action: {e}", exc_info=True)
-                         action_result_message = f"[System: Error executing action - {e}]"
+                         # ... (handle execution error) ...
+                         action_result_message = f"[System: Error executing action - {e}]" # Set message
+                         action_suffix_for_info = f"{action_data.get('action', 'unknown')}_exception" # Try to get action name
+
+                    # --- Construct action_result_info HERE, inside the if action_match block ---
+                    if action_result_message: # Only create if a message was generated
+                        action_executed = action_data.get("action", "unknown") if 'action_data' in locals() else "unknown"
+                        args_executed = action_data.get("args", {}) if 'action_data' in locals() else {}
+                        target_info_placeholder = str(args_executed)[:100]
+
+                        action_result_info = {
+                            "message": action_result_message,
+                            "action_type": action_suffix_for_info, # Use the suffix determined above
+                            "target_info": target_info_placeholder
+                        }
+                        logger.debug(f"Prepared action_result_info (inside action_match): {action_result_info}")
+                    # --- End construction block ---
                 else:
                      logger.debug("No AI action request tag found in response.")
 
@@ -3168,29 +3195,8 @@ class GraphMemoryClient:
             "action_executed": action_result_message is not None,
         })
 
-        # --- Prepare Action Result Info (if any) ---
-        action_result_info = None
-        if action_result_message:
-            # Need action_type (suffix) and target_info for the signal
-            # These should be available from the execute_action call context
-            # Let's reconstruct target_info placeholder as used in the worker
-            action_executed = action_data.get("action", "unknown") if 'action_data' in locals() else "unknown"
-            args_executed = action_data.get("args", {}) if 'action_data' in locals() else {}
-            target_info_placeholder = str(args_executed)[:100] # Use args dict string representation
-
-            # Determine the action suffix safely. It should be set if action_result_message is set,
-            # but use action_executed as a fallback just in case.
-            final_action_suffix = action_suffix if 'action_suffix' in locals() else f"{action_executed}_unknown"
-
-            action_result_info = {
-                "message": action_result_message, # The user-facing message generated earlier
-                "action_type": final_action_suffix, # Use the safely determined suffix
-                "target_info": target_info_placeholder
-            }
-            logger.debug(f"Prepared action_result_info: {action_result_info}")
-
-
         # Return the AI's conversational response, memory chain, AI node UUID, and action result info separately
+        # action_result_info is now constructed inside the 'if action_match:' block or remains None
         return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, action_result_info
 
 
