@@ -638,23 +638,6 @@ class Worker(QThread):
         gui_logger.info("No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
         # Clear any potentially stale clarification state
         if self.pending_clarification:
-                    gui_logger.debug("Clearing stale pending clarification due to modification request.")
-                    self.pending_clarification = None
-                gui_logger.info(f"Memory modification action '{mod_action}' detected by LLM. Queuing modify task.")
-                # Don't add user input to history here, let handle_modify_task decide
-                # Pass the *original text* to the modify handler, as it expects the raw command
-                self.input_queue.append(('modify', text))
-                return # Don't queue chat task
-
-        except Exception as e:
-             # Log error during analysis but fall through to chat
-             gui_logger.error(f"Error during memory modification analysis: {e}", exc_info=True)
-             self.signals.error.emit(f"Failed to analyze for memory modification actions: {e}")
-
-        # --- If not action or modification (both analyses returned "none" or errored), treat as regular chat ---
-        gui_logger.info("No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
-        # Clear any potentially stale clarification state
-        if self.pending_clarification:
             gui_logger.debug("Clearing stale pending clarification due to regular chat input.")
             self.pending_clarification = None
         task_data = {'text': text, 'attachment': None} # Ensure chat task always gets dict
