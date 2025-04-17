@@ -2175,12 +2175,11 @@ class GraphMemoryClient:
             # tool_descriptions=tool_descriptions, # Removed
             request_text=request_text
         )
-        - append_file: Adds text content to the end of an existing file (or creates it if it doesn't exist). Requires: 'filename', 'content'.
-        - add_calendar_event: Adds an event to the calendar log. Requires: 'date' (e.g., YYYY-MM-DD, 'today', 'tomorrow'), 'time' (e.g., HH:MM, 'morning', '9am'), 'description' (the event text).
-        - read_calendar: Reads calendar events for a specific date. Optional: 'date' (defaults to 'today' if not provided)."""
 
-        prompt_template = self._load_prompt("action_analysis_prompt.txt")
-        if not prompt_template:
+        logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
+        llm_response_str = self._call_kobold_api(full_prompt, max_length=512, temperature=0.1)
+
+        if not llm_response_str:
             logger.error("Failed to load action analysis prompt template. Cannot analyze action.")
             return {'action': 'error', 'reason': 'Action analysis prompt template missing.'}
 
