@@ -3897,6 +3897,7 @@ class GraphMemoryClient:
                                                 adjustment = frustration_factor # Adjustment is positive
                                                 logger.debug(f"  Drive '{drive_name}' frustrated. Adjustment: {adjustment:.3f}")
                                             # else: status is neutral/unclear, no adjustment
+                                            logger.debug(f"  Drive '{drive_name}' LLM Status: '{status}'. Calculated Adjustment: {adjustment:.4f}") # Log status and adjustment even if zero
 
                                             if abs(adjustment) > 1e-4:
                                                 # Apply adjustment to short-term state
