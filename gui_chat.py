@@ -238,11 +238,26 @@ class Worker(QThread):
 
         try:
             # process_interaction now returns (response, memories, ai_node_uuid, needs_planning_flag)
-            ai_response_text, memory_chain_data, ai_node_uuid, needs_planning = self.client.process_interaction(
+            interaction_result = self.client.process_interaction(
                 user_input=user_input_text,
                 conversation_history=self.current_conversation, # Pass only history up to user turn
                 attachment_data=attachment
             )
+
+            # --- Defensive Check ---
+            if interaction_result is None or not isinstance(interaction_result, tuple) or len(interaction_result) != 4:
+                error_msg = f"FATAL: process_interaction returned invalid data: {interaction_result} (Type: {type(interaction_result)})"
+                backend_logger.error(error_msg)
+                self.signals.error.emit(error_msg)
+                # Emit default error response
+                self.signals.response_ready.emit(history_text, "Error: Backend interaction failed unexpectedly.", [], None, False)
+                interaction_successful = False
+                # Skip further processing in the try block for this interaction
+                raise Exception("Backend interaction returned invalid data.") # Raise exception to trigger the except block below
+
+            # --- Unpack if valid ---
+            ai_response_text, memory_chain_data, ai_node_uuid, needs_planning = interaction_result
+            gui_logger.debug(f"Successfully unpacked interaction result. Needs Planning: {needs_planning}")
 
             # Add AI response to worker's history
             ai_timestamp = datetime.now(timezone.utc).isoformat()
