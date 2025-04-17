@@ -2426,8 +2426,9 @@ class GraphMemoryClient:
         # Add instruction about temporal awareness AND action capability
         # --- System Instructions for AI ---
         system_instructions = [
-            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]", # Added time awareness instruction
+            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
+            "[System Note: **Synthesize** the information from the 'Relevant Past Information' (memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]", # Added synthesis instruction
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
