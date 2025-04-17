@@ -221,6 +221,154 @@ def add_calendar_event(config: dict, personality: str, event_date: str, event_ti
          logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
          return False, err_msg
 
+
+def list_files(config: dict, personality: str) -> tuple[list[str] | None, str]:
+    """
+    Lists files in the specific personality's workspace.
+
+    Args:
+        config: The application configuration dictionary.
+        personality: The name of the personality.
+
+    Returns:
+        A tuple (file_list: list[str] | None, message: str).
+        Returns None for file_list on error.
+    """
+    workspace_path = get_workspace_path(config, personality)
+    if not workspace_path:
+        return None, f"Could not access workspace for personality '{personality}'."
+
+    logger.info(f"Listing files in workspace: {workspace_path}")
+    try:
+        # List only files, ignore directories for simplicity for now
+        files = [f for f in os.listdir(workspace_path) if os.path.isfile(os.path.join(workspace_path, f))]
+        msg = f"Found {len(files)} file(s) in workspace."
+        logger.info(msg + f" Files: {files}")
+        return files, msg
+    except FileNotFoundError:
+        # This case should be handled by get_workspace_path, but handle defensively
+        err_msg = f"Workspace directory not found: {workspace_path}"
+        logger.error(err_msg)
+        return None, err_msg
+    except PermissionError as e:
+        err_msg = f"Permission denied listing files in workspace: {workspace_path}"
+        logger.error(err_msg, exc_info=True)
+        return None, err_msg
+    except Exception as e:
+        err_msg = f"Unexpected error listing files in workspace: {e}"
+        logger.error(err_msg + f" (Path: {workspace_path})", exc_info=True)
+        return None, err_msg
+
+
+def read_file(config: dict, personality: str, filename: str) -> tuple[str | None, str]:
+    """
+    Reads the content of a file from the specific personality's workspace.
+
+    Args:
+        config: The application configuration dictionary.
+        personality: The name of the personality.
+        filename: The name of the file to read.
+
+    Returns:
+        A tuple (content: str | None, message: str).
+        Returns None for content on error.
+    """
+    workspace_path = get_workspace_path(config, personality)
+    if not workspace_path:
+        return None, f"Could not access workspace for personality '{personality}'."
+
+    safe_filename = os.path.basename(filename)
+    if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
+        err_msg = f"Invalid or unsafe filename provided for reading: '{filename}'."
+        logger.error(err_msg)
+        return None, err_msg
+
+    file_path = os.path.join(workspace_path, safe_filename)
+    logger.info(f"Attempting to read file: {file_path}")
+
+    if not os.path.exists(file_path):
+        err_msg = f"File not found: '{safe_filename}'."
+        logger.warning(err_msg + f" (Path: {file_path})")
+        return None, err_msg
+    if not os.path.isfile(file_path):
+        err_msg = f"Path is not a file: '{safe_filename}'."
+        logger.warning(err_msg + f" (Path: {file_path})")
+        return None, err_msg
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        msg = f"Successfully read content from '{safe_filename}'."
+        logger.info(msg + f" (Personality: {personality}, Length: {len(content)})")
+        return content, msg
+    except IOError as e:
+        err_msg = f"IO error reading file '{safe_filename}': {e}"
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+        return None, err_msg
+    except PermissionError as e:
+         err_msg = f"Permission denied reading file '{safe_filename}'."
+         logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+         return None, err_msg
+    except Exception as e:
+        err_msg = f"Unexpected error reading file '{safe_filename}': {e}"
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+        return None, err_msg
+
+
+def delete_file(config: dict, personality: str, filename: str) -> tuple[bool, str]:
+    """
+    Deletes a file from the specific personality's workspace.
+
+    Args:
+        config: The application configuration dictionary.
+        personality: The name of the personality.
+        filename: The name of the file to delete.
+
+    Returns:
+        A tuple (success: bool, message: str).
+    """
+    workspace_path = get_workspace_path(config, personality)
+    if not workspace_path:
+        return False, f"Could not access workspace for personality '{personality}'."
+
+    safe_filename = os.path.basename(filename)
+    if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
+        err_msg = f"Invalid or unsafe filename provided for deletion: '{filename}'."
+        logger.error(err_msg)
+        return False, err_msg
+
+    file_path = os.path.join(workspace_path, safe_filename)
+    logger.warning(f"Attempting to DELETE file: {file_path}") # Log deletion attempt as warning
+
+    if not os.path.exists(file_path):
+        err_msg = f"Cannot delete, file not found: '{safe_filename}'."
+        logger.warning(err_msg + f" (Path: {file_path})")
+        # Return success=False but maybe a specific message?
+        return False, err_msg
+    if not os.path.isfile(file_path):
+        err_msg = f"Cannot delete, path is not a file: '{safe_filename}'."
+        logger.warning(err_msg + f" (Path: {file_path})")
+        return False, err_msg
+
+    try:
+        os.remove(file_path)
+        msg = f"Successfully deleted file '{safe_filename}'."
+        logger.info(msg + f" (Personality: {personality})")
+        return True, msg
+    except IOError as e:
+        err_msg = f"IO error deleting file '{safe_filename}': {e}"
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+        return False, err_msg
+    except PermissionError as e:
+         err_msg = f"Permission denied deleting file '{safe_filename}'."
+         logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+         return False, err_msg
+    except Exception as e:
+        err_msg = f"Unexpected error deleting file '{safe_filename}': {e}"
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+        return False, err_msg
+
+
 def read_calendar_events(config: dict, personality: str, target_date: str | None = None) -> tuple[list[dict], str]:
     """
     Reads events from the specific personality's calendar file (JSONL format).
