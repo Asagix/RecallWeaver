@@ -2533,9 +2533,9 @@ class ChatWindow(QMainWindow):
 
                 "color: #AAAAAA; font-style: italic; background-color: transparent; border: 1px dashed #555; padding: 4px; margin-bottom: 4px;"
             )
-            # --- End check for valid file_type ---
+            # --- End check for valid file_type --- (This comment might be slightly misplaced now)
             elif file_type is not None: # Only log warning if type was present but unknown
-                gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
+                 gui_logger.warning(f"Unknown attachment type in attachment_info: {file_type}")
             # If file_type was None, we simply don't create an attachment_label, no warning needed here.
 
         # --- Create Main Message Label (if text provided) ---
