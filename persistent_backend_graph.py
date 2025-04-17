@@ -3244,81 +3244,13 @@ class GraphMemoryClient:
             "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
             "retrieved_memory_count": len(memory_chain_data),
             "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
-            "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
-            # "workspace_actions_attempted": len(workspace_action_results), # Removed
-        })
-            logger.info("Checking for workspace plan generation...")
-            # Prepare context for planning prompt
-            planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in conversation_history[-5:]]) # Limit history for planning prompt
-            planning_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {mem.get('text', '')}" for mem in memory_chain_data])
-            if not planning_memory_text: planning_memory_text = "[No relevant memories retrieved]"
+                "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
+                # "workspace_actions_attempted": len(workspace_action_results), # Removed
+            })
 
-            planning_prompt_template = self._load_prompt("workspace_planning_prompt.txt")
-            if not planning_prompt_template:
-                logger.error("Workspace planning prompt template missing. Skipping plan generation.")
-            else:
-                planning_prompt = planning_prompt_template.format(
-                    user_request=user_input, # Use the original user input
-                    history_text=planning_history_text,
-                    memory_text=planning_memory_text
-                )
-                logger.debug(f"Sending workspace planning prompt:\n{planning_prompt[:300]}...")
-                plan_response_str = self._call_configured_llm('workspace_planning', prompt=planning_prompt)
-
-                # Parse the plan response (expecting JSON list)
-                if plan_response_str and not plan_response_str.startswith("Error:"):
-                    try:
-                        logger.debug(f"Raw workspace plan response: ```{plan_response_str}```")
-                        # Extract JSON list
-                        match = re.search(r'(\[.*?\])', plan_response_str, re.DOTALL | re.MULTILINE) # Find outermost list
-                        if match:
-                            plan_json_str = match.group(1)
-                            parsed_plan = json.loads(plan_json_str)
-                            if isinstance(parsed_plan, list) and len(parsed_plan) > 0:
-                                logger.info(f"Workspace plan detected with {len(parsed_plan)} step(s).")
-                                # --- Execute Plan ---
-                                agent = WorkspaceAgent(self.config, self.personality)
-                                workspace_action_results = agent.execute_plan(parsed_plan)
-                                logger.info(f"Workspace plan execution finished. Results: {workspace_action_results}")
-                                # --- Tuning Log: Workspace Plan Executed ---
-                                log_tuning_event("WORKSPACE_PLAN_EXECUTED", {
-                                    "interaction_id": interaction_id,
-                                    "personality": self.personality,
-                                    "parsed_plan": parsed_plan,
-                                    "execution_results": workspace_action_results,
-                                })
-                            elif isinstance(parsed_plan, list) and len(parsed_plan) == 0:
-                                logger.info("LLM generated an empty plan (no workspace actions needed).")
-                            else:
-                                logger.warning(f"Parsed plan JSON is not a list or is empty: {parsed_plan}")
-                        else:
-                            logger.warning(f"Could not extract JSON list '[]' from planning response. Raw: '{plan_response_str}'")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON plan response: {e}. Raw: '{plan_response_str}'")
-                    except Exception as e:
-                        logger.error(f"Error processing/executing workspace plan: {e}", exc_info=True)
-                elif plan_response_str.startswith("Error:"):
-                     logger.error(f"Workspace planning LLM call failed: {plan_response_str}")
-
-        except Exception as plan_e:
-             logger.error(f"Unexpected error during workspace planning phase: {plan_e}", exc_info=True)
-             # Optionally add an error result to workspace_action_results?
-             # workspace_action_results.append((False, f"Error during planning: {plan_e}", "planning_exception"))
-
-        # --- Tuning Log: Interaction End ---
-        log_tuning_event("INTERACTION_END", {
-            "interaction_id": interaction_id,
-            "personality": self.personality,
-            "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
-            "retrieved_memory_count": len(memory_chain_data),
-            "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
-            "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
-            "workspace_actions_attempted": len(workspace_action_results),
-        })
-
-        # --- Determine if workspace planning might be needed ---
-        needs_planning = False
-        user_input_lower = user_input.lower()
+            # --- Determine if workspace planning might be needed ---
+            needs_planning = False
+            user_input_lower = user_input.lower()
         # Simple keyword check - refine later if too broad/narrow
         if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
             needs_planning = True
@@ -3327,10 +3259,10 @@ class GraphMemoryClient:
         # Return conversational response, memories, AI node UUID, and the planning flag
         return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
 
-    except Exception as e:
-        # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
-        logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-        # Assign error message to both ai_response and parsed_response
+        except Exception as e:
+            # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
+            logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
+            # Assign error message to both ai_response and parsed_response
         ai_response = f"Error during processing: {e}"
         parsed_response = ai_response # Ensure parsed_response has a value
         memory_chain_data = [] # Clear memory chain data on error
