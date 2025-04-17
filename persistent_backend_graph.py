@@ -3294,16 +3294,16 @@ class GraphMemoryClient:
                     # "workspace_actions_attempted": len(workspace_action_results), # Removed
                 })
 
-                # --- Determine if workspace planning might be needed ---
-                needs_planning = False
-                user_input_lower = user_input.lower()
-                # Simple keyword check - refine later if too broad/narrow
-                if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
-                    needs_planning = True
-                    logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
+            # --- Determine if workspace planning might be needed ---
+            needs_planning = False
+            user_input_lower = user_input.lower()
+            # Simple keyword check - refine later if too broad/narrow
+            if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
+                needs_planning = True
+                logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
 
-                # Return conversational response, memories, AI node UUID, and the planning flag
-                return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
+            # Return conversational response, memories, AI node UUID, and the planning flag
+            return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
 
         except Exception as e:
             # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
