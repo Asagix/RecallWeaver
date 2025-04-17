@@ -4061,12 +4061,12 @@ class GraphMemoryClient:
                                                 # new_level = max(-1.0, min(2.0, new_level))
                                                 self.drive_state["short_term"][drive_name] = new_level
                                                 changed = True # Mark that state was changed by LLM analysis
-                                                logger.info(f"Applied LLM drive adjustment to '{drive_name}' ({status}): {current_activation:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                                                logger.info(f"Applied LLM drive adjustment to '{drive_name}' (Score: {score:.2f}): {current_activation:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
                                                 # --- Log individual adjustment ---
                                                 log_tuning_event("DRIVE_ANALYSIS_LLM_ADJUSTMENT", {
                                                     "personality": self.personality,
                                                     "drive_name": drive_name,
-                                                    "llm_status": status,
+                                                    "llm_score": score, # Changed from llm_status
                                                     "adjustment_value": adjustment,
                                                     "level_before": current_activation,
                                                     "level_after": new_level,
