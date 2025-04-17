@@ -1,0 +1,37 @@
+<start_of_turn>user
+Analyze the relationship between Concept A and Concept C, given that they are connected through Concept B based on the provided context.
+
+**Context (Conversation Excerpt):**
+--- START CONTEXT ---
+{context_text}
+--- END CONTEXT ---
+
+**Path:**
+- Concept A: "{concept_a_text}" (UUID: {concept_a_uuid})
+- Concept B: "{concept_b_text}" (UUID: {concept_b_uuid})
+- Concept C: "{concept_c_text}" (UUID: {concept_c_uuid})
+
+**Relationship Types (Choose ONE):**
+{target_relations_str}
+(Use 'RELATED_TO' only if no other type strongly applies.)
+
+**Task:**
+Based *only* on the provided context and the A->B->C path, determine the most likely relationship type between **Concept A** and **Concept C**.
+
+**Output Format:** Respond ONLY with a single, valid JSON object containing the key "inferred_relation" and the chosen relationship type string as the value.
+
+**Example Output:**
+```json
+{{"inferred_relation": "CAUSES"}}
+```
+OR
+```json
+{{"inferred_relation": "ENABLES"}}
+```
+OR
+```json
+{{"inferred_relation": "RELATED_TO"}}
+```
+
+**JSON Output:**<end_of_turn>
+<start_of_turn>model

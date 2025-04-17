@@ -1720,6 +1720,43 @@ class GraphMemoryClient:
             "final_retrieved_nodes": final_retrieved_data,
         })
 
+        # --- Dynamic ASM Check (Experimental) ---
+        asm_check_cfg = self.config.get('autobiographical_model', {}).get('dynamic_check', {})
+        if asm_check_cfg.get('enable', False) and self.autobiographical_model:
+            contradiction_threshold = asm_check_cfg.get('contradiction_saliency_threshold', 0.8)
+            contradiction_found = False
+            contradicting_node_uuid = None
+            for node_info in relevant_nodes: # Check retrieved nodes
+                node_saliency = node_info.get('saliency_score', 0.0)
+                if node_saliency >= contradiction_threshold:
+                    # Simple check: Does node text contradict ASM summary statement?
+                    # This requires an LLM call for robust checking. Placeholder logic:
+                    node_text = node_info.get('text', '').lower()
+                    asm_summary = self.autobiographical_model.get('summary_statement', '').lower()
+                    # Very basic check (e.g., presence of negations or opposite keywords) - Needs improvement!
+                    if (" not " in node_text and " not " not in asm_summary) or \
+                       (" never " in node_text and " always " in asm_summary): # Example keywords
+                        logger.warning(f"Potential ASM contradiction detected! Node {node_info['uuid'][:8]} (Sal: {node_saliency:.2f}) vs ASM Summary.")
+                        contradiction_found = True
+                        contradicting_node_uuid = node_info['uuid']
+                        # --- Log potential contradiction ---
+                        log_tuning_event("ASM_CONTRADICTION_DETECTED", {
+                            "personality": self.personality,
+                            "node_uuid": contradicting_node_uuid,
+                            "node_text_preview": node_text[:100],
+                            "node_saliency": node_saliency,
+                            "asm_summary_preview": asm_summary[:100],
+                        })
+                        break # Handle first contradiction found for now
+
+            if contradiction_found:
+                # Trigger action: e.g., flag ASM for review, or trigger targeted regeneration
+                logger.info("Flagging ASM for review due to potential contradiction.")
+                # Simple flag for now, actual regeneration needs more logic
+                self.autobiographical_model['needs_review'] = True
+                # Optionally trigger _generate_autobiographical_model immediately with specific context?
+                # self._generate_autobiographical_model(focus_node_uuid=contradicting_node_uuid) # Needs modification to accept focus
+
         # Return both the nodes and the effective mood used
         return relevant_nodes, effective_mood
 
@@ -3557,8 +3594,35 @@ class GraphMemoryClient:
                  context_turns = self.current_conversation[-3:] # Get last few turns including current
                  context_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in context_turns])
                  self._update_drive_state(context_text=context_text)
+                 # --- Also trigger potential long-term nudge ---
+                 # Find the node with max magnitude from the high impact dict
+                 if self.high_impact_nodes_this_interaction:
+                      max_impact_uuid = max(self.high_impact_nodes_this_interaction, key=self.high_impact_nodes_this_interaction.get)
+                      logger.info(f"Triggering potential long-term drive nudge from high-impact node: {max_impact_uuid[:8]}")
+                      self._update_long_term_drives(high_impact_memory_uuid=max_impact_uuid)
+
                  # Clear the high impact tracker after processing
                  self.high_impact_nodes_this_interaction.clear()
+
+            # --- Heuristic Refinement: Check Conversation Patterns (NEW) ---
+            conv_heuristics_cfg = drive_cfg.get('conversation_heuristics', {})
+            if conv_heuristics_cfg.get('enable', False):
+                # Example: Check for repeated corrections (requires tracking corrections)
+                # This is complex, needs state tracking across interactions. Placeholder for now.
+                # correction_count = self._get_recent_correction_count() # Hypothetical function
+                # correction_threshold = conv_heuristics_cfg.get('repeated_correction_threshold', 2)
+                # if correction_count >= correction_threshold:
+                #     target_drive = conv_heuristics_cfg.get('repeated_correction_drive')
+                #     factor = conv_heuristics_cfg.get('repeated_correction_factor')
+                #     self._apply_heuristic_drive_adjustment(target_drive, factor, "repeated_correction")
+                #     self._reset_correction_count() # Reset counter after applying
+
+                # Example: Check for collaboration keywords in user input
+                collab_keywords = conv_heuristics_cfg.get('collaboration_keywords', [])
+                if collab_keywords and any(keyword in user_input.lower() for keyword in collab_keywords):
+                    target_drive = conv_heuristics_cfg.get('collaboration_drive')
+                    factor = conv_heuristics_cfg.get('collaboration_factor')
+                    self._apply_heuristic_drive_adjustment(target_drive, factor, "collaboration_keyword")
 
             # --- Check for Intention Request (if not handled as action/mod) ---
             # This check happens *after* adding the user/AI nodes, using the original user_input
@@ -3627,14 +3691,57 @@ class GraphMemoryClient:
                 "error": str(e),
             })
             # Ensure needs_planning is False on error exit from this block
+            # --- Placeholder for Prompt Chaining Trigger ---
+            # Example Trigger: If user asks "What do you think about X based on your personality?"
+            reflection_trigger_keywords = ["reflect", "based on your personality", "how do you feel about", "what is your take"]
+            run_reflection_chain = False
+            if any(keyword in user_input.lower() for keyword in reflection_trigger_keywords):
+                 logger.info("Reflection prompt chain triggered.")
+                 run_reflection_chain = True
+                 # This would involve:
+                 # 1. Running the first stage (e.g., ASM generation or drive analysis).
+                 # 2. Formatting the output of stage 1.
+                 # 3. Loading the reflection prompt.
+                 # 4. Formatting the reflection prompt with stage 1 output and current context.
+                 # 5. Calling the LLM with the reflection prompt.
+                 # 6. Using the reflection LLM output as the final ai_response.
+                 # Due to complexity, full implementation deferred. Placeholder response:
+                 ai_response_text = "[Placeholder: Reflection logic triggered, but full implementation deferred.]"
+                 parsed_response = ai_response_text # Update parsed response for graph node
+
             # Use the initialized ai_node_uuid which might be None if error occurred before assignment
-            return parsed_response, memory_chain_data, ai_node_uuid, False
+            return parsed_response, memory_chain_data, ai_node_uuid, needs_planning
 
         # Failsafe return in case of unexpected exit before try/except returns
         logger.error(f"PROCESS_INTERACTION reached failsafe return for interaction {interaction_id[:8]}. This indicates an unexpected error path.")
         # Ensure variables used in the return tuple have default values assigned earlier
         # Default values assigned at the start: parsed_response="Error: Processing failed.", memory_chain_data=[], ai_node_uuid=None
         return parsed_response, memory_chain_data, ai_node_uuid, False
+
+    def _apply_heuristic_drive_adjustment(self, target_drive: str, adjustment_value: float, trigger_reason: str):
+        """Applies a direct adjustment to a short-term drive and logs it."""
+        if not target_drive or abs(adjustment_value) < 1e-4:
+            return
+
+        if target_drive in self.drive_state["short_term"]:
+            current_level = self.drive_state["short_term"][target_drive]
+            new_level = current_level + adjustment_value
+            # Optional clamping?
+            self.drive_state["short_term"][target_drive] = new_level
+            logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to '{trigger_reason}': {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment_value:.3f})")
+            # --- Log heuristic adjustment ---
+            log_tuning_event("DRIVE_HEURISTIC_ADJUSTMENT", {
+                "personality": self.personality,
+                "trigger": trigger_reason,
+                "target_drive": target_drive,
+                "adjustment_value": adjustment_value,
+                "level_before": current_level,
+                "level_after": new_level,
+            })
+            # Save state? Let's assume saving happens at end of interaction or consolidation.
+        else:
+            logger.warning(f"Cannot apply heuristic adjustment: Target drive '{target_drive}' not found in state.")
+
 
     def _update_next_interaction_context(self, user_node_uuid: str | None, ai_node_uuid: str | None):
         """Helper to calculate and store concept/mood context for the *next* interaction's bias."""
@@ -4087,11 +4194,62 @@ class GraphMemoryClient:
         if changed:
             # Log final state after decay and potential LLM adjustments
             logger.info(f"Short-term drive state updated (Decay & LLM applied): {self.drive_state['short_term']}")
-            # Saving happens in the calling function (e.g., run_consolidation or _save_memory)
 
-    def _update_long_term_drives(self):
+        # --- Inter-Drive Dynamics Step (NEW) ---
+        inter_drive_cfg = drive_cfg.get('inter_drive_interactions', {})
+        if inter_drive_cfg:
+            logger.debug("Applying inter-drive dynamics...")
+            adjustments_applied = {} # Track adjustments per drive for logging
+            # Create a snapshot of the state *before* inter-drive adjustments
+            state_before_inter_drive = {k: v for k, v in self.drive_state["short_term"].items()}
+
+            for influencing_drive, targets in inter_drive_cfg.items():
+                if influencing_drive in state_before_inter_drive:
+                    influencing_level = state_before_inter_drive[influencing_drive]
+                    for target_drive, interaction_params in targets.items():
+                        if target_drive in self.drive_state["short_term"]:
+                            threshold = interaction_params.get('threshold', 0.0)
+                            factor = interaction_params.get('factor', 0.0)
+
+                            if influencing_level > threshold and abs(factor) > 1e-4:
+                                # Calculate adjustment based on how much level exceeds threshold
+                                adjustment = factor * (influencing_level - threshold)
+                                # Apply adjustment to the *current* state (allowing cascade effects within step?)
+                                # Or apply all adjustments based on the state *before* this step? Let's use state_before_inter_drive.
+                                current_target_level = self.drive_state["short_term"][target_drive] # Get potentially already adjusted level
+                                new_target_level = current_target_level + adjustment
+                                # Optional clamping?
+                                self.drive_state["short_term"][target_drive] = new_target_level
+                                changed = True # Mark change
+                                logger.debug(f"  Inter-Drive: '{influencing_drive}' (Lvl:{influencing_level:.2f} > Thr:{threshold:.2f}) -> '{target_drive}' (Adj:{adjustment:.3f}) NewLvl:{new_target_level:.3f}")
+                                # Store adjustment details for logging
+                                if target_drive not in adjustments_applied: adjustments_applied[target_drive] = []
+                                adjustments_applied[target_drive].append({
+                                    "influencer": influencing_drive,
+                                    "influencer_level": influencing_level,
+                                    "threshold": threshold,
+                                    "factor": factor,
+                                    "adjustment": adjustment,
+                                    "level_before_inter": state_before_inter_drive[target_drive],
+                                    "level_after_inter": new_target_level
+                                })
+
+            if adjustments_applied:
+                 log_tuning_event("DRIVE_INTER_INTERACTIONS", {
+                     "personality": self.personality,
+                     "state_before": state_before_inter_drive,
+                     "adjustments_applied": adjustments_applied,
+                     "state_after": self.drive_state["short_term"].copy()
+                 })
+                 logger.info(f"Short-term drive state updated after inter-drive dynamics: {self.drive_state['short_term']}")
+
+
+        # Saving happens in the calling function (e.g., run_consolidation or _save_memory)
+
+    def _update_long_term_drives(self, high_impact_memory_uuid: str | None = None):
         """
         Updates long-term drive levels based on LLM analysis of the ASM or other
+        long-term memory indicators. Can also be nudged by a specific high-impact memory.
         long-term memory indicators. Called less frequently than short-term updates.
         """
         drive_cfg = self.config.get('subconscious_drives', {})
@@ -4183,6 +4341,66 @@ class GraphMemoryClient:
 
         except Exception as e:
             logger.error(f"Unexpected error during long-term drive state update: {e}", exc_info=True)
+
+        # --- Baseline Dynamics: Nudge by High-Impact Memory (NEW) ---
+        if high_impact_memory_uuid and high_impact_memory_uuid in self.graph:
+            logger.info(f"Applying long-term drive nudge from high-impact memory: {high_impact_memory_uuid[:8]}")
+            try:
+                node_data = self.graph.nodes[high_impact_memory_uuid]
+                valence = node_data.get('emotion_valence', 0.0)
+                arousal = node_data.get('emotion_arousal', 0.1)
+                shift_factor = drive_cfg.get('high_impact_memory_baseline_shift_factor', 0.1)
+                lt_changed = False
+                nudge_details = {}
+
+                # Example Nudge Logic:
+                # - High positive valence -> Increase Connection, Control?
+                # - High negative valence -> Decrease Safety, Control? Increase Understanding?
+                # - High arousal -> Increase Novelty? Decrease Safety?
+                # This needs refinement based on desired personality effects.
+
+                # Simple Example: Strong positive experience boosts Connection LT state
+                if valence > 0.7 and shift_factor > 0: # Threshold for strong positive
+                    target_drive = "Connection"
+                    if target_drive in self.drive_state["long_term"]:
+                        current_lt = self.drive_state["long_term"][target_drive]
+                        # Nudge towards max (+1.0)
+                        adjustment = (1.0 - current_lt) * shift_factor
+                        if abs(adjustment) > 1e-4:
+                            new_lt = max(-1.0, min(1.0, current_lt + adjustment))
+                            self.drive_state["long_term"][target_drive] = new_lt
+                            lt_changed = True
+                            nudge_details[target_drive] = {"before": current_lt, "after": new_lt, "adjustment": adjustment, "reason": "high_valence"}
+                            logger.info(f"  Nudged LT '{target_drive}' due to high valence: {current_lt:.3f} -> {new_lt:.3f}")
+
+                # Simple Example: Strong negative experience hurts Safety LT state
+                if valence < -0.7 and shift_factor > 0: # Threshold for strong negative
+                    target_drive = "Safety"
+                    if target_drive in self.drive_state["long_term"]:
+                        current_lt = self.drive_state["long_term"][target_drive]
+                        # Nudge towards min (-1.0)
+                        adjustment = (-1.0 - current_lt) * shift_factor
+                        if abs(adjustment) > 1e-4:
+                            new_lt = max(-1.0, min(1.0, current_lt + adjustment))
+                            self.drive_state["long_term"][target_drive] = new_lt
+                            lt_changed = True
+                            nudge_details[target_drive] = {"before": current_lt, "after": new_lt, "adjustment": adjustment, "reason": "low_valence"}
+                            logger.info(f"  Nudged LT '{target_drive}' due to low valence: {current_lt:.3f} -> {new_lt:.3f}")
+
+                if lt_changed:
+                    log_tuning_event("DRIVE_LT_NUDGE_HIGH_IMPACT", {
+                        "personality": self.personality,
+                        "memory_uuid": high_impact_memory_uuid,
+                        "memory_valence": valence,
+                        "memory_arousal": arousal,
+                        "shift_factor": shift_factor,
+                        "nudge_details": nudge_details,
+                        "lt_state_after": self.drive_state["long_term"].copy()
+                    })
+                    self._save_drive_state() # Save if nudged
+
+            except Exception as e:
+                logger.error(f"Error applying high-impact memory nudge to long-term drives: {e}", exc_info=True)
 
 
     # *** ADDED: Wrapper methods for file operations ***
@@ -5680,9 +5898,154 @@ class GraphMemoryClient:
 
         if inferred_edge_count > 0:
             logger.info(f"Added {inferred_edge_count} new inferred relationship edges.")
-            self._save_memory() # Save graph if changes were made
+            # Saving happens after consolidation which calls this.
         else:
             logger.info("No new second-order relationships were inferred.")
+
+
+    def _infer_second_order_relations(self):
+        """Infers typed relationships based on paths of length 2 using LLM."""
+        inference_cfg = self.config.get('consolidation', {}).get('inference', {})
+        if not inference_cfg.get('enable', False):
+            logger.info("Second-order inference disabled by config.")
+            return
+
+        logger.info("--- Inferring Typed Second-Order Relationships (LLM) ---")
+        strength_factor = inference_cfg.get('strength_factor', 0.3) # Keep strength factor concept
+        min_inferred_strength_threshold = inference_cfg.get('min_strength_threshold', 0.2) # Maybe slightly higher threshold for LLM inference?
+        inferred_edge_count = 0
+        current_time = time.time()
+
+        # Define stronger edge types to consider for inference paths (same as before)
+        strong_relation_types = {
+            "MENTIONS_CONCEPT", "SUMMARY_OF", "CAUSES", "IS_A", "PART_OF",
+            "HIERARCHICAL", "SUPPORTS", "ENABLES"
+        }
+        # Load target relation types for the LLM prompt
+        consolidation_cfg = self.config.get('consolidation', {})
+        target_relations = consolidation_cfg.get('target_relation_types', [])
+        if not target_relations:
+            logger.warning("No target_relation_types defined in config for inference. Using defaults.")
+            target_relations = ["CAUSES", "PART_OF", "HAS_PROPERTY", "RELATED_TO", "IS_A", "ENABLES", "PREVENTS", "CONTRADICTS", "SUPPORTS", "EXAMPLE_OF", "MEASURES", "LOCATION_OF"]
+        target_relations_str = ", ".join([f"'{r}'" for r in target_relations])
+
+        # Load the new prompt template
+        prompt_template = self._load_prompt("infer_typed_relation_prompt.txt")
+        if not prompt_template:
+            logger.error("Failed to load infer_typed_relation_prompt.txt. Skipping typed inference.")
+            return
+
+        # Consider only concept and summary nodes as start/end/intermediate points
+        candidate_nodes = [
+            uuid for uuid, data in self.graph.nodes(data=True)
+            if data.get('node_type') in ['concept', 'summary']
+        ]
+
+        if len(candidate_nodes) < 3:
+            logger.info("Skipping typed inference: Not enough concept/summary nodes.")
+            return
+
+        logger.debug(f"Checking {len(candidate_nodes)} candidate nodes for typed inference...")
+
+        # Iterate through all pairs of candidate nodes (A, C)
+        for node_a_uuid in candidate_nodes:
+            node_a_data = self.graph.nodes[node_a_uuid]
+            for node_c_uuid in candidate_nodes:
+                if node_a_uuid == node_c_uuid: continue
+                node_c_data = self.graph.nodes[node_c_uuid]
+
+                # Check if a direct edge already exists (A->C or C->A)
+                if self.graph.has_edge(node_a_uuid, node_c_uuid) or self.graph.has_edge(node_c_uuid, node_a_uuid):
+                    continue
+
+                # Find paths of length 2 (A -> B -> C) via strong edge types
+                strong_paths_found = [] # Store tuples: (node_b_uuid, strength_ab, strength_bc)
+                for _, node_b_uuid, edge_ab_data in self.graph.out_edges(node_a_uuid, data=True):
+                    if node_b_uuid in candidate_nodes and edge_ab_data.get('type') in strong_relation_types:
+                        if self.graph.has_edge(node_b_uuid, node_c_uuid):
+                            edge_bc_data = self.graph.get_edge_data(node_b_uuid, node_c_uuid)
+                            if edge_bc_data and edge_bc_data.get('type') in strong_relation_types:
+                                strength_ab = edge_ab_data.get('base_strength', 0.5)
+                                strength_bc = edge_bc_data.get('base_strength', 0.5)
+                                strong_paths_found.append((node_b_uuid, strength_ab, strength_bc))
+
+                if strong_paths_found:
+                    # Select the path with the highest combined strength (product) to feed to LLM
+                    best_path = max(strong_paths_found, key=lambda p: p[1] * p[2])
+                    node_b_uuid, strength_ab, strength_bc = best_path
+                    node_b_data = self.graph.nodes[node_b_uuid]
+
+                    # Calculate overall path strength for the edge weight
+                    path_strength = strength_ab * strength_bc * strength_factor
+                    clamped_strength = max(0.0, min(1.0, path_strength))
+
+                    # Only proceed if potential strength meets threshold
+                    if clamped_strength < min_inferred_strength_threshold:
+                        logger.debug(f"  Skipping inference {node_a_uuid[:4]}->{node_c_uuid[:4]} via {node_b_uuid[:4]} (Strength {clamped_strength:.3f} < Threshold {min_inferred_strength_threshold})")
+                        continue
+
+                    # Prepare context for LLM (e.g., text of A, B, C)
+                    context_text = f"Context A: {node_a_data.get('text', '')}\nContext B: {node_b_data.get('text', '')}\nContext C: {node_c_data.get('text', '')}"
+                    # Format prompt
+                    full_prompt = prompt_template.format(
+                        context_text=context_text[:1500], # Limit context length
+                        concept_a_text=node_a_data.get('text', ''),
+                        concept_a_uuid=node_a_uuid,
+                        concept_b_text=node_b_data.get('text', ''),
+                        concept_b_uuid=node_b_uuid,
+                        concept_c_text=node_c_data.get('text', ''),
+                        concept_c_uuid=node_c_uuid,
+                        target_relations_str=target_relations_str
+                    )
+
+                    # Call LLM to infer relation type
+                    logger.debug(f"Calling LLM to infer relation type for {node_a_uuid[:4]} -> {node_c_uuid[:4]} via {node_b_uuid[:4]}")
+                    # Use a suitable LLM config - maybe 'consolidation_relation' or a new one? Let's use 'consolidation_relation'.
+                    llm_response_str = self._call_configured_llm('consolidation_relation', prompt=full_prompt)
+
+                    inferred_relation_type = "RELATED_TO" # Default fallback
+                    if llm_response_str and not llm_response_str.startswith("Error:"):
+                        try:
+                            match = re.search(r'(\{.*?\})', llm_response_str, re.DOTALL)
+                            if match:
+                                json_str = match.group(0)
+                                parsed_data = json.loads(json_str)
+                                relation = parsed_data.get("inferred_relation")
+                                if relation and relation in target_relations: # Validate against target list
+                                    inferred_relation_type = relation
+                                    logger.debug(f"  LLM inferred relation: {inferred_relation_type}")
+                                else:
+                                    logger.warning(f"  LLM returned invalid relation '{relation}'. Defaulting to RELATED_TO. Raw: {llm_response_str}")
+                            else:
+                                logger.warning(f"  Could not extract JSON from inference response. Defaulting to RELATED_TO. Raw: {llm_response_str}")
+                        except Exception as e:
+                            logger.error(f"  Error parsing inference response: {e}. Defaulting to RELATED_TO. Raw: {llm_response_str}")
+                    else:
+                         logger.error(f"  LLM call failed for inference: {llm_response_str}. Defaulting to RELATED_TO.")
+
+                    # Add the edge with the inferred type and calculated strength
+                    try:
+                        # Check if edge already exists with *any* type before adding
+                        if not self.graph.has_edge(node_a_uuid, node_c_uuid):
+                            self.graph.add_edge(
+                                node_a_uuid, node_c_uuid,
+                                type=inferred_relation_type, # Use inferred type
+                                base_strength=clamped_strength,
+                                last_traversed_ts=current_time,
+                                inferred=True # Mark as inferred
+                            )
+                            inferred_edge_count += 1
+                            logger.info(f"Added inferred edge: {node_a_uuid[:8]} --[{inferred_relation_type} ({clamped_strength:.3f})]--> {node_c_uuid[:8]}")
+                        else:
+                             logger.debug(f"  Skipping add: Direct edge {node_a_uuid[:8]} -> {node_c_uuid[:8]} already exists.")
+                    except Exception as e:
+                        logger.error(f"Error adding inferred edge {node_a_uuid[:8]} -> {node_c_uuid[:8]}: {e}")
+
+        if inferred_edge_count > 0:
+            logger.info(f"Added {inferred_edge_count} new typed inferred relationship edges.")
+            # Saving happens after consolidation which calls this.
+        else:
+            logger.info("No new typed second-order relationships were inferred.")
 
 
     def run_consolidation(self, active_nodes_to_process=None):

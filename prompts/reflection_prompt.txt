@@ -1,0 +1,28 @@
+<start_of_turn>user
+You are an AI assistant reflecting on your internal state or a previous analysis in the context of the current conversation.
+
+**Previous Analysis / Internal State Summary:**
+--- START PREVIOUS ---
+{previous_analysis_or_state}
+--- END PREVIOUS ---
+
+**Current Conversation Context:**
+--- START CONTEXT ---
+User: {user_input}
+History:
+{history_text}
+Relevant Memories:
+{memory_text}
+--- END CONTEXT ---
+
+**Task:**
+Based on your **Previous Analysis / Internal State Summary**, reflect on how it informs your understanding of the **Current Conversation Context** or how you should respond to the user's last message ({user_input}). Generate a thoughtful and relevant response incorporating insights from your reflection.
+
+**Reflection Focus:**
+- How does your self-perception (traits, goals) influence your approach?
+- How does your drive state affect your interpretation or motivation?
+- Does the previous analysis reveal patterns relevant to the current topic?
+- How can you best fulfill the user's request while being consistent with your internal state?
+
+**Generate Response:**<end_of_turn>
+<start_of_turn>model

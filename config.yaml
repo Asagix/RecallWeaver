@@ -448,6 +448,53 @@ subconscious_drives:
       Control: 0.20    # Positive deviation (competent) -> slightly increases arousal (focused?). Negative (loss of control) -> increases arousal (agitation). (Changed sign and value from -0.15)
     max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
 
+  # --- Inter-Drive Dynamics (NEW) ---
+  # Define how drives influence each other. Format: { "influencing_drive": {"target_drive": factor} }
+  # Factor > 0: Influencing drive *increases* target drive (e.g., high Control might increase Safety).
+  # Factor < 0: Influencing drive *decreases* target drive (e.g., high Safety might decrease Novelty).
+  # Influence is applied based on the *deviation* of the influencing drive from its baseline.
+  inter_drive_influence:
+    # Example: High Safety need (negative deviation) slightly inhibits Novelty seeking.
+    # Safety: # Influencing Drive
+    #   Novelty: -0.05 # Target Drive: Factor (Negative deviation * negative factor = positive adjustment to Novelty? No, let's make factor apply to *level*)
+    # Let's try: Influence = influencing_drive_deviation * factor. Applied to target drive.
+    Safety: # Influencing Drive
+      Novelty: -0.1 # High Safety deviation (feeling safe) slightly reduces Novelty drive. Low Safety deviation (unsafe) slightly increases Novelty? No, let's make it simpler: High Safety *level* inhibits Novelty.
+    # --- Revised Inter-Drive Logic Idea ---
+    # Apply based on the *level* of the influencing drive, not deviation.
+    # Format: { "influencing_drive": {"target_drive": {"threshold": level, "factor": influence_factor}} }
+    # If influencing_drive level > threshold, apply factor * (level - threshold) to target drive.
+    inter_drive_interactions: # Renamed for clarity
+      Safety: # Influencing Drive
+        Novelty: # Target Drive
+          threshold: 0.6 # If Safety level is above 0.6...
+          factor: -0.1 # ...decrease Novelty drive activation slightly.
+      Control: # Influencing Drive
+        Safety: # Target Drive
+          threshold: 0.5 # If Control level is above 0.5...
+          factor: 0.05 # ...increase Safety drive activation slightly (feeling in control increases feeling safe).
+      Connection: # Influencing Drive
+        Safety: # Target Drive
+          threshold: 0.5 # If Connection level is above 0.5...
+          factor: 0.05 # ...increase Safety drive activation slightly.
+      # Add more interactions as needed
+
+  # --- Heuristic Refinement (NEW) ---
+  # Adjustments based on conversational events detected in process_interaction
+  conversation_heuristics:
+    enable: true
+    repeated_correction_threshold: 2 # How many corrections trigger adjustment
+    repeated_correction_drive: "Understanding" # Drive affected by corrections
+    repeated_correction_factor: -0.1 # Negative adjustment for corrections
+    collaboration_keywords: ["agree", "yes", "good point", "exactly", "makes sense"] # Keywords indicating collaboration
+    collaboration_drive: "Connection" # Drive affected by collaboration
+    collaboration_factor: 0.05 # Positive adjustment for collaboration
+
+  # --- Baseline Dynamics (NEW) ---
+  # Influence of high-impact events on long-term state
+  high_impact_memory_baseline_shift_factor: 0.1 # How much a single high-impact memory nudges the long-term drive state (0-1).
+
+
 # --- Autobiographical Self-Model (ASM) Generation ---
 autobiographical_model:
   num_salient_nodes: 10   # Number of top salient nodes to consider
