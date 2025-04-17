@@ -2346,27 +2346,39 @@ class GraphMemoryClient:
             fixed_tokens = len(time_info_block) + len(user_input_fmt) + len(final_model_tag)
             logger.warning("Using character count proxy for fixed tokens.") # Corrected logger name
 
-        avail_budget = max_context_tokens - fixed_tokens - context_headroom
-        logger.debug(f"Token counts: Max={max_context_tokens}, Fixed={fixed_tokens}, Headroom={context_headroom}, Available={avail_budget}") # Corrected logger name
+        total_available_budget = max_context_tokens - fixed_tokens - context_headroom
+        logger.debug(f"Token counts: Max={max_context_tokens}, Fixed={fixed_tokens}, Headroom={context_headroom}, Total Available={total_available_budget}")
 
-        if avail_budget <= 0:
+        if total_available_budget <= 0:
             logger.warning(f"Low token budget ({avail_budget}). Only including current input and time.") # Corrected logger name
             final_prompt = time_info_block + user_input_fmt + final_model_tag
             logger.debug(f"Final Prompt (Low Budget): '{final_prompt[:150]}...'") # Corrected logger name
-            return final_prompt
+        # --- Calculate Budgets (Memory & History first, Workspace gets remainder) ---
+        mem_budget = int(total_available_budget * mem_budget_ratio)
+        hist_budget = int(total_available_budget * hist_budget_ratio)
+        # Workspace budget is whatever is left over
+        workspace_budget = total_available_budget - mem_budget - hist_budget
+        # Ensure workspace budget isn't negative if ratios exceed 1.0
+        workspace_budget = max(0, workspace_budget)
+        logger.debug(f"Budget Allocation: Memory={mem_budget}, History={hist_budget}, Workspace={workspace_budget}")
+        # --- Tuning Log: Prompt Budgeting ---
+        log_tuning_event("PROMPT_BUDGETING", {
+            "personality": self.personality,
+            "user_input_preview": user_input[:100],
+            "max_context_tokens": max_context_tokens,
+            "fixed_tokens": fixed_tokens,
+            "headroom": context_headroom,
+            "total_available_budget": total_available_budget,
+            "memory_budget": mem_budget,
+            "history_budget": hist_budget,
+            "workspace_budget": workspace_budget,
+        })
 
         # --- Workspace Context Construction (Summaries) ---
         workspace_context_str = ""
         cur_workspace_tokens = 0
-        # Budget calculation needs refinement - workspace context comes *before* memory/history
-        # Let's allocate a portion of the *total* available budget first.
-        # Example: Allocate 15%? Or a fixed amount? Let's try fixed for now.
-        workspace_budget = 500 # Fixed token budget for workspace summaries (adjust as needed)
-        logger.debug(f"Allocated Workspace Context Budget: {workspace_budget}")
-
-        # Ensure workspace budget doesn't exceed total available
-        workspace_budget = min(workspace_budget, avail_budget)
-        avail_budget -= workspace_budget # Reduce available budget for mem/hist
+        # Use the calculated workspace_budget
+        logger.debug(f"Constructing Workspace Context (Budget: {workspace_budget})")
 
         # Get file list
         workspace_files, list_msg = file_manager.list_files(self.config, self.personality)
@@ -2425,26 +2437,11 @@ class GraphMemoryClient:
             workspace_content = "\n".join(ws_parts)
             # Then use the joined string in the f-string
             workspace_context_str = f"{model_tag}{workspace_content}{end_turn}\n"
-
-        # Recalculate memory/history budget based on actual workspace tokens used
-        try: actual_ws_tokens = len(tokenizer.encode(workspace_context_str))
-        except: actual_ws_tokens = len(workspace_context_str) // 3
-        avail_budget = max_context_tokens - fixed_tokens - context_headroom - actual_ws_tokens # Recalculate remaining budget
-        mem_budget = int(avail_budget * mem_budget_ratio)
-        hist_budget = avail_budget - mem_budget
-        logger.debug(f"Token Budget Allocation: Memory={mem_budget}, History={hist_budget}") # Corrected logger name
-        # --- Tuning Log: Prompt Budgeting ---
-        # Note: interaction_id not available here
-        log_tuning_event("PROMPT_BUDGETING", {
-            "personality": self.personality,
-            "user_input_preview": user_input[:100],
-            "max_context_tokens": max_context_tokens,
-            "fixed_tokens": fixed_tokens,
-            "headroom": context_headroom,
-            "available_budget": avail_budget,
-            "memory_budget": mem_budget,
-            "history_budget": hist_budget,
-        })
+            try:
+                cur_workspace_tokens = len(tokenizer.encode(workspace_context_str))
+            except:
+                cur_workspace_tokens = len(workspace_context_str) // 3 # Estimate
+            logger.debug(f"Actual Workspace Tokens Used: {cur_workspace_tokens}")
 
         # --- Memory Context Construction (with Strength Budgeting) ---
         mem_ctx_str = ""
@@ -2549,8 +2546,8 @@ class GraphMemoryClient:
         # --- History Context Construction ---
         hist_parts = []
         cur_hist_tokens = 0
-        actual_hist_budget = avail_budget - cur_mem_tokens # History gets remaining budget
-        logger.debug(f"Actual History Budget: {actual_hist_budget}") # Corrected logger name
+        # Use the pre-calculated hist_budget
+        logger.debug(f"Constructing History Context (Budget: {hist_budget})")
         included_hist_count = 0
 
         history_to_process = conversation_history # Use history passed in
@@ -2566,9 +2563,9 @@ class GraphMemoryClient:
                 else: logger.warning(f"Unknown speaker '{spk}' in history, skipping."); continue # Corrected logger name
 
                 try: turn_tok_len = len(tokenizer.encode(fmt_turn))
-                except Exception as e: logger.warning(f"Tokenization error for history turn: {e}. Skipping."); continue # Corrected logger name
+                except Exception as e: logger.warning(f"Tokenization error for history turn: {e}. Skipping."); continue
 
-                if cur_hist_tokens + turn_tok_len <= actual_hist_budget:
+                if cur_hist_tokens + turn_tok_len <= hist_budget: # Use hist_budget
                     hist_parts.append(fmt_turn)
                     cur_hist_tokens += turn_tok_len
                     included_hist_count += 1
