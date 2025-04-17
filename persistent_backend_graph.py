@@ -1841,7 +1841,7 @@ class GraphMemoryClient:
 
         # Log the final score being returned (moved outside the if/else)
         logger.debug(f"    Final Adjusted Forgettability Score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
-        return final_adjusted_score
+        return final_adjusted_score # noqa: F821
 
     def _get_relative_time_desc(self, timestamp_str: str) -> str:
         """Converts an ISO timestamp string into a human-readable relative time description."""
