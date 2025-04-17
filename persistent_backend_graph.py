@@ -3406,6 +3406,10 @@ class GraphMemoryClient:
             logger.debug(f"Adding AI node with text: '{strip_emojis(parsed_response[:100])}...'") # Strip emojis
             ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
 
+            # --- Analyze Emotion for New Nodes (BEFORE averaging) ---
+            if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid)
+            if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid)
+
             # --- Calculate and Store context for NEXT interaction's retrieval bias ---
             self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
 
