@@ -538,7 +538,6 @@ saliency:
   emotion_influence_factor: 0.2 # How much default arousal boosts initial saliency
   activation_influence: 0.1 # How much saliency boosts activation spreading
   # guaranteed_saliency_threshold moved to activation section for clarity
-  recall_boost_factor: 0.03 # Additive boost to saliency score upon successful recall (clamped 0-1) - Decreased from 0.05
   feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
   saliency_decay_rate: 0.005 # NEW: How much saliency decays per hour (e.g., 0.005 = 0.5% decay per hour since last access)
   recall_boost_factor: 0.04 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased slightly from 0.03
