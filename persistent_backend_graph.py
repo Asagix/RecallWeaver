@@ -6604,14 +6604,39 @@ class GraphMemoryClient:
                 workspace_action_results.append((False, "Internal Error: Planning prompt missing.", "planning_error"))
                 return workspace_action_results
 
-            planning_prompt = planning_prompt_template.format(
-                user_request=user_input,
-                history_text=planning_history_text,
-                memory_text=planning_memory_text,
-                workspace_files_list=workspace_files_list_str,
-                asm_context=asm_context_str # Add formatted ASM context
-            )
-            logger.debug(f"Sending workspace planning prompt (with file list and ASM):\n{planning_prompt[:400]}...")
+            # --- Manual Prompt Construction using .replace() ---
+            try:
+                planning_prompt = planning_prompt_template # Start with the raw template
+
+                # Define placeholders and their values
+                replacements = {
+                    "{user_request}": user_input,
+                    "{history_text}": planning_history_text,
+                    "{memory_text}": planning_memory_text,
+                    "{workspace_files_list}": workspace_files_list_str,
+                    "{asm_context}": asm_context_str
+                }
+
+                # Iteratively replace each placeholder
+                for placeholder, value in replacements.items():
+                    # Ensure value is a string before replacing
+                    str_value = str(value) if value is not None else ""
+                    planning_prompt = planning_prompt.replace(placeholder, str_value)
+
+                # Check if any placeholders remain (indicates an error or missing variable)
+                remaining_placeholders = re.findall(r'\{[a-zA-Z0-9_]+\}', planning_prompt)
+                if remaining_placeholders:
+                    logger.error(f"Placeholders remain after replacement: {remaining_placeholders}. This indicates an error.")
+                    # Handle error - maybe raise or return specific error message
+                    raise ValueError(f"Unreplaced placeholders found: {remaining_placeholders}")
+
+                logger.debug(f"Sending workspace planning prompt (Constructed via .replace()):\n{planning_prompt[:400]}...")
+
+            except Exception as replace_e:
+                 logger.error(f"Error during manual prompt construction via .replace(): {replace_e}", exc_info=True)
+                 workspace_action_results.append((False, f"Internal Error during planning prompt construction: {replace_e}", "planning_format_error", False))
+                 return workspace_action_results
+            # --- End Manual Prompt Construction ---
 
             # 3. Call Planning LLM
             plan_response_str = self._call_configured_llm('workspace_planning', prompt=planning_prompt)
