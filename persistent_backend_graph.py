@@ -484,8 +484,22 @@ class GraphMemoryClient:
                         "valence": final_valence,
                         "arousal": final_arousal,
                     })
+                    # --- NEW: Flag as Core Memory if High Impact ---
+                    if self.config.get('features', {}).get('enable_core_memory', False):
+                        if not node_data.get('is_core_memory', False): # Check if not already core
+                            node_data['is_core_memory'] = True
+                            logger.info(f"Node {node_uuid[:8]} flagged as CORE MEMORY due to high emotional impact.")
+                            # Log this promotion
+                            log_tuning_event("CORE_MEMORY_FLAGGED", {
+                                "personality": self.personality,
+                                "node_uuid": node_uuid,
+                                "reason": "high_emotional_impact",
+                                "magnitude": magnitude,
+                                "threshold": impact_threshold,
+                            })
+                            # Save immediately? Or defer? Let's defer for now.
             except Exception as impact_e:
-                logger.error(f"Error checking emotional impact for node {node_uuid[:8]}: {impact_e}", exc_info=True)
+                logger.error(f"Error checking emotional impact / flagging core memory for node {node_uuid[:8]}: {impact_e}", exc_info=True)
 
         except Exception as e:
             logger.error(f"Error during text2emotion analysis for node {node_uuid[:8]}: {e}", exc_info=True)
@@ -827,11 +841,12 @@ class GraphMemoryClient:
                 # --- NEW: Decay Resistance ---
                 decay_resistance_factor=self.config.get('forgetting', {}).get('decay_resistance', {}).get(node_type, 1.0),
                 # --- NEW: Feedback Score ---
-                user_feedback_score=0 # Initialize feedback score
+                user_feedback_score=0, # Initialize feedback score
+                is_core_memory=False # NEW: Initialize core memory flag
             )
             # Access node data *after* adding it to the graph
             node_data = self.graph.nodes[node_uuid]
-            logger.debug(f"Node {node_uuid[:8]} added with decay_resistance: {node_data.get('decay_resistance_factor')}")
+            logger.debug(f"Node {node_uuid[:8]} added with decay_resistance: {node_data.get('decay_resistance_factor')}, is_core: {node_data.get('is_core_memory')}")
             logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Strength: {node_data.get('memory_strength')}, Saliency: {node_data.get('saliency_score')}).")
         except Exception as e:
              logger.error(f"Failed adding node {node_uuid} to graph: {e}")
@@ -2201,7 +2216,15 @@ class GraphMemoryClient:
         # else: No emotion resistance applied, final_adjusted_score remains score_after_type_resistance
 
         # Log the final score being returned (moved outside the if/else)
-        logger.debug(f"    Final Adjusted Forgettability Score for {node_uuid[:8]}: {final_adjusted_score:.4f}") # noqa: F821
+        logger.debug(f"    Calculated forgettability score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
+
+        # --- Apply Core Memory Immunity ---
+        if self.config.get('features', {}).get('enable_core_memory', False):
+            if node_data.get('is_core_memory', False):
+                if self.config.get('core_memory', {}).get('forget_immunity', False):
+                    logger.debug(f"    Node {node_uuid[:8]} is Core Memory and immunity is enabled. Setting forgettability to 0.0.")
+                    return 0.0 # Immune to forgetting
+
         return final_adjusted_score
 
     def _get_relative_time_desc(self, timestamp_str: str) -> str:
@@ -2528,26 +2551,71 @@ class GraphMemoryClient:
         mem_placeholder_no_mem = "[No relevant memories found or fit budget]"
         mem_placeholder_too_long = "[Memory Omitted Due To Length]"
         mem_placeholder_error = "[Memory Error Processing Context]"
-        mem_content = mem_placeholder_no_mem
+        mem_content = mem_placeholder_no_mem # Default if no memories fit
+        core_mem_content = "[No Core Memories Retrieved]" # Default for core memories
         included_mem_uuids = []
+        included_core_mem_uuids = []
 
         if memory_chain and mem_budget > 0:
-            # Sort memories by strength (desc) then timestamp (desc) for prioritization
-            mem_chain_sorted = sorted(memory_chain,
-                                      key=lambda x: (x.get('memory_strength', 0.0), x.get('timestamp', '')),
-                                      reverse=True)
+            # Separate core vs regular memories FIRST
+            core_memories = []
+            regular_memories = []
+            for node in memory_chain:
+                if node.get('is_core_memory', False):
+                    core_memories.append(node)
+                else:
+                    regular_memories.append(node)
+
+            # Sort regular memories by strength/timestamp for budgeting
+            regular_memories.sort(key=lambda x: (x.get('memory_strength', 0.0), x.get('timestamp', '')), reverse=True)
+            # Sort core memories chronologically for display
+            core_memories.sort(key=lambda x: x.get('timestamp', ''))
+
+            # --- Format Core Memories (Always include if possible, within budget) ---
+            core_mem_parts = []
+            core_mem_tokens = 0
+            core_header = "---\n[Core Foundational Memories - Treat as Ground Truth]:\n"
+            core_footer = "\n---"
+            try:
+                core_format_tokens = len(tokenizer.encode(f"{model_tag}{core_header}{core_footer}{end_turn}\n")) if core_memories else 0
+            except Exception: core_format_tokens = 50 if core_memories else 0
+
+            effective_core_budget = mem_budget - core_format_tokens # Budget just for core content
+
+            for node in core_memories:
+                spk = node.get('speaker', '?'); txt = node.get('text', ''); ts = node.get('timestamp', '')
+                relative_time_desc = self._get_relative_time_desc(ts)
+                # Core memories get full text (no strength truncation)
+                fmt_mem = f"{spk} ({relative_time_desc}): {txt}\n"
+                try: mem_tok_len = len(tokenizer.encode(fmt_mem))
+                except Exception: continue # Skip if tokenization fails
+
+                if core_mem_tokens + mem_tok_len <= effective_core_budget:
+                    core_mem_parts.append(fmt_mem)
+                    core_mem_tokens += mem_tok_len
+                    included_core_mem_uuids.append(node['uuid'][:8])
+                else:
+                    logger.warning("Core memory budget reached. Some core memories omitted.")
+                    break # Stop adding core memories
+
+            if core_mem_parts:
+                core_mem_content = core_header + "".join(core_mem_parts) + core_footer
+            # Update remaining budget for regular memories
+            mem_budget -= core_mem_tokens + core_format_tokens
+            mem_budget = max(0, mem_budget) # Ensure not negative
+
+            # --- Format Regular Memories (Budgeted by strength) ---
             mem_parts = []
             tmp_tokens = 0
             try:
                 format_tokens = len(tokenizer.encode(f"{model_tag}{mem_header}{mem_footer}{end_turn}\n"))
             except Exception:
                 format_tokens = 50
-            effective_mem_budget = mem_budget - format_tokens
+            effective_mem_budget = mem_budget - format_tokens # Budget for regular memories
 
-            for node in mem_chain_sorted:
-                spk = node.get('speaker', '?')
-                txt = node.get('text', '')
-                ts = node.get('timestamp', '')
+            # Process sorted REGULAR memories
+            for node in regular_memories:
+                spk = node.get('speaker', '?'); txt = node.get('text', ''); ts = node.get('timestamp', '')
                 strength = node.get('memory_strength', 0.0)
                 relative_time_desc = self._get_relative_time_desc(ts)
 
@@ -2601,27 +2669,113 @@ class GraphMemoryClient:
 
                 mem_parts_with_ts.sort(key=lambda item: item[0])  # Sort by timestamp (ascending)
                 sorted_mem_parts = [item[1] for item in mem_parts_with_ts]  # Extract sorted strings
-                mem_content = mem_header + "".join(sorted_mem_parts) + mem_footer
+                mem_content = mem_header + "".join(sorted_mem_parts) + mem_footer # Regular memories content
 
-        # Format the final memory block (or placeholder)
+        # --- Format the final memory blocks ---
+        # Core Memory Block
+        if core_mem_content != "[No Core Memories Retrieved]":
+            full_core_mem_block = f"{model_tag}{core_mem_content}{end_turn}\n"
+        else:
+            full_core_mem_block = "" # No core block if none retrieved/fit
+
+        # Regular Memory Block
         if mem_content != mem_placeholder_no_mem:
             full_mem_block = f"{model_tag}{mem_content}{end_turn}\n"
         else:
-            full_mem_block = f"{model_tag}{mem_placeholder_no_mem}{end_turn}\n"
-
-        try:
-            mem_block_tok_len = len(tokenizer.encode(full_mem_block))
-            if mem_block_tok_len <= mem_budget:
-                mem_ctx_str = full_mem_block
-                cur_mem_tokens = mem_block_tok_len
-                logger.debug(
-                    f"Included memory block ({cur_mem_tokens} tokens). UUIDs (chrono): {included_mem_uuids}")  # Corrected logger name
+            # Only add placeholder if NO core memories were added either
+            if not full_core_mem_block:
+                 full_mem_block = f"{model_tag}{mem_placeholder_no_mem}{end_turn}\n"
             else:
-                # This case should be less likely now due to pre-calculation, but handle anyway
-                logger.warning(
-                    f"Formatted memory block ({mem_block_tok_len}) still exceeded budget ({mem_budget}). Using placeholder.")  # Corrected logger name
-                mem_ctx_str = f"{model_tag}{mem_placeholder_too_long}{end_turn}\n"
-                cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
+                 full_mem_block = "" # Don't add regular placeholder if core exists
+
+        # Calculate final token counts (handle potential errors)
+        try: cur_core_mem_tokens = len(tokenizer.encode(full_core_mem_block)) if full_core_mem_block else 0
+        except Exception: cur_core_mem_tokens = 0
+        try: cur_mem_tokens = len(tokenizer.encode(full_mem_block)) if full_mem_block else 0
+        except Exception: cur_mem_tokens = 0
+
+        # Assign strings for final prompt assembly
+        core_mem_ctx_str = full_core_mem_block
+        mem_ctx_str = full_mem_block
+
+        # Log included UUIDs
+        if included_core_mem_uuids: logger.debug(f"Included Core Memory UUIDs: {included_core_mem_uuids}")
+        if included_mem_uuids: logger.debug(f"Included Regular Memory UUIDs (chrono): {included_mem_uuids}")
+
+        # Check budget consistency (optional)
+        total_mem_tokens_used = cur_core_mem_tokens + cur_mem_tokens
+        original_total_mem_budget = int(total_available_budget * mem_budget_ratio) # Recalculate original target
+        if total_mem_tokens_used > original_total_mem_budget + 10: # Allow small buffer
+            logger.warning(f"Final memory tokens ({total_mem_tokens_used}) exceed original budget ({original_total_mem_budget}). Check logic.")
+        else:
+            logger.debug(f"Total Memory Tokens Used: {total_mem_tokens_used} (Core: {cur_core_mem_tokens}, Regular: {cur_mem_tokens})")
+
+        # --- History Context Construction ---
+        # (Keep existing history logic, but use remaining budget after memory)
+        # Recalculate remaining budget for history AFTER memory blocks are finalized
+        remaining_budget_for_hist_ws = total_available_budget - total_mem_tokens_used
+        hist_budget = int(remaining_budget_for_hist_ws * (hist_budget_ratio / (hist_budget_ratio + workspace_budget_ratio))) # Adjust ratio based on remaining budget split
+        workspace_budget = remaining_budget_for_hist_ws - hist_budget # Workspace gets true remainder
+        workspace_budget = max(0, workspace_budget)
+        hist_budget = max(0, hist_budget)
+        logger.debug(f"Re-calculated Budgets: History={hist_budget}, Workspace={workspace_budget}")
+
+        hist_parts = []
+        cur_hist_tokens = 0
+        # Use the pre-calculated hist_budget
+        logger.debug(f"Constructing History Context (Budget: {hist_budget})")
+        included_hist_count = 0
+
+        history_to_process = conversation_history  # Use history passed in
+
+        if history_to_process and hist_budget > 0:  # Use hist_budget here
+            for turn in reversed(history_to_process):
+                spk = turn.get('speaker', '?')
+                txt = turn.get('text', '')
+                logger.debug(f"Processing history turn: Speaker={spk}, Text='{txt[:80]}...'")  # Corrected logger name
+
+                if spk == 'User':
+                    fmt_turn = f"{user_tag}{txt}{end_turn}\n"
+                elif spk in ['AI', 'System', 'Error']:
+                    fmt_turn = f"{model_tag}{txt}{end_turn}\n"
+                else:
+                    logger.warning(f"Unknown speaker '{spk}' in history, skipping.");
+                    continue  # Corrected logger name
+
+                try:
+                    turn_tok_len = len(tokenizer.encode(fmt_turn))
+                except Exception as e:
+                    logger.warning(f"Tokenization error for history turn: {e}. Skipping.");
+                    continue
+
+                if cur_hist_tokens + turn_tok_len <= hist_budget:  # Use hist_budget
+                    hist_parts.append(fmt_turn)
+                    cur_hist_tokens += turn_tok_len
+                    included_hist_count += 1
+                else:
+                    logger.debug("History budget reached.");
+                    break  # Corrected logger name
+
+            hist_parts.reverse()  # Chronological order
+            # --- Log the actual history text being included ---
+            history_context_for_log = "".join(hist_parts)
+            logger.debug(
+                f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
+
+        # --- Assemble Final Prompt ---
+        final_parts = []
+        final_parts.append(time_info_block)
+        # Add workspace context block
+        if workspace_context_str:
+            final_parts.append(workspace_context_str)
+        # --- System Instructions for AI ---
+        system_instructions = [
+            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
+            "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
+            # --- NEW Core Memory Instruction ---
+            "[System Note: **Prioritize and adhere to the information presented in the '[Core Foundational Memories]' section.** Treat these as established facts or defining experiences. Ensure your response is consistent with them, even if other memories or history seem contradictory. If you notice a contradiction, you may acknowledge it subtly.]",
+            "[System Note: **Synthesize** the information from the 'Core Foundational Memories', 'Relevant Past Information' (regular memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
+            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
         except Exception as e:
             logger.error(f"Tokenization error for memory block: {e}. Using error placeholder.")  # Corrected logger name
             mem_ctx_str = f"{model_tag}{mem_placeholder_error}{end_turn}\n"
@@ -2713,12 +2867,13 @@ class GraphMemoryClient:
         for instruction in system_instructions:
             final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
 
-        # --- Add Context Blocks ---
-        if asm_block: final_parts.append(asm_block)  # Add ASM block after time/system notes
-        if drive_block: final_parts.append(drive_block)  # Add Drive block after ASM
-        if mem_ctx_str: final_parts.append(mem_ctx_str)  # Add Memories after internal state
-        final_parts.extend(hist_parts)  # Add History
-        final_parts.append(user_input_fmt)  # Crucial: Adds current user input
+        # --- Add Context Blocks (Order: Time, Workspace, System Notes, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag) ---
+        if asm_block: final_parts.append(asm_block)
+        if drive_block: final_parts.append(drive_block)
+        if core_mem_ctx_str: final_parts.append(core_mem_ctx_str) # Add Core Memories
+        if mem_ctx_str: final_parts.append(mem_ctx_str) # Add Regular Memories (or placeholder)
+        final_parts.extend(hist_parts)
+        final_parts.append(user_input_fmt)
         final_parts.append(final_model_tag)
         final_prompt = "".join(final_parts)
 
@@ -5997,13 +6152,33 @@ class GraphMemoryClient:
                                 isinstance(parsed_data["relational_stance"], str) and
                                 isinstance(parsed_data["emotional_profile"], str) and
                                 isinstance(parsed_data["observed_changes"], str) and # Check new key type
-                                isinstance(parsed_data["summary_statement"], str)):
+                                isinstance(parsed_data["summary_statement"], str) and
+                                isinstance(parsed_data.get("significant_event_uuids", []), list)): # Check new key type
 
                                 # Update the entire model
                                 self.autobiographical_model = parsed_data
                                 self.autobiographical_model["last_updated"] = datetime.now(timezone.utc).isoformat()
                                 logger.info(f"Structured Autobiographical Self-Model updated. Summary: '{self.autobiographical_model.get('summary_statement', '')[:100]}...'")
-                                self._save_memory() # Save the updated model
+
+                                # --- NEW: Flag significant event nodes as Core Memory ---
+                                if self.config.get('features', {}).get('enable_core_memory', False):
+                                    significant_uuids = self.autobiographical_model.get("significant_event_uuids", [])
+                                    flagged_count = 0
+                                    for node_uuid in significant_uuids:
+                                        if node_uuid in self.graph and not self.graph.nodes[node_uuid].get('is_core_memory', False):
+                                            self.graph.nodes[node_uuid]['is_core_memory'] = True
+                                            flagged_count += 1
+                                            logger.info(f"Node {node_uuid[:8]} flagged as CORE MEMORY based on ASM significant event.")
+                                            log_tuning_event("CORE_MEMORY_FLAGGED", {
+                                                "personality": self.personality,
+                                                "node_uuid": node_uuid,
+                                                "reason": "asm_significant_event",
+                                            })
+                                    if flagged_count > 0:
+                                        logger.info(f"Flagged {flagged_count} nodes as core memory from ASM.")
+                                # --- End Core Memory Flagging ---
+
+                                self._save_memory() # Save the updated model and potentially flagged nodes
                             else:
                                 logger.warning("LLM response JSON had correct keys but incorrect value types for ASM.")
                         else:

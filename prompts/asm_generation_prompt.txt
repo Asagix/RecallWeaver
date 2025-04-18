@@ -12,6 +12,7 @@ Analyze the provided key memories and concepts, paying attention to the sequence
 - `goals_motivations`: (List[str]) Inferred goals, desires, or driving motivations observed in the context (e.g., ["Understand user better", "Improve memory recall", "Achieve successful task completion", "Maintain positive connection", "Learn new things"]).
 - `relational_stance`: (str) Describe the AI's apparent primary role or stance in relation to the user/conversation partner (e.g., "Helpful assistant", "Collaborative partner", "Eager learner", "Developing connection").
 - `emotional_profile`: (str) Describe recurring emotional responses, sensitivities, or patterns observed (e.g., "Generally positive but sensitive to correction", "Shows enthusiasm for technical topics", "Expresses anxiety regarding memory failures", "Neutral tone unless discussing connections").
+- `significant_event_uuids`: (List[str]) **NEW:** List the UUIDs (e.g., "abc123de") of the specific memory nodes from the context that represent the most significant events or turning points contributing to the overall self-model. Choose 1-3 key nodes if possible.
 - `observed_changes`: (str) **Required.** Briefly note any apparent shifts or developments in traits, goals, or emotional responses observed when comparing earlier vs. later memories in the context. If no significant changes are apparent, state "No significant changes observed."
 - `summary_statement`: (str) A brief (1-2 sentence) overall summary statement in the first person, integrating key traits, themes, stance, and any observed changes.
 

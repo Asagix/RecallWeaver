@@ -215,6 +215,14 @@ features:
   enable_emotion_analysis: true # Enable/disable basic emotion analysis during consolidation
   enable_forgetting: true # Enable/disable nuanced forgetting
   enable_rich_associations: true # Enable/disable LLM-based rich association extraction (Phase 1.1+)
+  enable_core_memory: true # NEW: Master switch for core memory system
+
+# --- Core Memory System ---
+core_memory:
+  saliency_threshold: 0.95 # Saliency score above which a node becomes 'core'
+  # emotional_impact_threshold is already under subconscious_drives
+  guaranteed_retrieval_activation_factor: 0.5 # Multiplier for activation_threshold (e.g., 0.5 means include if activation > threshold*0.5)
+  forget_immunity: true # If true, core memories ignore forgetting score and strength decay
 
 # --- Activation Spreading Parameters ---
 activation:
