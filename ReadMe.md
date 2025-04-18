@@ -3,6 +3,9 @@
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) <!-- Assuming MIT, update if needed -->
 
+
+![Screenshot_Githubg](https://github.com/user-attachments/assets/4bd6c38e-4425-4c9c-8a5a-1ee9e53a1332)
+
 ## Overview
 
 RecallWeaver is a Python application designed to give conversational AI systems a **persistent, long-term memory**. Instead of being limited by the context window of a Large Language Model (LLM), RecallWeaver stores conversational turns, extracted concepts, relationships, and even the AI's evolving self-perception in a **graph database**. This allows the AI to recall relevant past information semantically, leading to more coherent, context-aware, and personalized interactions.
