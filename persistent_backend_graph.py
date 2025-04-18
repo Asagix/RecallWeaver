@@ -2742,10 +2742,20 @@ class GraphMemoryClient:
         # (Keep existing history logic, but use remaining budget after memory)
         # Recalculate remaining budget for history AFTER memory blocks are finalized
         remaining_budget_for_hist_ws = total_available_budget - total_mem_tokens_used
-        hist_budget = int(remaining_budget_for_hist_ws * (hist_budget_ratio / (hist_budget_ratio + workspace_budget_ratio))) # Adjust ratio based on remaining budget split
+
+        # Calculate workspace budget ratio based on memory and history ratios
+        workspace_budget_ratio = max(0.0, 1.0 - mem_budget_ratio - hist_budget_ratio) # Ensure non-negative
+
+        # Calculate history budget based on the ratio of history to (history + workspace) within the remaining budget
+        total_ratio_hist_ws = hist_budget_ratio + workspace_budget_ratio
+        if total_ratio_hist_ws > 1e-6: # Avoid division by zero
+            hist_budget = int(remaining_budget_for_hist_ws * (hist_budget_ratio / total_ratio_hist_ws))
+        else:
+            hist_budget = 0 # If both ratios are zero, history gets nothing
+
         workspace_budget = remaining_budget_for_hist_ws - hist_budget # Workspace gets true remainder
-        workspace_budget = max(0, workspace_budget)
-        hist_budget = max(0, hist_budget)
+        workspace_budget = max(0, workspace_budget) # Ensure non-negative
+        hist_budget = max(0, hist_budget) # Ensure non-negative
         logger.debug(f"Re-calculated Budgets: History={hist_budget}, Workspace={workspace_budget}")
 
         hist_parts = []
