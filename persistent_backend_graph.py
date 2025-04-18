@@ -2668,8 +2668,10 @@ class GraphMemoryClient:
                 # Re-sort the *included* parts chronologically for the final prompt
                 # This requires storing timestamp along with fmt_mem temporarily
                 mem_parts_with_ts = []
-                for node in mem_chain_sorted:
-                    if node['uuid'][:8] in included_mem_uuids:  # Check if this node was included
+                # <<< FIX: Iterate over 'regular_memories', not 'mem_chain_sorted' >>>
+                for node in regular_memories:
+                    # Check if this node's UUID (first 8 chars) is in the list of included UUIDs
+                    if node['uuid'][:8] in included_mem_uuids:
                         spk = node.get('speaker', '?')
                         txt = node.get('text', '')
                         ts = node.get('timestamp', '')
