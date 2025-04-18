@@ -90,12 +90,12 @@ Getting RecallWeaver up and running involves a few steps:
     RecallWeaver needs a running LLM backend. KoboldCpp is recommended.
     *   **Download KoboldCpp:** Get the latest version from the [KoboldCpp GitHub releases](https://github.com/LostRuins/koboldcpp/releases).
     *   **Download an LLM Model:** You'll need a model file in GGUF format.
-        *   **Recommendation:** A good starting point is an instruct-tuned model like **Gemma 27b Instruct** (`gemma-2-27b-it-gguf`). Larger models generally provide better results for analysis tasks. Find models on Hugging Face.
-    *   **Download Multimodal Projector (Optional but Recommended):** For image support, download the corresponding `.mmproj` file for your chosen model (e.g., the one for Gemma 2).
+        *   **Recommendation:** A good starting point is an instruct-tuned model like **Gemma 27b Instruct** (`gemma-3-27b-it-gguf`). Larger models generally provide better results for analysis tasks. Find models on Hugging Face.
+    *   **Download Multimodal Projector (Optional but Recommended):** For image support, download the corresponding `.mmproj` file for your chosen model (e.g., the one for Gemma 3).
     *   **Run KoboldCpp with API and Multimodal Support:** Launch KoboldCpp from your terminal, enabling the API and specifying the multimodal projector:
         ```bash
         # Example command (adjust paths and parameters as needed):
-        koboldcpp.exe --model /path/to/your/gemma-2-27b-it.Q4_K_M.gguf --useapi --port 5001 --mmproj /path/to/your/mmproj-gemma-2-27b-it-f16.gguf --threads 8 --contextsize 8192 --usemirostat 2 5.0 0.1
+        koboldcpp.exe --model /path/to/your/gemma-3-27b-it.Q4_K_M.gguf --useapi --port 5001 --mmproj /path/to/your/mmproj-gemma--27b-it-f16.gguf --threads 8 --contextsize 8192 --usemirostat 2 5.0 0.1
         ```
         *   `--model`: Path to your downloaded GGUF model file.
         *   `--useapi`: **Crucial!** Enables the necessary API endpoints.
@@ -110,7 +110,7 @@ Before running, review and potentially modify `config.yaml`:
 
 *   **`base_memory_path`**: Where personality data folders will be stored.
 *   **`kobold_api_url`**, **`kobold_chat_api_url`**: Ensure these match the URL and port of your running KoboldCpp instance (usually `http://localhost:5001/api/v1/generate` and `http://localhost:5001/v1/chat/completions`).
-*   **`embedding_model`**, **`tokenizer_name`**: Models used for embeddings and token counting. Defaults are generally good (`all-MiniLM-L6-v2`, `google/gemma-7b-it`).
+*   **`embedding_model`**, **`tokenizer_name`**: Models used for embeddings and token counting. Defaults are generally good (`all-MiniLM-L6-v2`, `google/gemma3-27b-it`).
 *   **`llm_models`**: Configure parameters (max length, temperature, etc.) for different LLM tasks (chat, summary, analysis).
 *   **`features`**: Enable or disable specific features like saliency, emotion analysis, forgetting, etc.
 *   **`activation`**, **`consolidation`**, **`forgetting`**, **`memory_strength`**, **`subconscious_drives`**: Fine-tune parameters controlling memory retrieval, consolidation, forgetting, and the drive system.
