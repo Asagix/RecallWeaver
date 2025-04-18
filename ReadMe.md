@@ -1,11 +1,11 @@
-# Persistent Graph Memory System (MemSys)
+# Persistent Graph Memory System (RecallWeaver)
 
 [![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) <!-- Assuming MIT, update if needed -->
 
 ## Overview
 
-MemSys is a Python application designed to give conversational AI systems a **persistent, long-term memory**. Instead of being limited by the context window of a Large Language Model (LLM), MemSys stores conversational turns, extracted concepts, relationships, and even the AI's evolving self-perception in a **graph database**. This allows the AI to recall relevant past information semantically, leading to more coherent, context-aware, and personalized interactions.
+RecallWeaver is a Python application designed to give conversational AI systems a **persistent, long-term memory**. Instead of being limited by the context window of a Large Language Model (LLM), RecallWeaver stores conversational turns, extracted concepts, relationships, and even the AI's evolving self-perception in a **graph database**. This allows the AI to recall relevant past information semantically, leading to more coherent, context-aware, and personalized interactions.
 
 Think of it as giving your AI a searchable diary and knowledge base that grows with every conversation.
 
@@ -21,7 +21,7 @@ Think of it as giving your AI a searchable diary and knowledge base that grows w
 
 ## Features
 
-MemSys boasts a rich set of features aimed at creating a more dynamic and persistent AI memory:
+RecallWeaver boasts a rich set of features aimed at creating a more dynamic and persistent AI memory:
 
 *   **🧠 Graph-Based Memory:** Stores conversation turns, summaries, concepts, intentions, and relationships as nodes. Edges represent temporal sequence, summarization links, concept mentions, causality, analogies, and more.
 *   **💾 Persistence:** Saves the entire memory state (graph, embeddings, index, self-model, drives, last conversation) to disk, organized by AI "personality". Memory persists across application restarts.
@@ -53,12 +53,12 @@ MemSys boasts a rich set of features aimed at creating a more dynamic and persis
 
 ## Setup & Installation
 
-Getting MemSys up and running involves a few steps:
+Getting RecallWeaver up and running involves a few steps:
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/Asagix/memsys.git # Replace with your repo URL
-    cd memsys
+    git clone https://github.com/Asagix/RecallWeaver.git # Replace with your repo URL
+    cd RecallWeaver
     ```
 
 2.  **Create a Python Environment (Recommended):**
@@ -81,13 +81,13 @@ Getting MemSys up and running involves a few steps:
     *   **Note on PyTorch:** `torch` is usually installed automatically as a dependency. If you encounter issues, you might need to install it manually following instructions on the [PyTorch website](https://pytorch.org/).
 
 4.  **Download spaCy Model:**
-    MemSys uses a spaCy model for advanced relationship extraction during consolidation. Download the recommended English model:
+    RecallWeaver uses a spaCy model for advanced relationship extraction during consolidation. Download the recommended English model:
     ```bash
     python -m spacy download en_core_web_sm
     ```
 
 5.  **Set up LLM Backend (KoboldCpp):**
-    MemSys needs a running LLM backend. KoboldCpp is recommended.
+    RecallWeaver needs a running LLM backend. KoboldCpp is recommended.
     *   **Download KoboldCpp:** Get the latest version from the [KoboldCpp GitHub releases](https://github.com/LostRuins/koboldcpp/releases).
     *   **Download an LLM Model:** You'll need a model file in GGUF format.
         *   **Recommendation:** A good starting point is an instruct-tuned model like **Gemma 27b Instruct** (`gemma-2-27b-it-gguf`). Larger models generally provide better results for analysis tasks. Find models on Hugging Face.
@@ -102,7 +102,7 @@ Getting MemSys up and running involves a few steps:
         *   `--port 5001`: The port KoboldCpp will listen on (matches default in `config.yaml`).
         *   `--mmproj`: **Required for image support.** Path to the downloaded `.mmproj` file.
         *   Adjust `--threads`, `--contextsize`, GPU layers (`--gpulayers`), etc., based on your hardware. Refer to KoboldCpp documentation.
-    *   Keep the KoboldCpp terminal window running while you use MemSys.
+    *   Keep the KoboldCpp terminal window running while you use RecallWeaver.
 
 ## Configuration
 
@@ -211,8 +211,8 @@ The system uses a combination of:
 
 1.  **Clone the repository:**
     ```bash
-    git clone <https://github.com/Asagix/MemSys>
-    cd memsys
+    git clone <https://github.com/Asagix/RecallWeaver>
+    cd RecallWeaver
     ```
 2.  **Create a Python environment (Recommended):**
     ```bash
