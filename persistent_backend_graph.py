@@ -2794,6 +2794,7 @@ class GraphMemoryClient:
             "[System Note: **Prioritize and adhere to the information presented in the '[Core Foundational Memories]' section.** Treat these as established facts or defining experiences. Ensure your response is consistent with them, even if other memories or history seem contradictory. If you notice a contradiction, you may acknowledge it subtly.]",
             "[System Note: **Synthesize** the information from the 'Core Foundational Memories', 'Relevant Past Information' (regular memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
+        ] # <<< MISSING BRACKET ADDED HERE
         except Exception as e:
             logger.error(f"Tokenization error for memory block: {e}. Using error placeholder.")  # Corrected logger name
             mem_ctx_str = f"{model_tag}{mem_placeholder_error}{end_turn}\n"
