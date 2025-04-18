@@ -291,9 +291,10 @@ consolidation:
   trigger_interaction_count: 15 # How often to run consolidation automatically (e.g., every 15 interactions). Set > 0 to enable.
   turn_count: 15 # How many turns to process when consolidation runs (Increased from 10)
   min_nodes: 5 # Minimum suitable nodes required to proceed
-  concept_similarity_threshold: 0.3
+  concept_similarity_threshold: 0.28 # Slightly lowered from 0.3 to potentially merge closer concepts
+  prune_summarized_turns: false # Changed default to false - safer to keep original turns
   # --- Relation Extraction ---
-  target_relation_types: # List of relation types the LLM should try to extract
+  target_relation_types: # List of relation types the LLM should try to extract (Review this list for relevance/accuracy)
     - "CAUSES"
     - "PART_OF"
     - "HAS_PROPERTY"
