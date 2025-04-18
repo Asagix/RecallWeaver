@@ -2707,14 +2707,22 @@ class GraphMemoryClient:
                  full_mem_block = "" # Don't add regular placeholder if core exists
 
         # Calculate final token counts (handle potential errors)
-        try: cur_core_mem_tokens = len(tokenizer.encode(full_core_mem_block)) if full_core_mem_block else 0
-        except Exception: cur_core_mem_tokens = 0
-        try: cur_mem_tokens = len(tokenizer.encode(full_mem_block)) if full_mem_block else 0
-        except Exception: cur_mem_tokens = 0
+        try:
+            cur_core_mem_tokens = len(tokenizer.encode(full_core_mem_block)) if full_core_mem_block else 0
+            cur_mem_tokens = len(tokenizer.encode(full_mem_block)) if full_mem_block else 0
+        except Exception as e:
+            logger.error(f"Tokenization error for memory block: {e}. Using error placeholder.")
+            # Reset memory strings and tokens if tokenization fails
+            core_mem_ctx_str = ""
+            mem_ctx_str = f"{model_tag}{mem_placeholder_error}{end_turn}\n"
+            cur_core_mem_tokens = 0
+            try: # Recalculate token count for the error placeholder
+                cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
+            except Exception: cur_mem_tokens = 50 # Estimate if even placeholder fails
 
-        # Assign strings for final prompt assembly
-        core_mem_ctx_str = full_core_mem_block
-        mem_ctx_str = full_mem_block
+        # Assign strings for final prompt assembly (potentially updated by except block)
+        core_mem_ctx_str = full_core_mem_block if 'core_mem_ctx_str' not in locals() else core_mem_ctx_str # Use value from except block if it ran
+        mem_ctx_str = full_mem_block if 'mem_ctx_str' not in locals() else mem_ctx_str # Use value from except block if it ran
 
         # Log included UUIDs
         if included_core_mem_uuids: logger.debug(f"Included Core Memory UUIDs: {included_core_mem_uuids}")
@@ -2795,10 +2803,6 @@ class GraphMemoryClient:
             "[System Note: **Synthesize** the information from the 'Core Foundational Memories', 'Relevant Past Information' (regular memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
         ] # <<< MISSING BRACKET ADDED HERE
-        except Exception as e:
-            logger.error(f"Tokenization error for memory block: {e}. Using error placeholder.")  # Corrected logger name
-            mem_ctx_str = f"{model_tag}{mem_placeholder_error}{end_turn}\n"
-            cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
 
         # --- History Context Construction ---
         hist_parts = []
