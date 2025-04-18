@@ -294,19 +294,19 @@ consolidation:
   concept_similarity_threshold: 0.28 # Slightly lowered from 0.3 to potentially merge closer concepts
   prune_summarized_turns: false # Changed default to false - safer to keep original turns
   # --- Relation Extraction ---
-  target_relation_types: # List of relation types the LLM should try to extract (Review this list for relevance/accuracy)
-    - "CAUSES"
-    - "PART_OF"
-    - "HAS_PROPERTY"
-    - "RELATED_TO"
-    - "IS_A"
-    - "ENABLES"
-    - "PREVENTS"
-    - "CONTRADICTS"
-    - "SUPPORTS"
-    - "EXAMPLE_OF"
-    - "MEASURES"
-    - "LOCATION_OF"
+  target_relation_types: # Focused list of relation types for LLM extraction
+    - "CAUSES"        # Cause and effect
+    - "PART_OF"       # Component relationship
+    # - "HAS_PROPERTY"  # Removed - Often implicit or less critical for structure
+    # - "RELATED_TO"    # Removed - Too generic, prefer specific types
+    - "IS_A"          # Type/instance hierarchy
+    - "ENABLES"       # Enabling condition
+    - "PREVENTS"      # Preventing condition
+    - "CONTRADICTS"   # Contradictory concepts
+    - "SUPPORTS"      # Supporting concepts/arguments
+    - "EXAMPLE_OF"    # Example relationship
+    # - "MEASURES"      # Removed - Less common/critical
+    # - "LOCATION_OF"   # Removed - Less common/critical
   enable_causal_chains: true # Enable/disable causal chain extraction during consolidation
   enable_analogies: true # Enable/disable analogy extraction during consolidation
   # --- Second-Order Inference ---
@@ -445,17 +445,17 @@ subconscious_drives:
     # Positive deviation = drive level is *higher* than baseline (need potentially met/overshot).
     # Negative deviation = drive level is *lower* than baseline (need potentially unmet).
     valence_factors: # How deviation affects Pleasantness (-1 to +1)
-      Connection: 0.15  # Positive deviation (met) -> more pleasant. Negative (unmet) -> less pleasant.
-      Safety: -0.25     # Positive deviation (safe) -> slightly less pleasant (complacent?). Negative (unsafe) -> much less pleasant.
+      Connection: 0.20  # Increased: Positive deviation (met) -> more pleasant. Negative (unmet) -> less pleasant.
+      Safety: 0.15     # Changed Sign: Positive deviation (safe) -> more pleasant. Negative (unsafe) -> less pleasant.
       Understanding: 0.1 # Positive deviation (understanding) -> more pleasant. Negative (confused) -> less pleasant.
-      Novelty: 0.1     # Positive deviation (stimulated) -> more pleasant. Negative (bored) -> less pleasant. (Changed sign from 0.05)
-      Control: 0.25    # Positive deviation (in control) -> more pleasant. Negative (loss of control) -> less pleasant. (Increased from 0.1)
+      Novelty: 0.1     # Positive deviation (stimulated) -> more pleasant. Negative (bored) -> less pleasant.
+      Control: 0.25    # Positive deviation (in control) -> more pleasant. Negative (loss of control) -> less pleasant.
     arousal_factors: # How deviation affects Activation/Energy (0 to 1)
-      Connection: 0.1  # Both high satisfaction and high frustration might increase arousal slightly. (Increased from 0.05)
-      Safety: -0.3     # Positive deviation (safe) -> decreases arousal (calm). Negative (unsafe) -> increases arousal (anxiety). (Correct)
-      Understanding: 0.1 # Positive deviation (engaged) -> increases arousal. Negative (confused) -> increases arousal (frustration). (Increased from 0.05)
-      Novelty: 0.25    # Positive deviation (excited) -> increases arousal. Negative (bored) -> decreases arousal. (Increased from 0.2)
-      Control: 0.20    # Positive deviation (competent) -> slightly increases arousal (focused?). Negative (loss of control) -> increases arousal (agitation). (Changed sign and value from -0.15)
+      Connection: 0.1  # Both high satisfaction and high frustration might increase arousal slightly.
+      Safety: -0.3     # Positive deviation (safe) -> decreases arousal (calm). Negative (unsafe) -> increases arousal (anxiety).
+      Understanding: 0.1 # Positive deviation (engaged) -> increases arousal. Negative (confused) -> increases arousal (frustration).
+      Novelty: 0.25    # Positive deviation (excited) -> increases arousal. Negative (bored) -> decreases arousal.
+      Control: 0.15    # Adjusted: Positive deviation (competent/focused) -> slightly increases arousal. Negative (loss of control) -> increases arousal (agitation).
     max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
 
   # --- Inter-Drive Dynamics (NEW) ---

@@ -2684,9 +2684,15 @@ class GraphMemoryClient:
             "[System Note: **Synthesize** the information from the 'Relevant Past Information' (memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
             # --- Mood/Drive Tone Instruction ---
-            f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). Let this subtly influence your response tone. For example, high Valence might lead to warmer language, high Arousal might lead to more energetic phrasing, low Safety might lead to more cautious language.]" if current_mood else "[System Note: Current mood unavailable.]",
+            f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). **Actively use this state** to shape your response's tone, word choice, and even content focus. For example:\n"
+            f"  - High Connection need (Low deviation): Be more engaging, seek common ground.\n"
+            f"  - High Safety need (Low deviation): Be more cautious, seek reassurance, avoid ambiguity.\n"
+            f"  - High Control need (Low deviation): Be more proactive, structured, offer clear steps.\n"
+            f"  - High Valence (Happy/Content): Use warmer, more positive language.\n"
+            f"  - High Arousal (Excited/Agitated): Use more energetic or intense language (appropriately).\n"
+            f"  - Low Arousal (Calm/Sad): Use calmer or more subdued language.]" if current_mood else "[System Note: Current mood unavailable.]",
             # --- ASM Integration Instruction (Revised for Adaptation) ---
-            "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself, but **adapt your response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed. Prioritize recent information when it conflicts with the baseline summary.]",
+            "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself. **Explicitly reference** how your traits or goals inform your current thinking or response when relevant to the user's query. However, **adapt your immediate response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed. Prioritize recent information when it conflicts with the baseline summary.]",
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
