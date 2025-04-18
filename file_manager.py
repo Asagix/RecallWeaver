@@ -2,12 +2,35 @@
 import os
 import json
 import logging
-from datetime import datetime, timezone, timedelta # Added timedelta for potential future use
+import re # <<< Add import re
+from datetime import datetime, timezone, timedelta
 
-logger = logging.getLogger(__name__) # Use logger from this module
+logger = logging.getLogger(__name__)
+
+# --- Constants for Validation ---
+# Includes control characters 0-31, and common Windows/Unix reserved chars
+INVALID_FILENAME_CHARS_PATTERN = re.compile(r'[\x00-\x1f<>:"/\\|?*]')
 
 DEFAULT_WORKSPACE = "Workspace"
 DEFAULT_CALENDAR_FILE = "calendar.jsonl"
+
+# --- Helper Functions ---
+
+def _is_filename_safe(filename: str) -> bool:
+    """Checks if a filename contains potentially unsafe characters or patterns."""
+    if not filename or filename in ['.', '..'] or not filename.strip():
+        logger.warning(f"Unsafe filename detected (empty, '.', or '..'): '{filename}'")
+        return False
+    if INVALID_FILENAME_CHARS_PATTERN.search(filename):
+        logger.warning(f"Unsafe filename detected (invalid characters): '{filename}'")
+        return False
+    # Optional: Check length?
+    # if len(filename) > 255: # Max path component length is often 255
+    #     logger.warning(f"Filename potentially too long: {len(filename)} chars")
+    #     return False
+    return True
+
+# --- Main File Operations ---
 
 def get_workspace_path(config: dict, personality_name: str) -> str | None:
     """
@@ -69,12 +92,14 @@ def create_or_overwrite_file(config: dict, personality: str, filename: str, cont
     if not workspace_path:
         return False, f"Could not access workspace for personality '{personality}'."
 
-    # Basic filename sanitization (already done in analyze_action_request, but good safety check)
-    safe_filename = os.path.basename(filename)
-    if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
-        err_msg = f"Invalid or unsafe filename provided: '{filename}'."
+    # --- Filename Validation ---
+    base_filename = os.path.basename(filename) # Remove potential path components first
+    if not _is_filename_safe(base_filename):
+        err_msg = f"Invalid or unsafe filename provided: '{filename}' (Sanitized: '{base_filename}'). Contains invalid characters or patterns."
         logger.error(err_msg)
         return False, err_msg
+    safe_filename = base_filename # Use the validated base filename
+    # --- End Validation ---
 
     file_path = os.path.join(workspace_path, safe_filename)
     logger.info(f"Attempting write/overwrite: {file_path}")
@@ -122,11 +147,14 @@ def append_to_file(config: dict, personality: str, filename: str, content_to_app
     if not workspace_path:
         return False, f"Could not access workspace for personality '{personality}'."
 
-    safe_filename = os.path.basename(filename)
-    if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
-        err_msg = f"Invalid or unsafe filename provided: '{filename}'."
+    # --- Filename Validation ---
+    base_filename = os.path.basename(filename)
+    if not _is_filename_safe(base_filename):
+        err_msg = f"Invalid or unsafe filename provided for append: '{filename}' (Sanitized: '{base_filename}'). Contains invalid characters or patterns."
         logger.error(err_msg)
         return False, err_msg
+    safe_filename = base_filename
+    # --- End Validation ---
 
     file_path = os.path.join(workspace_path, safe_filename)
     logger.info(f"Attempting append to: {file_path}")
@@ -277,23 +305,29 @@ def read_file(config: dict, personality: str, filename: str) -> tuple[str | None
     if not workspace_path:
         return None, f"Could not access workspace for personality '{personality}'."
 
-    safe_filename = os.path.basename(filename)
-    if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
-        err_msg = f"Invalid or unsafe filename provided for reading: '{filename}'."
+    # --- Filename Validation ---
+    base_filename = os.path.basename(filename)
+    if not _is_filename_safe(base_filename):
+        err_msg = f"Invalid or unsafe filename provided for reading: '{filename}' (Sanitized: '{base_filename}'). Contains invalid characters or patterns."
         logger.error(err_msg)
         return None, err_msg
+    safe_filename = base_filename
+    # --- End Validation ---
 
     file_path = os.path.join(workspace_path, safe_filename)
     logger.info(f"Attempting to read file: {file_path}")
 
-    if not os.path.exists(file_path):
-        err_msg = f"File not found: '{safe_filename}'."
-        logger.warning(err_msg + f" (Path: {file_path})")
-        return None, err_msg
-    if not os.path.isfile(file_path):
-        err_msg = f"Path is not a file: '{safe_filename}'."
-        logger.warning(err_msg + f" (Path: {file_path})")
-        return None, err_msg
+    # Check existence and type *before* try block for clearer error messages
+    if not os.path.isfile(file_path): # Checks existence and if it's a file
+        # Distinguish between not found and not a file
+        if not os.path.exists(file_path):
+            err_msg = f"File not found: '{safe_filename}'."
+            logger.warning(err_msg + f" (Path: {file_path})")
+            return None, err_msg # Specific message for not found
+        else:
+            err_msg = f"Path exists but is not a file: '{safe_filename}'."
+            logger.warning(err_msg + f" (Path: {file_path})")
+            return None, err_msg # Specific message for not a file
 
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -301,14 +335,18 @@ def read_file(config: dict, personality: str, filename: str) -> tuple[str | None
         msg = f"Successfully read content from '{safe_filename}'."
         logger.info(msg + f" (Personality: {personality}, Length: {len(content)})")
         return content, msg
-    except IOError as e:
-        err_msg = f"IO error reading file '{safe_filename}': {e}"
-        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+    except FileNotFoundError: # Should be caught by isfile check, but handle defensively
+        err_msg = f"File not found error during read attempt: '{safe_filename}'."
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True) # Log as error if it gets here
         return None, err_msg
     except PermissionError as e:
          err_msg = f"Permission denied reading file '{safe_filename}'."
          logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
-         return None, err_msg
+         return None, err_msg # Specific message for permission denied
+    except IOError as e: # Catch other IO errors
+        err_msg = f"IO error reading file '{safe_filename}': {e}"
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+        return None, err_msg
     except Exception as e:
         err_msg = f"Unexpected error reading file '{safe_filename}': {e}"
         logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
@@ -331,38 +369,46 @@ def delete_file(config: dict, personality: str, filename: str) -> tuple[bool, st
     if not workspace_path:
         return False, f"Could not access workspace for personality '{personality}'."
 
-    safe_filename = os.path.basename(filename)
-    if not safe_filename or safe_filename in ['.', '..'] or not safe_filename.strip():
-        err_msg = f"Invalid or unsafe filename provided for deletion: '{filename}'."
+    # --- Filename Validation ---
+    base_filename = os.path.basename(filename)
+    if not _is_filename_safe(base_filename):
+        err_msg = f"Invalid or unsafe filename provided for deletion: '{filename}' (Sanitized: '{base_filename}'). Contains invalid characters or patterns."
         logger.error(err_msg)
         return False, err_msg
+    safe_filename = base_filename
+    # --- End Validation ---
 
     file_path = os.path.join(workspace_path, safe_filename)
-    logger.warning(f"Attempting to DELETE file: {file_path}") # Log deletion attempt as warning
+    logger.warning(f"Attempting to DELETE file: {file_path}")
 
-    if not os.path.exists(file_path):
-        err_msg = f"Cannot delete, file not found: '{safe_filename}'."
-        logger.warning(err_msg + f" (Path: {file_path})")
-        # Return success=False but maybe a specific message?
-        return False, err_msg
-    if not os.path.isfile(file_path):
-        err_msg = f"Cannot delete, path is not a file: '{safe_filename}'."
-        logger.warning(err_msg + f" (Path: {file_path})")
-        return False, err_msg
+    # Check existence and type *before* try block for clearer error messages
+    if not os.path.isfile(file_path): # Checks existence and if it's a file
+        if not os.path.exists(file_path):
+            err_msg = f"Cannot delete, file not found: '{safe_filename}'."
+            logger.warning(err_msg + f" (Path: {file_path})")
+            return False, err_msg # Specific message for not found
+        else:
+            err_msg = f"Cannot delete, path exists but is not a file: '{safe_filename}'."
+            logger.warning(err_msg + f" (Path: {file_path})")
+            return False, err_msg # Specific message for not a file
 
     try:
         os.remove(file_path)
         msg = f"Successfully deleted file '{safe_filename}'."
         logger.info(msg + f" (Personality: {personality})")
         return True, msg
-    except IOError as e:
-        err_msg = f"IO error deleting file '{safe_filename}': {e}"
-        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+    except FileNotFoundError: # Should be caught by isfile check, but handle defensively
+        err_msg = f"File not found error during delete attempt: '{safe_filename}'."
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True) # Log as error if it gets here
         return False, err_msg
     except PermissionError as e:
          err_msg = f"Permission denied deleting file '{safe_filename}'."
          logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
-         return False, err_msg
+         return False, err_msg # Specific message for permission denied
+    except IOError as e: # Catch other IO errors
+        err_msg = f"IO error deleting file '{safe_filename}': {e}"
+        logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
+        return False, err_msg
     except Exception as e:
         err_msg = f"Unexpected error deleting file '{safe_filename}': {e}"
         logger.error(err_msg + f" (Path: {file_path})", exc_info=True)
