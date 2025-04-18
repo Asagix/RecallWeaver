@@ -5170,18 +5170,31 @@ class GraphMemoryClient:
                 heuristics = drive_cfg.get('heuristic_adjustment_factors', {})
                 adjustment = 0.0
                 target_drive = "Control" # Default target drive for actions
+                apply_adjustment = True # Flag to control application
 
                 if success:
                     adjustment = heuristics.get('action_success_control', 0.0)
+                    logger.debug(f"Action '{action}' succeeded. Potential Control adjustment: {adjustment:.3f}")
                 else:
-                    adjustment = heuristics.get('action_fail_control', 0.0)
+                    # Check if the failure was likely a system/file error, not AI planning error
+                    system_fail_suffixes = ["_fail", "_exception", "_arg_missing", "_arg_invalid", "_arg_conflict", "_read_fail", "_write_fail", "_llm_fail", "_generation_fail", "_internal_error"]
+                    is_system_failure = any(action_suffix.endswith(suffix) for suffix in system_fail_suffixes)
 
-                if abs(adjustment) > 1e-4 and target_drive in self.drive_state["short_term"]:
+                    if is_system_failure:
+                        logger.info(f"Skipping negative Control drive adjustment for action '{action}' due to system-level failure (Suffix: {action_suffix}).")
+                        apply_adjustment = False # Do not apply penalty for system failures
+                    else:
+                        # Apply penalty for other failures (e.g., _unsupported, _deprecated, or future logical failures)
+                        adjustment = heuristics.get('action_fail_control', 0.0)
+                        logger.debug(f"Action '{action}' failed (non-system reason: {action_suffix}). Potential Control adjustment: {adjustment:.3f}")
+
+                # Apply adjustment only if flagged and significant
+                if apply_adjustment and abs(adjustment) > 1e-4 and target_drive in self.drive_state["short_term"]:
                     current_level = self.drive_state["short_term"][target_drive]
                     new_level = current_level + adjustment
                     # Optional: Clamp adjustment range?
                     self.drive_state["short_term"][target_drive] = new_level
-                    logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to action result ({'Success' if success else 'Fail'}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
+                    logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to action result ({'Success' if success else 'Fail'} - Reason: {action_suffix}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
                     # --- Log heuristic adjustment ---
                     log_tuning_event("DRIVE_HEURISTIC_ADJUSTMENT", {
                         "personality": self.personality,
