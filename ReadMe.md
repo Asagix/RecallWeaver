@@ -57,7 +57,7 @@ Getting MemSys up and running involves a few steps:
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/your-username/memsys.git # Replace with your repo URL
+    git clone https://github.com/Asagix/memsys.git # Replace with your repo URL
     cd memsys
     ```
 
@@ -211,8 +211,8 @@ The system uses a combination of:
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repo-url>
-    cd <repo-directory>
+    git clone <https://github.com/Asagix/MemSys>
+    cd memsys
     ```
 2.  **Create a Python environment (Recommended):**
     ```bash
