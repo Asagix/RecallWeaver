@@ -1927,11 +1927,29 @@ class GraphMemoryClient:
                 else:
                     logger.debug("  Saliency unchanged (at limit or no effective change).")
 
-            # Save changes
+                # --- NEW: Check if saliency now exceeds core memory threshold ---
+                # Check using the potentially updated new_saliency value
+                if self.config.get('features', {}).get('enable_core_memory', False):
+                    core_threshold = self.config.get('core_memory', {}).get('saliency_threshold', 1.1) # Default > 1 to disable if not set
+                    # Fetch the potentially updated saliency score directly from the node data
+                    current_saliency_after_update = node_data.get('saliency_score', 0.0)
+                    if current_saliency_after_update >= core_threshold and not node_data.get('is_core_memory', False):
+                        node_data['is_core_memory'] = True
+                        logger.info(f"Node {node_uuid[:8]} flagged as CORE MEMORY due to high saliency ({current_saliency_after_update:.3f} >= {core_threshold:.3f}).")
+                        log_tuning_event("CORE_MEMORY_FLAGGED", {
+                            "personality": self.personality,
+                            "node_uuid": node_uuid,
+                            "reason": "high_saliency_feedback",
+                            "saliency_score": current_saliency_after_update,
+                            "threshold": core_threshold,
+                        })
+                        # Save happens below anyway
+
+            # Save changes (including potential core memory flag)
             self._save_memory()
 
         except Exception as e:
-            logger.error(f"Error applying feedback to node {node_uuid[:8]}: {e}", exc_info=True)
+            logger.error(f"Error applying feedback or checking core memory flag for node {node_uuid[:8]}: {e}", exc_info=True)
 
 
     # --- Forgetting Mechanism ---
