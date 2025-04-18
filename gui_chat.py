@@ -1366,7 +1366,7 @@ class ChatWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Persistent Memory Chat")  # Initial title
+        self.setWindowTitle("RecallWeaver Chat")  # Initial title
         self.setGeometry(100, 100, 850, 750)
 
         self.config_path = DEFAULT_CONFIG_PATH
@@ -1801,7 +1801,7 @@ class ChatWindow(QMainWindow):
 
         # Update personality state
         self.current_personality = name
-        self.setWindowTitle(f"Persistent Memory Chat [{name}]")
+        self.setWindowTitle(f"RecallWeaver Chat [{name}]")
         self._rebuild_personality_menu()  # Update menu check marks
 
         # Start new worker (which will signal back when ready/failed)
