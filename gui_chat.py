@@ -38,7 +38,7 @@ from PyQt6.QtGui import QFont, QAction, QActionGroup, QDragEnterEvent, QDropEven
     QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices, \
     QMouseEvent # Added QMouseEvent
 
-from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis # <<< Import strip_emojis
+from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis
 import file_manager
 
 # --- Logger Setup ---
