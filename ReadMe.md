@@ -61,7 +61,7 @@ Getting RecallWeaver up and running involves a few steps:
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/Asagix/RecallWeaver.git # Replace with your repo URL
+    git clone https://github.com/Asagix/RecallWeaver.git
     cd RecallWeaver
     ```
 
