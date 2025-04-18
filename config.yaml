@@ -104,15 +104,15 @@ llm_models:
     api_type: "generate"
     model_name: "koboldcpp-default"
     max_length: 150
-    temperature: 0.5
+    temperature: 0.6 # Slightly higher for more natural summary flow
     top_p: 0.95
     top_k: 60
     min_p: 0.0
   consolidation_concept:
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 100
-    temperature: 0.3
+    max_length: 150 # Increased slightly to ensure list fits
+    temperature: 0.2 # Keep low for factual extraction
     top_p: 0.95
     top_k: 50
     min_p: 0.0
@@ -262,7 +262,7 @@ activation:
 
     # --- Saliency Guarantee Threshold (Activation Spreading) ---
     # Nodes with saliency >= this value are included in retrieval regardless of activation level.
-    guaranteed_saliency_threshold: 0.95 # Increased from 0.85
+    guaranteed_saliency_threshold: 0.90 # Slightly lowered from 0.95
 
   # --- Emotional Context Bias ---
   emotional_context:
@@ -532,3 +532,4 @@ saliency:
   recall_boost_factor: 0.03 # Additive boost to saliency score upon successful recall (clamped 0-1) - Decreased from 0.05
   feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
   saliency_decay_rate: 0.005 # NEW: How much saliency decays per hour (e.g., 0.005 = 0.5% decay per hour since last access)
+  recall_boost_factor: 0.04 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased slightly from 0.03
