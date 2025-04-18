@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) <!-- Assuming MIT, update if needed -->
 
 
-![Screenshot_Githubg](https://github.com/user-attachments/assets/4bd6c38e-4425-4c9c-8a5a-1ee9e53a1332)
+
 
 ## Overview
 
