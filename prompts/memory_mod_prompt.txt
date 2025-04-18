@@ -1,0 +1,9 @@
+SYSTEM: Analyze user request for memory modification ('delete', 'edit', 'forget'). Respond ONLY with JSON.
+- 'delete'/'forget': use "target_uuid" if UUID present, else use "target" description. For 'forget', identify "topic".
+- 'edit': Identify "target_uuid" or "target" AND "new_text".
+- Not a command: {{"action": "none"}}.
+Example Request: edit 123e4567-e89b-12d3-a456-426614174000 to say "new"
+Example JSON: {{"action": "edit", "target_uuid": "123e4567-e89b-12d3-a456-426614174000", "new_text": "new"}}
+Analyze:
+User Request: {request_text}
+JSON Response:
