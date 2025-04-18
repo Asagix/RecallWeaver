@@ -94,7 +94,7 @@ Getting RecallWeaver up and running involves a few steps:
     RecallWeaver needs a running LLM backend. KoboldCpp is recommended.
     *   **Download KoboldCpp:** Get the latest version from the [KoboldCpp GitHub releases](https://github.com/LostRuins/koboldcpp/releases).
     *   **Download an LLM Model:** You'll need a model file in GGUF format.
-        *   **Recommendation:** A good starting point is an instruct-tuned model like **Gemma 27b Instruct** (`gemma-3-27b-it-gguf`). Larger models generally provide better results for analysis tasks. Find models on Hugging Face.
+        *   **Recommendation:** A good starting point is an instruct-tuned model like **Gemma3 27b Instruct** (`gemma-3-27b-it-gguf`). Larger models generally provide better results for analysis tasks. Find models on Hugging Face.
     *   **Download Multimodal Projector (Optional but Recommended):** For image support, download the corresponding `.mmproj` file for your chosen model (e.g., the one for Gemma 3).
     *   **Run KoboldCpp with API and Multimodal Support:** Launch KoboldCpp from your terminal, enabling the API and specifying the multimodal projector:
         ```bash
