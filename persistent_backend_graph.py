@@ -2272,15 +2272,14 @@ class GraphMemoryClient:
         score += norm_inv_connectivity * weights.get('connectivity_factor', 0.0)
         score += norm_inv_access_count * weights.get('access_count_factor', 0.0) # Added access count factor
 
-        # Clamp final score 0-1
-        final_score = max(0.0, min(1.0, score))
-
-        # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Initial Score: {final_score:.3f}") # Log initial score before adjustments
+        # Clamp intermediate score 0-1 before applying resistance factors
+        intermediate_score = max(0.0, min(1.0, score))
+        logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Intermediate Score: {intermediate_score:.3f}")
 
         # --- Apply Decay Resistance (Type-Based) ---
         type_resistance_factor = node_data.get('decay_resistance_factor', 1.0)
-        score_after_type_resistance = final_score * type_resistance_factor
-        logger.debug(f"    Node {node_uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}") # Corrected uuid -> node_uuid
+        score_after_type_resistance = intermediate_score * type_resistance_factor
+        logger.debug(f"    Node {node_uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}")
 
         # Initialize final_adjusted_score
         final_adjusted_score = score_after_type_resistance
@@ -2295,18 +2294,23 @@ class GraphMemoryClient:
             emotion_resistance_multiplier = (1.0 - clamped_emo_mag * emotion_magnitude_resistance_factor)
             # Update final_adjusted_score
             final_adjusted_score *= emotion_resistance_multiplier
-            logger.debug(f"    Node {node_uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}") # Corrected uuid -> node_uuid
-        # else: No emotion resistance applied, final_adjusted_score remains score_after_type_resistance
+            logger.debug(f"    Node {node_uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}")
 
-        # Log the final score being returned (moved outside the if/else)
-        logger.debug(f"    Calculated forgettability score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
-
-        # --- Apply Core Memory Immunity ---
+        # --- Apply Core Memory Resistance/Immunity ---
         if self.config.get('features', {}).get('enable_core_memory', False):
             if node_data.get('is_core_memory', False):
                 if self.config.get('core_memory', {}).get('forget_immunity', False):
                     logger.debug(f"    Node {node_uuid[:8]} is Core Memory and immunity is enabled. Setting forgettability to 0.0.")
-                    return 0.0 # Immune to forgetting
+                    final_adjusted_score = 0.0 # Immune to forgetting
+                else:
+                    # Apply a strong resistance factor if immunity is off but it's still core
+                    core_resistance_factor = weights.get('core_memory_resistance_factor', 0.1) # Add this weight to config later if needed
+                    final_adjusted_score *= core_resistance_factor
+                    logger.debug(f"    Node {node_uuid[:8]} is Core Memory (Immunity OFF). Applying resistance factor {core_resistance_factor:.2f}. Final Score: {final_adjusted_score:.4f}")
+
+        # Final clamp and log before returning
+        final_adjusted_score = max(0.0, min(1.0, final_adjusted_score))
+        logger.debug(f"    Final calculated forgettability score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
 
         return final_adjusted_score
 
@@ -2959,6 +2963,8 @@ class GraphMemoryClient:
             f"  - Low Arousal (Calm/Sad): Use calmer or more subdued language.]" if current_mood else "[System Note: Current mood unavailable.]",
             # --- ASM Integration Instruction (Revised for Adaptation) ---
             "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself. **Explicitly reference** how your traits or goals inform your current thinking or response when relevant to the user's query. However, **adapt your immediate response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed. Prioritize recent information when it conflicts with the baseline summary.]",
+            # --- ANTI-HALLUCINATION INSTRUCTION ---
+            "[System Note: **CRITICAL: Only use information explicitly provided in the 'Relevant Past Information' (memories) or 'Conversation History' context.** If you cannot recall specific details based *only* on the provided context, state that you do not remember or cannot find that information (e.g., 'I don't recall the specifics of that event.'). **DO NOT INVENT details, events, or memories.** Ground your response firmly and exclusively in the given context.]",
             # --- Action Capability Instructions ---
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
