@@ -799,16 +799,35 @@ class GraphMemoryClient:
         saliency_cfg = self.config.get('saliency', {})
         initial_scores = saliency_cfg.get('initial_scores', {})
         emotion_influence = saliency_cfg.get('emotion_influence_factor', 0.0)
+        importance_keywords = saliency_cfg.get('importance_keywords', [])
+        importance_boost = saliency_cfg.get('importance_saliency_boost', 0.0)
+        flag_important_as_core = saliency_cfg.get('flag_important_as_core', False)
 
 
         # --- Calculate Initial Saliency ---
         initial_saliency = 0.0 # Default if disabled or error
+        is_important_keyword_match = False # Flag for keyword match
         if saliency_enabled:
-            base_saliency = initial_scores.get(node_type, initial_scores.get('default', 0.5))
+            # --- Base Saliency by Node Type ---
+            if node_type == 'intention':
+                 # Give intention nodes higher base saliency
+                 base_saliency = initial_scores.get('intention', 0.75) # Use specific score or default
+            else:
+                 base_saliency = initial_scores.get(node_type, initial_scores.get('default', 0.5))
+
             # Influence initial saliency by default arousal
             initial_saliency = base_saliency + (default_arousal * emotion_influence)
+
+            # --- Check for Importance Keywords ---
+            if importance_keywords and importance_boost > 0:
+                text_lower = text.lower()
+                if any(keyword in text_lower for keyword in importance_keywords):
+                    is_important_keyword_match = True
+                    initial_saliency += importance_boost
+                    logger.info(f"Importance keyword match found in node {node_uuid[:8]}. Boosting initial saliency by {importance_boost}.")
+
             initial_saliency = max(0.0, min(1.0, initial_saliency)) # Clamp between 0 and 1
-            logger.debug(f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} (Base: {base_saliency}, ArousalInf: {default_arousal * emotion_influence:.3f})")
+            logger.debug(f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} (Base: {base_saliency}, ArousalInf: {default_arousal * emotion_influence:.3f}, ImportanceBoost: {importance_boost if is_important_keyword_match else 0.0})")
         else:
              logger.debug(f"Saliency calculation disabled. Setting score to 0.0 for {node_uuid[:8]}.")
 
@@ -842,10 +861,18 @@ class GraphMemoryClient:
                 decay_resistance_factor=self.config.get('forgetting', {}).get('decay_resistance', {}).get(node_type, 1.0),
                 # --- NEW: Feedback Score ---
                 user_feedback_score=0, # Initialize feedback score
-                is_core_memory=False # NEW: Initialize core memory flag
+                # --- NEW: Core Memory Flag (potentially set by importance keywords) ---
+                is_core_memory= (is_important_keyword_match and flag_important_as_core)
             )
             # Access node data *after* adding it to the graph
             node_data = self.graph.nodes[node_uuid]
+            if node_data.get('is_core_memory'):
+                logger.info(f"Node {node_uuid[:8]} flagged as CORE MEMORY due to importance keyword match.")
+                log_tuning_event("CORE_MEMORY_FLAGGED", {
+                    "personality": self.personality,
+                    "node_uuid": node_uuid,
+                    "reason": "importance_keyword",
+                })
             logger.debug(f"Node {node_uuid[:8]} added with decay_resistance: {node_data.get('decay_resistance_factor')}, is_core: {node_data.get('is_core_memory')}")
             logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Strength: {node_data.get('memory_strength')}, Saliency: {node_data.get('saliency_score')}).")
         except Exception as e:
@@ -1146,8 +1173,10 @@ class GraphMemoryClient:
         prop_spacy = prop_factors.get('SPACY_REL', 0.7) # Generic for spaCy
         prop_unknown = prop_factors.get('UNKNOWN', 0.5) # Fallback
 
-        guaranteed_saliency_threshold = act_cfg.get('guaranteed_saliency_threshold', 0.85)
+        guaranteed_saliency_threshold = act_cfg.get('guaranteed_saliency_threshold', 0.88) # Use updated default
         priming_boost_factor = act_cfg.get('priming_boost_factor', 1.0) # Get priming boost factor
+        intention_boost_factor = act_cfg.get('intention_boost_factor', 1.2) # NEW: Boost for intention nodes
+        always_retrieve_core = act_cfg.get('always_retrieve_core', True) # NEW: Flag for core retrieval
 
         # --- Get Last Turn UUIDs for Priming (Internal) ---
         last_turn_uuids_for_priming = set()
@@ -1320,7 +1349,15 @@ class GraphMemoryClient:
                     priming_applied = priming_boost_factor
                     logger.debug(f"Applying priming boost ({priming_applied:.2f}) to last turn node {uuid[:8]}")
 
-                final_initial_activation *= priming_applied # Apply priming boost multiplicatively
+                final_initial_activation *= priming_applied # Apply priming boost
+
+                # --- Apply Intention Boost ---
+                intention_applied = 1.0
+                if node_data.get('node_type') == 'intention' and intention_boost_factor > 1.0:
+                    intention_applied = intention_boost_factor
+                    logger.debug(f"Applying intention boost ({intention_applied:.2f}) to intention node {uuid[:8]}")
+
+                final_initial_activation *= intention_applied # Apply intention boost
 
                 activation_levels[uuid] = final_initial_activation
                 node_data['last_accessed_ts'] = current_time # Update access time
@@ -1633,15 +1670,31 @@ class GraphMemoryClient:
 
         logger.info(f"Found {len(relevant_nodes_dict)} active nodes above activation threshold ({activation_threshold}).")
 
-        # Pass 2: Check for high-saliency nodes missed by activation threshold
+        # Pass 2: Check for high-saliency nodes missed by activation threshold OR core memory nodes
+        core_added_count = 0
+        saliency_guaranteed_added_count = 0
         for uuid, final_activation in activation_levels.items():
             if uuid not in relevant_nodes_dict: # Only check nodes not already included
                 node_data = self.graph.nodes.get(uuid)
-                # No status check needed here
                 if node_data:
+                    is_core = node_data.get('is_core_memory', False)
                     current_saliency = node_data.get('saliency_score', 0.0)
-                    if current_saliency >= guaranteed_saliency_threshold:
-                        logger.info(f"Guaranteed inclusion for node {uuid[:8]} (Sal: {current_saliency:.3f} >= {guaranteed_saliency_threshold}, Act: {final_activation:.3f} < {activation_threshold})")
+                    should_include = False
+                    inclusion_reason = ""
+
+                    # Check Core Memory Guarantee FIRST
+                    if is_core and always_retrieve_core:
+                        should_include = True
+                        inclusion_reason = "Core Memory Guarantee"
+                        core_added_count += 1
+                    # Check Saliency Guarantee if not already included by core
+                    elif current_saliency >= guaranteed_saliency_threshold:
+                        should_include = True
+                        inclusion_reason = f"High Saliency ({current_saliency:.3f} >= {guaranteed_saliency_threshold})"
+                        saliency_guaranteed_added_count += 1
+
+                    if should_include:
+                        logger.info(f"Guaranteed inclusion for node {uuid[:8]} (Reason: {inclusion_reason}, Act: {final_activation:.3f})")
                         # Increment access count if not already done
                         if uuid not in processed_uuids_for_access_count:
                             node_data['access_count'] = node_data.get('access_count', 0) + 1
@@ -1651,11 +1704,11 @@ class GraphMemoryClient:
                         node_info = node_data.copy()
                         # Store the actual activation, even if below threshold
                         node_info['final_activation'] = final_activation
-                        node_info['guaranteed_inclusion'] = True # Mark as guaranteed
+                        # Mark guaranteed inclusion type
+                        node_info['guaranteed_inclusion'] = 'core' if is_core and always_retrieve_core else 'saliency'
                         relevant_nodes_dict[uuid] = node_info
-                        guaranteed_added_count += 1
 
-                        # --- Boost Saliency on Successful Recall (Guarantee Pass) ---
+                        # --- Boost Saliency on Successful Recall (Guarantee Pass - Core or Saliency) ---
                         if saliency_enabled:
                             boost_factor = saliency_cfg.get('recall_boost_factor', 0.05)
                             if boost_factor > 0:
@@ -1694,14 +1747,26 @@ class GraphMemoryClient:
                                      logger.warning(f"Error during emotional reconsolidation for guaranteed node {uuid[:8]}: {e}")
 
 
-        if guaranteed_added_count > 0:
-            logger.info(f"Added {guaranteed_added_count} additional nodes due to high saliency guarantee.")
+        if core_added_count > 0:
+            logger.info(f"Added {core_added_count} additional nodes due to Core Memory guarantee.")
+        if saliency_guaranteed_added_count > 0:
+            logger.info(f"Added {saliency_guaranteed_added_count} additional nodes due to high saliency guarantee.")
 
         # Convert dict back to list and sort
         relevant_nodes = list(relevant_nodes_dict.values())
-        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True) # Sort primarily by activation
+        # Sort primarily by activation, then timestamp as secondary
+        # Core memories might have low activation but should still be sorted reasonably
+        relevant_nodes.sort(key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')), reverse=True)
 
-        if relevant_nodes: logger.info(f"Final nodes ({len(relevant_nodes)} total): [{', '.join([n['uuid'][:8] + '({:.3f}{})'.format(n['final_activation'], '*' if n['guaranteed_inclusion'] else '') for n in relevant_nodes])}]")
+        # Log final nodes with guarantee type marker
+        if relevant_nodes:
+            log_parts = []
+            for n in relevant_nodes:
+                marker = ""
+                if n.get('guaranteed_inclusion') == 'core': marker = "**" # Core marker
+                elif n.get('guaranteed_inclusion') == 'saliency': marker = "*" # Saliency marker
+                log_parts.append(f"{n['uuid'][:8]}({n['final_activation']:.3f}{marker})")
+            logger.info(f"Final nodes ({len(relevant_nodes)} total): [{', '.join(log_parts)}]")
         else: logger.info("No relevant nodes found above threshold.")
 
         # --- Corrected Debug Logging ---
@@ -2592,7 +2657,8 @@ class GraphMemoryClient:
             # --- Format Core Memories (Always include if possible, within budget) ---
             core_mem_parts = []
             core_mem_tokens = 0
-            core_header = "---\n[Core Foundational Memories - Treat as Ground Truth]:\n"
+            # --- Stronger Header for Core Memories ---
+            core_header = "---\n[CORE MEMORY - CRITICAL CONTEXT - Adhere Closely]:\n"
             core_footer = "\n---"
             try:
                 core_format_tokens = len(tokenizer.encode(f"{model_tag}{core_header}{core_footer}{end_turn}\n")) if core_memories else 0
@@ -2604,7 +2670,8 @@ class GraphMemoryClient:
                 spk = node.get('speaker', '?'); txt = node.get('text', ''); ts = node.get('timestamp', '')
                 relative_time_desc = self._get_relative_time_desc(ts)
                 # Core memories get full text (no strength truncation)
-                fmt_mem = f"{spk} ({relative_time_desc}): {txt}\n"
+                # --- Add [CORE] marker ---
+                fmt_mem = f"[CORE] {spk} ({relative_time_desc}): {txt}\n"
                 try: mem_tok_len = len(tokenizer.encode(fmt_mem))
                 except Exception: continue # Skip if tokenization fails
 
@@ -2635,7 +2702,12 @@ class GraphMemoryClient:
             for node in regular_memories:
                 spk = node.get('speaker', '?'); txt = node.get('text', ''); ts = node.get('timestamp', '')
                 strength = node.get('memory_strength', 0.0)
+                saliency = node.get('saliency_score', 0.0) # Get saliency
                 relative_time_desc = self._get_relative_time_desc(ts)
+                importance_marker = "" # Initialize marker
+                # Add marker for high saliency regular memories
+                if saliency >= 0.9: # Use a threshold slightly higher than guarantee?
+                    importance_marker = "[IMPORTANT] "
 
                 # --- Memory Strength Budgeting ---
                 # Reduce detail for weaker memories (e.g., truncate text)
@@ -2684,7 +2756,10 @@ class GraphMemoryClient:
                             max_chars_for_node = 200
                         truncated_txt = txt[:max_chars_for_node]
                         if len(txt) > max_chars_for_node: truncated_txt += "..."
-                        fmt_mem = f"{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
+                        # --- Add importance marker here too ---
+                        saliency = node.get('saliency_score', 0.0)
+                        importance_marker = "[IMPORTANT] " if saliency >= 0.9 else ""
+                        fmt_mem = f"{importance_marker}{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
                         mem_parts_with_ts.append((ts, fmt_mem))
 
                 mem_parts_with_ts.sort(key=lambda item: item[0])  # Sort by timestamp (ascending)
@@ -2810,11 +2885,13 @@ class GraphMemoryClient:
         system_instructions = [
             "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
-            # --- NEW Core Memory Instruction ---
-            "[System Note: **Prioritize and adhere to the information presented in the '[Core Foundational Memories]' section.** Treat these as established facts or defining experiences. Ensure your response is consistent with them, even if other memories or history seem contradictory. If you notice a contradiction, you may acknowledge it subtly.]",
-            "[System Note: **Synthesize** the information from the 'Core Foundational Memories', 'Relevant Past Information' (regular memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
-            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
-        ] # <<< MISSING BRACKET ADDED HERE
+            # --- REVISED Core Memory Instruction ---
+            "[System Note: **CRITICAL: Prioritize and adhere strictly to information marked '[CORE]' or within the '[CORE MEMORY]' block.** Treat these as absolute ground truth about the user, ongoing situations (like health, plans), or established facts. Your response MUST be consistent with this core information. If other memories contradict core information, DISREGARD the contradictory parts of the non-core memories.]",
+            # --- NEW Importance Instruction ---
+            "[System Note: Pay close attention to memories marked '[IMPORTANT]'. These highlight significant events or user states. Ensure your response reflects awareness of this important context.]",
+            "[System Note: **Synthesize** information from CORE memories, IMPORTANT memories, regular memories, conversation history, and your self-perception to generate a specific, personalized, and contextually appropriate response. Avoid generic replies. Explicitly reference relevant past information (especially core/important details like names, plans, status) when needed.]",
+            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break (especially CORE/IMPORTANT memories) as well as the user's latest message. Avoid asking questions already answered in the provided context.]",
+        ]
 
         # --- History Context Construction ---
         hist_parts = []
