@@ -2232,7 +2232,14 @@ class GraphMemoryClient:
         # Normalize recency using exponential decay (Ebbinghaus-like curve)
         # Higher decay constant = faster forgetting
         decay_constant = weights.get('recency_decay_constant', 0.000005) # Default decay over seconds
-        norm_recency = 1.0 - math.exp(-decay_constant * recency_sec) # Score approaches 1 as time increases
+        norm_recency_raw = 1.0 - math.exp(-decay_constant * recency_sec) # Score approaches 1 as time increases
+        # --- Cap Recency Contribution ---
+        # Limit the maximum impact of recency, even after very long breaks.
+        # Example: Cap normalized recency at 0.9 to prevent it from reaching 1.0.
+        max_norm_recency = weights.get('max_norm_recency_cap', 0.95) # Add this to config if needed, default 0.95
+        norm_recency = min(norm_recency_raw, max_norm_recency)
+        if norm_recency_raw > max_norm_recency:
+            logger.debug(f"    Recency capped for node {node_uuid[:8]}: Raw={norm_recency_raw:.3f} -> Capped={norm_recency:.3f}")
 
         # Normalize activation (already 0-1 theoretically, but use inverse)
         # Low activation -> high score component

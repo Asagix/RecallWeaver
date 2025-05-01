@@ -276,6 +276,10 @@ activation:
   # If true, all nodes flagged as 'is_core_memory' will be added to the retrieval results,
   # regardless of activation score or saliency guarantee threshold.
   always_retrieve_core: true
+  # --- Core Memory Forgetting Immunity ---
+  # If true, core memories ignore forgettability score and strength decay entirely.
+  # If false, they use core_memory_resistance_factor from forgetting.weights.
+  forget_immunity: true # Changed default to true for better long-term retention
 
   # --- Emotional Context Bias ---
   emotional_context:
@@ -547,7 +551,7 @@ saliency:
   activation_influence: 0.1 # How much saliency boosts activation spreading
   # guaranteed_saliency_threshold moved to activation section for clarity
   feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
-  saliency_decay_rate: 0.005 # NEW: How much saliency decays per hour (e.g., 0.005 = 0.5% decay per hour since last access)
+  saliency_decay_rate: 0.0005 # NEW: How much saliency decays per hour (e.g., 0.0005 = 0.05% decay per hour) - Reduced significantly
   recall_boost_factor: 0.04 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased slightly from 0.03
   # --- Importance Keywords & Boosts ---
   importance_keywords: # Keywords that trigger importance boost during node creation
