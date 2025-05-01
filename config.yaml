@@ -346,17 +346,20 @@ forgetting:
   # --- Forgettability Score Weights (used to calculate strength reduction) ---
   weights:
     # Factors increasing forgettability score (leading to more strength reduction):
-    recency_factor: 0.4      # Increased from 0.3
-    activation_factor: 0.3   # Increased from 0.2
-    node_type_factor: 0.1    # e.g., 'turn' nodes are more forgettable than others
+    recency_factor: 0.15     # Reduced significantly - Recency alone shouldn't cause forgetting important things
+    activation_factor: 0.1   # Reduced - Low activation alone shouldn't cause forgetting important things
+    node_type_factor: 0.1    # Keep moderate weight for type
     # Factors decreasing forgettability (Resistance):
-    saliency_factor: 0.15    # Decreased from 0.2
-    emotion_factor: 0.1      # Higher emotional intensity = less forgettable (Placeholder)
-    connectivity_factor: 0.05 # Decreased from 0.1
-    access_count_factor: 0.05 # Added small weight
-    emotion_magnitude_resistance_factor: 0.1 # NEW: How much emotion magnitude reduces forgettability (0=none)
+    # These use inverse normalization, so apply positive weights from config
+    # (Config weights represent importance of the factor)
+    saliency_factor: 0.4     # Increased significantly - High saliency strongly resists forgetting
+    emotion_factor: 0.2      # Increased - Emotional memories resist forgetting
+    connectivity_factor: 0.05 # Keep low - Connectivity is less important than saliency/emotion
+    access_count_factor: 0.05 # Keep low - Access count is less important than saliency/emotion
+    emotion_magnitude_resistance_factor: 0.2 # Increased - Stronger emotions resist forgetting more
+    core_memory_resistance_factor: 0.1 # NEW: Multiplier for core memory if immunity is OFF (0.1 = 90% reduction in forgettability)
     # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
-    recency_decay_constant: 0.000005 # Example value (adjust based on desired time scale, e.g., for seconds)
+    recency_decay_constant: 0.000005 # Keep this for the recency component calculation
   # --- Decay Resistance (Lower factor = Slower decay) ---
   # Multiplies the final forgettability score. Core memories should have very low factors.
   decay_resistance:
