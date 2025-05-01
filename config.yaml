@@ -270,7 +270,12 @@ activation:
 
     # --- Saliency Guarantee Threshold (Activation Spreading) ---
     # Nodes with saliency >= this value are included in retrieval regardless of activation level.
-    guaranteed_saliency_threshold: 0.90 # Slightly lowered from 0.95
+    guaranteed_saliency_threshold: 0.88 # Lowered slightly more
+
+  # --- Core Memory Retrieval Strategy ---
+  # If true, all nodes flagged as 'is_core_memory' will be added to the retrieval results,
+  # regardless of activation score or saliency guarantee threshold.
+  always_retrieve_core: true
 
   # --- Emotional Context Bias ---
   emotional_context:
@@ -541,3 +546,22 @@ saliency:
   feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
   saliency_decay_rate: 0.005 # NEW: How much saliency decays per hour (e.g., 0.005 = 0.5% decay per hour since last access)
   recall_boost_factor: 0.04 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased slightly from 0.03
+  # --- Importance Keywords & Boosts ---
+  importance_keywords: # Keywords that trigger importance boost during node creation
+    - "important"
+    - "remember this"
+    - "critical"
+    - "don't forget"
+    - "holiday"
+    - "vacation"
+    - "trip"
+    - "sick"
+    - "ill"
+    - "hospital"
+    - "surgery"
+    - "appointment"
+    - "deadline"
+    - "anniversary"
+    - "birthday"
+  importance_saliency_boost: 0.4 # Additive boost to initial saliency if keywords found
+  flag_important_as_core: true # Automatically flag nodes with importance keywords as core memory

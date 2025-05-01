@@ -2720,8 +2720,8 @@ class GraphMemoryClient:
                 truncated_txt = txt[:max_chars_for_node]
                 if len(txt) > max_chars_for_node: truncated_txt += "..."
 
-                # Format memory entry (include strength indicator?)
-                fmt_mem = f"{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
+                # Format memory entry (include strength indicator AND importance marker)
+                fmt_mem = f"{importance_marker}{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
                 try:
                     mem_tok_len = len(tokenizer.encode(fmt_mem))
                 except Exception as e:
