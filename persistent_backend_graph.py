@@ -4782,7 +4782,7 @@ class GraphMemoryClient:
         if user_node_uuid is None: # Only add if not already provided (e.g., from previous step)
              # Use graph_user_input which includes potential attachment placeholder
              user_node_uuid = self.add_memory_node(graph_user_input, "User")
-             if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid) # Analyze emotion for user node
+             # if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid) # Removed old emotion call
 
         # --- 2. Store Intention (if any) ---
         intention_result = self._analyze_intention_request(user_input_for_analysis) # Use original input
