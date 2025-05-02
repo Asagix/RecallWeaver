@@ -1981,6 +1981,17 @@ class GraphMemoryClient:
                 if new_saliency != current_saliency:
                     node_data['saliency_score'] = new_saliency
                     logger.info(f"  Adjusted saliency due to feedback: {current_saliency:.3f} -> {new_saliency:.3f} (Adj: {saliency_adjustment:.3f})")
+                    # --- Log Feedback Saliency Change ---
+                    log_tuning_event("FEEDBACK_SALIENCY_ADJUSTMENT", {
+                        "personality": self.personality,
+                        "node_uuid": node_uuid,
+                        "feedback_type": feedback_type,
+                        "saliency_adjustment": saliency_adjustment,
+                        "old_saliency": current_saliency,
+                        "new_saliency": new_saliency,
+                        "old_feedback_score": current_feedback_score,
+                        "new_feedback_score": new_feedback_score,
+                    })
                 else:
                     logger.debug("  Saliency unchanged (at limit or no effective change).")
 
