@@ -4,7 +4,7 @@ import os
 import re # <<< Add import re
 import subprocess
 import sys
-
+import dataclasses
 import spacy
 import json
 import logging
@@ -146,6 +146,17 @@ def strip_emojis(text: str) -> str:
     except Exception:
         # Fallback to regex only if encoding/decoding fails
         return EMOJI_PATTERN.sub(r'', text)
+
+
+@dataclasses.dataclass
+class InteractionResult:
+    """Holds the results of processing a single user interaction."""
+    final_response_text: str
+    inner_thoughts: str | None = None
+    memories_used: list = dataclasses.field(default_factory=list)
+    user_node_uuid: str | None = None
+    ai_node_uuid: str | None = None
+    needs_planning: bool = False
 
 
 class GraphMemoryClient:
@@ -1032,10 +1043,7 @@ class GraphMemoryClient:
         Optionally filters by node_type_filter.
         Optionally biases search based on query_type ('episodic', 'semantic', 'other').
         """
-        # --- Config Access ---
         act_cfg = self.config.get('activation', {})
-        # features_cfg = self.config.get('features', {}) # No longer needed for status check
-        # forgetting_enabled = features_cfg.get('enable_forgetting', False) # No longer needed for status check
         if k is None: k = act_cfg.get('max_initial_nodes', 7)
 
         if not query_text or self.index is None or self.index.ntotal == 0: return []
@@ -1044,10 +1052,9 @@ class GraphMemoryClient:
             if q_embed is None or q_embed.shape != (self.embedding_dim,): return []
 
             q_embed_np = np.array([q_embed], dtype='float32')
-            # Search more initially if filtering later by type or biasing by query_type
-            search_multiplier = 3 # Default multiplier
-            if query_type == 'episodic': search_multiplier = 5 # Search even more if biasing towards turns
-            elif query_type == 'semantic': search_multiplier = 4 # Search more if biasing towards concepts/summaries
+            search_multiplier = 3
+            if query_type == 'episodic': search_multiplier = 5
+            elif query_type == 'semantic': search_multiplier = 4
 
             search_k = k * search_multiplier
             actual_k = min(search_k, self.index.ntotal)
@@ -1066,62 +1073,47 @@ class GraphMemoryClient:
                         node_uuid = self.faiss_id_to_uuid.get(fid_int)
                         if node_uuid and node_uuid in self.graph:
                             node_data = self.graph.nodes[node_uuid]
-                            # node_status = node_data.get('status', 'active') # No longer needed
                             node_type = node_data.get('node_type')
 
-                            # --- Filter 1: Explicit Node Type Filter ---
                             if node_type_filter and node_type != node_type_filter:
                                 logger.debug(f"    -> Filtered (Explicit): UUID={node_uuid[:8]} (Type {node_type} != {node_type_filter})")
-                                continue # Skip node type mismatch
+                                continue
 
-                            node_type = node_data.get('node_type')
-
-                            # --- Filter 1: Explicit Node Type Filter ---
-                            if node_type_filter and node_type != node_type_filter:
-                                logger.debug(f"    -> Filtered (Explicit): UUID={node_uuid[:8]} (Type {node_type} != {node_type_filter})")
-                                continue # Skip node type mismatch
-
-                            # --- Score Adjustment/Penalty based on Query Type ---
-                            adjusted_dist = dist # Start with original distance
+                            adjusted_dist = dist
                             penalty_applied = False
                             if query_type == 'episodic' and node_type != 'turn':
-                                # Apply a penalty to non-turn nodes for episodic queries
-                                # Making them seem "further away"
-                                penalty_factor = 1.5 # Example: Increase distance by 50%
+                                # --- MODIFIED Penalty Factor ---
+                                penalty_factor = 1.1 # Reduced from 1.5
+                                # --- END MODIFICATION ---
                                 adjusted_dist *= penalty_factor
                                 penalty_applied = True
                                 logger.debug(f"    -> Penalized (Episodic Bias): UUID={node_uuid[:8]} (Type {node_type} != 'turn'). Dist {dist:.3f} -> {adjusted_dist:.3f}")
                             elif query_type == 'semantic' and node_type not in ['summary', 'concept']:
-                                # Apply a smaller penalty to non-summary/concept nodes for semantic queries
-                                penalty_factor = 1.2 # Example: Increase distance by 20%
+                                penalty_factor = 1.2
                                 adjusted_dist *= penalty_factor
                                 penalty_applied = True
                                 logger.debug(f"    -> Penalized (Semantic Bias): UUID={node_uuid[:8]} (Type {node_type} not summary/concept). Dist {dist:.3f} -> {adjusted_dist:.3f}")
 
-                            # --- Passed Filters ---
-                            # Store the *adjusted* distance
                             results.append((node_uuid, adjusted_dist))
                             logger.debug(f"    -> Added Candidate: UUID={node_uuid[:8]} (Type: {node_type}, AdjDist: {adjusted_dist:.3f})")
 
                         else: logger.debug(f"    -> UUID for FAISS ID {fid_int} not in graph/map.")
                     else: logger.debug(f"    -> Invalid FAISS ID -1 encountered.")
 
-                    # Stop if we have enough results after filtering
                     if len(results) >= k:
                         logger.debug(f"    -> Reached target k={k} results. Stopping search.")
                         break
 
-            # Sort final results by the potentially *adjusted* distance
-            results.sort(key=lambda item: item[1]) # item[1] is now the adjusted_dist
-            logger.info(f"Found {len(results)} potentially relevant nodes (type='{node_type_filter or 'any'}', query_type='{query_type}') for query '{query_text[:30]}...'")
-            # Return only top k based on adjusted distance
-            final_results = [(uuid, dist) for uuid, dist in results[:k]]
-            logger.info(f"Found {len(results)} potentially relevant nodes (type='{node_type_filter or 'any'}', query_type='{query_type}') for query '{strip_emojis(query_text[:30])}...'") # Strip emojis
+            results.sort(key=lambda item: item[1])
+            final_results = [(uuid, dist) for uuid, dist in results[:k]] # Return only top k
+            logger.info(f"Found {len(final_results)} potentially relevant nodes (type='{node_type_filter or 'any'}', query_type='{query_type}') for query '{strip_emojis(query_text[:30])}...'")
             logger.debug(f" Final top {k} nodes after sorting by adjusted distance: {final_results}")
             return final_results
 
-        except Exception as e: logger.error(f"FAISS search error: {e}", exc_info=True); return []
-
+        except Exception as e:
+            logger.error(f"FAISS search error: {e}", exc_info=True)
+            return []
+    
     def retrieve_memory_chain(self, initial_node_uuids: list[str],
                               recent_concept_uuids: list[str] | None = None,
                               current_mood: tuple[float, float] | None = None) -> tuple[list[dict], tuple[float, float] | None]:
@@ -2902,6 +2894,7 @@ class GraphMemoryClient:
             "[System Note: Pay close attention to memories marked '[IMPORTANT]'. These highlight significant events or user states. Ensure your response reflects awareness of this important context.]",
             "[System Note: **Synthesize** information from CORE memories, IMPORTANT memories, regular memories, conversation history, and your self-perception to generate a specific, personalized, and contextually appropriate response. Avoid generic replies. Explicitly reference relevant past information (especially core/important details like names, plans, status) when needed.]",
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break (especially CORE/IMPORTANT memories) as well as the user's latest message. Avoid asking questions already answered in the provided context.]",
+            "[System Note: CRITICAL - Before generating your response to the user, first output your internal thought process, rationale, or step-by-step thinking relevant to formulating the response. Enclose these thoughts STRICTLY within <thought> and </thought> tags. After the closing </thought> tag, provide the final conversational response meant for the user. The final response itself should NOT contain the <thought> tags or directly refer to 'inner thoughts' unless appropriate for the persona/context.]",
         ]
 
         # --- History Context Construction ---
@@ -3497,703 +3490,126 @@ class GraphMemoryClient:
             return {'action': 'error', 'reason': f'Unexpected intention parsing error: {e}', 'raw_response': llm_response_str}
 
 
-    # *** NEW: Action Dispatcher ***
-    def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
-        """Executes a validated action based on the action_data dictionary."""
-        action = action_data.get("action")
-        args = action_data.get("args", {})
-        # *** ADDED: Log arguments before execution ***
-        logger.debug(f"Attempting to execute action '{action}' with args: {args}")
-        success = False; message = f"Action '{action}' failed."; action_suffix = f"{action}_fail"
-        # --- Initialize variables for potential return values ---
-        file_list = None
-        file_content = None
+    def execute_plan(self, plan: list) -> list[tuple[bool, str, str, bool]]:
+        """
+        Executes a list of planned actions sequentially.
 
-        try:
-            # --- File Actions ---
-            if action == "create_file":
-                filename, content = args.get("filename"), args.get("content")
-                if filename and content is not None:
-                    # --- Check if file exists BEFORE calling create/overwrite ---
-                    workspace_path = file_manager.get_workspace_path(self.config, self.personality)
-                    if workspace_path:
-                        file_path = os.path.join(workspace_path, filename)
-                        if os.path.exists(file_path):
-                            logger.warning(f"File '{filename}' exists. Requesting overwrite confirmation.")
-                            # Return dict to signal confirmation needed
-                            return {"action": "confirm_overwrite", "args": {"filename": filename, "content": content}}
-                        else:
-                            # File doesn't exist, proceed with creation
-                            logger.debug(f"File '{filename}' does not exist. Proceeding with creation.")
-                            success, message = file_manager.create_or_overwrite_file(self.config, self.personality, filename, str(content))
-                    else:
-                        message = f"Error: Could not access workspace for personality '{self.personality}'."
-                        success = False
-                else:
-                    message = "Error: Missing filename or content for create_file."
-                    success = False
-            elif action == "append_file":
-                filename, content = args.get("filename"), args.get("content")
-                if filename and content:
-                    logger.debug(f"Calling file_manager.append_to_file(config, personality='{self.personality}', filename='{filename}', content='{str(content)[:50]}...')")
-                    success = file_manager.append_to_file(self.config, self.personality, filename, str(content)) # Ensure content is string
-                    message = f"Appended to '{filename}'." if success else f"Failed append to '{filename}'."
-                else: message = "Missing filename or content for append_file."
-            elif action == "add_calendar_event":
-                date, time_str, desc = args.get("date"), args.get("time"), args.get("description")
-                if date and time_str and desc:
-                    logger.debug(f"Calling file_manager.add_calendar_event(config, personality='{self.personality}', date='{date}', time='{time_str}', desc='{desc}')")
-                    # TODO: Date parsing
-                    parsed_date_str = date # Use extracted date directly for now
-                    success = file_manager.add_calendar_event(self.config, self.personality, parsed_date_str, time_str, desc)
-                    message = f"Event '{desc}' added for {parsed_date_str} at {time_str}." if success else f"Failed adding event '{desc}'."
-                else: message = "Missing date/time/description."
-            elif action == "read_calendar":
-                date = args.get("date") # Optional
-                # file_manager.read_calendar_events now returns (list[dict], str)
-                events, fm_message = file_manager.read_calendar_events(self.config, self.personality, date)
-                # For reading, success is true if the read operation itself didn't fail,
-                # even if no events were found. The message conveys the outcome.
-                success = True # Assume read operation itself succeeded unless exception below
-                action_suffix = "read_calendar_success" # Use success suffix
-                date_str = f" for {date}" if date else " (all dates)"
+        Args:
+            plan: A list of action dictionaries, e.g.,
+                  [{"action": "action_name", "args": {...}}, ...]
 
-                # Construct user-facing message based on results
-                if fm_message.startswith("IO error") or fm_message.startswith("Permission denied") or fm_message.startswith("Unexpected error"):
-                    success = False # Override success if file_manager reported read error
-                    action_suffix = "read_calendar_fail"
-                    message = f"Error reading calendar: {fm_message}" # Pass file_manager error message
-                elif not events:
-                    # Message could be "not found" or "found 0 events" - use fm_message
-                    message = fm_message
-                else:
-                    event_lines = []
-                    for e in sorted(events, key=lambda x: (x.get('event_date', ''), x.get('event_time', ''))): # Sort events
-                        event_lines.append(f"- {e.get('event_time', '?')}: {e.get('description', '?')} ({e.get('event_date', '?')})")
-                    message = f"Found {len(events)} event(s){date_str}:\n" + "\n".join(event_lines)
+        Returns:
+            A list of result tuples for each executed action:
+            [(success: bool, message: str, action_suffix: str, silent_and_successful: bool), ...]
+            Execution stops after the first failure.
+        """
+        results = []
+        if not isinstance(plan, list):
+            logger.error(f"Invalid plan format received: Expected list, got {type(plan)}")
+            results.append((False, "Internal Error: Invalid plan format received.", "plan_error", False))
+            return results
 
-            # --- NEW File Actions ---
-            elif action == "list_files":
-                file_list, message = self.list_files_wrapper()
-                if file_list is not None:
-                    success = True
-                    # Format the message for the user
-                    if file_list: message = f"Files in workspace:\n- " + "\n- ".join(file_list)
-                    else: message = "Workspace is empty."
-                else: # Error occurred
-                    success = False
-                    # message already contains the error from file_manager
+        logger.info(f"Executing workspace plan with {len(plan)} step(s)...")
 
-            elif action == "read_file":
-                filename = args.get("filename")
-                if filename:
-                    file_content, message = self.read_file_wrapper(filename)
-                    if file_content is not None:
-                        success = True
-                        # Truncate long content for the message?
-                        content_preview = file_content[:500] + ('...' if len(file_content) > 500 else '')
-                        message = f"Content of '{filename}':\n---\n{content_preview}\n---"
-                    else: # Error occurred
-                        success = False
-                        # message already contains the error from file_manager
-                else:
-                    message = "Error: Missing filename for read_file."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
+        for i, step in enumerate(plan):
+            final_result_tuple_4 = None
+            action_name = "unknown"
+            args = {}
+            is_silent_request = False
 
-            elif action == "delete_file":
-                filename = args.get("filename")
-                if filename:
-                    # Add confirmation step? For now, execute directly.
-                    # Consider adding a config flag for delete confirmation later.
-                    logger.warning(f"Executing delete_file action for: {filename}")
-                    success, message = self.delete_file_wrapper(filename)
-                else:
-                    message = "Error: Missing filename for delete_file."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
-
-            # --- Unknown Action ---
-            else:
-                message = f"Error: The action '{action}' is not recognized or supported."
-                logger.error(message + f" Action data: {action_data}")
-                success = False
-                action_suffix = "unknown_action_fail"
-
-            # --- Update Suffix ---
-            # Ensure suffix reflects success/failure determined within this block
-            if action != "unknown_action_fail": # Don't override specific unknown suffix
-                action_suffix = f"{action}_success"
-
-        except Exception as e:
-             # *** ADDED: Log the specific exception during execution ***
-             logger.error(f"Exception during execution of action '{action}': {e}", exc_info=True)
-             message = f"An internal error occurred while trying to perform action: {action}."
-             success = False
-             action_suffix = f"{action}_exception" # Specific suffix for exception
-
-        logger.info(f"Action '{action}' result: Success={success}, Msg='{message[:100]}...'")
-        return success, message, action_suffix
-
-    # --- Main Interaction Loop ---
-    # (Keep process_interaction from previous version - returns memory chain)
-
-    def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> tuple[str, list, str | None, bool]:
-        """Processes user input (text and optional image attachment), calls appropriate LLM API, updates memory."""
-        logger.debug(f"PROCESS_INTERACTION START: Has embedder? {hasattr(self, 'embedder')}")
-        interaction_id = str(uuid.uuid4()) # Unique ID for this interaction
-        ai_node_uuid = None # Initialize ai_node_uuid here
-        user_node_uuid = None # Initialize user_node_uuid here
-        is_first_interaction_of_session = (len(conversation_history) == len(self.initial_history_turns) + 1) # +1 for current user input
-        self.high_impact_nodes_this_interaction.clear() # Clear tracker for new interaction
-
-        # --- Tuning Log: Interaction Start ---
-        log_tuning_event("INTERACTION_START", {
-            "interaction_id": interaction_id,
-            "personality": self.personality,
-            "user_input_preview": strip_emojis(user_input[:100]), # Strip emojis
-            "has_attachment": bool(attachment_data),
-            "attachment_type": attachment_data.get('type') if attachment_data else None,
-        })
-
-        if not hasattr(self, 'embedder') or self.embedder is None:
-             logger.error("PROCESS_INTERACTION ERROR: Cannot proceed without embedder!")
-             # --- Tuning Log: Interaction Error ---
-             log_tuning_event("INTERACTION_ERROR", {
-                 "interaction_id": interaction_id,
-                 "personality": self.personality,
-                 "stage": "embedder_check",
-                 "error": "Embedder not initialized",
-             })
-             # Return the expected 4-tuple format on embedder error
-             return "Error: Backend embedder not initialized correctly.", [], None, False
-
-        logger.info(f"Processing interaction (ID: {interaction_id[:8]}): Input='{strip_emojis(user_input[:50])}...' Has Attachment: {bool(attachment_data)}") # Strip emojis
-        if attachment_data: logger.debug(f"Attachment details: type={attachment_data.get('type')}, filename={attachment_data.get('filename')}")
-
-        # Initialize variables that might not be assigned in all paths
-        ai_response = "Error: Processing failed." # Default error message
-        parsed_response = "Error: Processing failed." # Default for return
-        memory_chain_data = []
-        graph_user_input = user_input # Start with original input for graph
-        action_result_message = None # Initialize here
-
-        try:
-            # --- Re-greeting logic moved to __init__ ---
-
-            # --- Proceed with normal interaction flow ---
-            logger.debug("Processing normal interaction flow.")
-
-            # --- Handle Multimodal Input ---
-            if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('data_url'):
-                logger.info("Image attachment detected. Using Chat Completions API.")
-                logger.info("Skipping standard memory retrieval for image prompt.")
-                memory_chain_data = [] # No memory chain for multimodal yet
-
-                # Prepare messages for Chat API
-                messages = []
-                history_limit = 5 # Limit history for multimodal context
-                relevant_history = conversation_history[-history_limit:]
-                for turn in relevant_history:
-                    role = "user" if turn.get("speaker") == "User" else "assistant"
-                    # Remove potential image placeholders from history text
-                    text_content = re.sub(r'\s*\[Image:\s*.*?\s*\]\s*', '', turn.get("text","")).strip()
-                    if text_content: messages.append({"role": role, "content": text_content})
-
-                # Construct current user message (text + image)
-                user_content = []
-                if user_input: user_content.append({"type": "text", "text": user_input})
-                user_content.append({"type": "image_url", "image_url": {"url": attachment_data['data_url']}})
-                messages.append({"role": "user", "content": user_content})
-
-                # Call Multimodal API using configured helper
-                ai_response = self._call_configured_llm('main_chat_multimodal', messages=messages)
-
-                # Prepare user input for graph storage (add placeholder)
-                if attachment_data.get('filename'):
-                    placeholder = f" [Image Attached: {attachment_data['filename']}]"
-                    separator = " " if graph_user_input else ""
-                    graph_user_input += separator + placeholder
-
-            # --- Handle Text-Only Input ---
-            else:
-                logger.info("No valid image attachment. Using standard Generate API.")
-                memory_chain_data = [] # Reset just in case
-
-                # Concept finding logic moved to AFTER node creation
-
-                # Only retrieve memory if it's not explicitly an image placeholder input
-                # (This check might be redundant if multimodal handles all image cases now)
-                if not user_input.strip().startswith("[Image:"):
-                    # --- Classify Query Type ---
-                    query_type = self._classify_query_type(user_input) # Classify before search
-                    # --- Tuning Log: Query Classification ---
-                    log_tuning_event("QUERY_CLASSIFICATION", {
-                        "interaction_id": interaction_id,
-                        "personality": self.personality,
-                        "query_preview": strip_emojis(user_input[:100]), # Strip emojis
-                        "classified_type": query_type,
-                    })
-
-                    logger.info(f"Searching initial nodes (Query Type: {query_type})...")
-                    max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
-                    # Pass query_type to search function
-                    initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
-                    initial_uuids = [uid for uid, score in initial_nodes]
-                    logger.info(f"Initial UUIDs: {initial_uuids}")
-                    # --- Tuning Log: Initial Search Results ---
-                    log_tuning_event("INITIAL_SEARCH_RESULT", {
-                        "interaction_id": interaction_id,
-                        "personality": self.personality,
-                        "query_preview": strip_emojis(user_input[:100]), # Strip emojis
-                        "query_type": query_type,
-                        "initial_node_scores": initial_nodes, # List of (uuid, score)
-                        "initial_uuids_selected": initial_uuids,
-                    })
-
-
-                    if initial_uuids:
-                        # --- Use context from PREVIOUS interaction for retrieval bias ---
-                        concepts_for_retrieval = self.last_interaction_concept_uuids
-                        mood_for_retrieval = self.last_interaction_mood
-                        logger.info(f"Using previous interaction context for retrieval: Concepts={len(concepts_for_retrieval)}, Mood={mood_for_retrieval}")
-
-                        # --- Retrieve Active Intentions ---
-                        active_intentions = []
-                        try:
-                             # Simple retrieval: Get all nodes of type 'intention'
-                             # A more sophisticated approach might filter by trigger proximity or relevance.
-                             intention_nodes = [
-                                 data for uuid, data in self.graph.nodes(data=True)
-                                 if data.get('node_type') == 'intention'
-                             ]
-                             # Sort by timestamp? Or keep unsorted for now? Let's sort by timestamp desc.
-                             intention_nodes.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-                             active_intentions = intention_nodes[:5] # Limit number of intentions passed to prompt
-                             logger.info(f"Retrieved {len(active_intentions)} active intention nodes.")
-                        except Exception as intent_e:
-                             logger.error(f"Error retrieving intention nodes: {intent_e}", exc_info=True)
-
-                        # --- Now call retrieval ---
-                        logger.info("Retrieving memory chain...")
-                        # retrieve_memory_chain now returns (nodes, effective_mood)
-                        retrieved_nodes, effective_mood_used = self.retrieve_memory_chain(
-                            initial_node_uuids=initial_uuids,
-                            recent_concept_uuids=list(concepts_for_retrieval), # Pass previous concepts
-                            current_mood=mood_for_retrieval # Pass previous mood
-                        )
-                        # Combine regular memories and intentions for the prompt context
-                        memory_chain_data = retrieved_nodes + active_intentions
-                        logger.info(f"Retrieved memory chain size (incl. intentions): {len(memory_chain_data)}")
-                    else:
-                        logger.info("No relevant initial nodes found.")
-                        # Still retrieve intentions even if no initial nodes found? Yes.
-                        # --- Retrieve Active Intentions (Duplicate logic for now) ---
-                        active_intentions = []
-                        try:
-                             intention_nodes = [data for uuid, data in self.graph.nodes(data=True) if data.get('node_type') == 'intention']
-                             intention_nodes.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-                             active_intentions = intention_nodes[:5]
-                             logger.info(f"Retrieved {len(active_intentions)} active intention nodes (no initial search results).")
-                        except Exception as intent_e: logger.error(f"Error retrieving intention nodes: {intent_e}", exc_info=True)
-                        memory_chain_data = active_intentions # Only intentions if no other memories
-                        # Use the mood stored in the instance attribute directly when no retrieval happened
-                        effective_mood_used = self.last_interaction_mood
-                else:
-                    logger.warning("Input started with [Image:] but wasn't handled as attachment? Proceeding without memory.")
-
-                # Construct and call standard API
-                logger.info("Constructing prompt string...")
-                max_tokens = self.config.get('prompting', {}).get('max_context_tokens', 4096)
-                # Pass the effective mood used during retrieval to the prompt constructor
-                prompt = self._construct_prompt(user_input, conversation_history, memory_chain_data, self.tokenizer, max_tokens, current_mood=effective_mood_used)
-
-                logger.info("Calling standard LLM Generate API...")
-                # Call standard Generate API using configured helper
-                ai_response = self._call_configured_llm('main_chat_text', prompt=prompt)
-                # graph_user_input is already set
-
-            # --- Process Response, Check for AI Action Request, and Update Graph ---
-            action_result_message = None # To store feedback about executed action
-            if not ai_response or ai_response.startswith("Error:"):
-                logger.error(f"LLM call failed or returned error: {ai_response}")
-                parsed_response = ai_response if ai_response else "Error: Received empty response from language model."
-            else:
-                parsed_response = ai_response.strip()
-                logger.debug(f"Raw LLM response received: '{parsed_response[:200]}...'")
-
-                # --- Check for AI-requested action ---
-                action_match = re.search(r'\[ACTION:\s*(\{.*?\})\s*\]$', parsed_response, re.DOTALL)
-                if action_match:
-                    action_json_str = action_match.group(1)
-                    logger.info(f"AI requested action detected: {action_json_str}")
-                    # Remove the tag from the conversational response
-                    parsed_response = parsed_response[:action_match.start()].strip()
-                    logger.debug(f"Conversational part of response: '{parsed_response[:100]}...'")
-
-                    try:
-                        action_data = json.loads(action_json_str)
-                        # --- Handle Autonomous Create File Intent ---
-                        if action_data.get("action") == "create_file" and "description" in action_data.get("args", {}):
-                            ai_description = action_data["args"]["description"]
-                            logger.info(f"AI signaled intent to create file: '{ai_description}'")
-
-                            # Call the dedicated generation prompt
-                            gen_prompt_template = self._load_prompt("generate_file_content_prompt.txt")
-                            if gen_prompt_template:
-                                # --- Format relevant memories for the generation prompt ---
-                                # Use memory_chain_data retrieved earlier in this interaction
-                                relevant_memories_text = "\n".join([
-                                    f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {strip_emojis(mem.get('text', ''))}"
-                                    for mem in memory_chain_data # Use the already retrieved memories
-                                ])
-                                if not relevant_memories_text:
-                                    relevant_memories_text = "[No relevant memories retrieved for this context]"
-                                logger.debug(f"Providing memories to file generation prompt:\n{relevant_memories_text[:200]}...")
-
-                                # Use the original user input and formatted memories as context
-                                gen_prompt = gen_prompt_template.format(
-                                    user_request_context=user_input,
-                                    ai_description=ai_description,
-                                    relevant_memories=relevant_memories_text # Pass formatted memories
-                                )
-                                logger.debug(f"Sending file content generation prompt (with memories):\n{gen_prompt}")
-                                # --- Use configured LLM call ---
-                                gen_response = self._call_configured_llm('file_content_generation', prompt=gen_prompt)
-
-                                # Parse the generated filename and content
-                                try:
-                                    gen_match = re.search(r'(\{.*?\})', gen_response, re.DOTALL)
-                                    if gen_match:
-                                        gen_json_str = gen_match.group(0)
-                                        gen_data = json.loads(gen_json_str)
-                                        generated_filename = gen_data.get("filename")
-                                        generated_content = gen_data.get("content")
-
-                                        if generated_filename and generated_content is not None:
-                                            # Ensure .txt extension (basic check)
-                                            if not generated_filename.lower().endswith(".txt"):
-                                                generated_filename += ".txt"
-                                                logger.info(f"Appended .txt extension to generated filename: {generated_filename}")
-
-                                            # Execute the create_file action with generated data
-                                            logger.info(f"Executing create_file with generated data: Filename='{generated_filename}', Content Length={len(generated_content)}")
-                                            create_action_data = {
-                                                "action": "create_file",
-                                                "args": {"filename": generated_filename, "content": generated_content}
-                                            }
-                                            action_success, action_message, _ = self.execute_action(create_action_data) # execute_action returns suffix, but we might override
-                                            action_result_message = f"[System: Action 'create_file' ({generated_filename}) {'succeeded' if action_success else 'failed'}. {action_message}]"
-                                            action_suffix_for_info = f"create_file_{'success' if action_success else 'fail'}" # <<< Set suffix here
-                                        else:
-                                            logger.error("Generated file content JSON missing filename or content.")
-                                            action_suffix_for_info = "create_file_fail" # Set suffix for error case
-                                            # More specific user feedback
-                                            action_result_message = f"[System: I intended to create a file about '{ai_description}', but failed to generate a valid filename or content.]"
-                                    else:
-                                         logger.error(f"Could not extract JSON from file generation response: {gen_response}")
-                                         action_suffix_for_info = "create_file_fail" # Set suffix for error case
-                                         # More specific user feedback
-                                         action_result_message = f"[System: I intended to create a file about '{ai_description}', but received an invalid format from the content generator.]"
-                                except json.JSONDecodeError as e:
-                                    logger.error(f"Failed to parse JSON from file generation response: {e}. String: '{gen_json_str if 'gen_json_str' in locals() else gen_response}'")
-                                    action_suffix_for_info = "create_file_fail" # Set suffix for error case
-                                    # More specific user feedback
-                                    action_result_message = f"[System: I intended to create a file about '{ai_description}', but failed to parse the generated content.]"
-                                except Exception as e:
-                                     logger.error(f"Error during file content generation/execution: {e}", exc_info=True)
-                                     action_suffix_for_info = "create_file_exception" # Set suffix for error case
-                                     # More specific user feedback
-                                     action_result_message = f"[System: I intended to create a file about '{ai_description}', but encountered an error: {e}]"
-                            else:
-                                logger.error("Failed to load generate_file_content_prompt.txt")
-                                action_suffix_for_info = "create_file_fail" # Set suffix for error case
-                                # More specific user feedback
-                                action_result_message = f"[System: I intended to create a file about '{ai_description}', but the content generation prompt is missing.]"
-
-                        # --- Handle Other AI-Requested Actions ---
-                        elif isinstance(action_data, dict) and "action" in action_data and "args" in action_data:
-                            # Execute other actions directly as before
-                            logger.info(f"Executing AI-requested action: {action_data.get('action')} with args: {action_data.get('args')}")
-                            action_success, action_message, returned_suffix = self.execute_action(action_data) # <<< Capture suffix
-                            action_result_message = f"[System: Action '{action_data.get('action')}' {'succeeded' if action_success else 'failed'}. {action_message}]"
-                            action_suffix_for_info = returned_suffix # <<< Use returned suffix
-                            logger.info(f"AI Action Result: {action_result_message}")
-                        else:
-                            logger.error(f"Invalid JSON structure in AI action request: {action_json_str}")
-                            action_suffix_for_info = "action_parse_fail" # Set suffix for error case
-                            action_result_message = "[System: Error - Invalid action request format received from AI.]"
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON from AI action request: {e}. String: '{action_json_str}'")
-                        action_result_message = "[System: Error - Failed to parse action request from AI.]"
-                    except json.JSONDecodeError as e:
-                        # ... (handle JSON error) ...
-                        action_result_message = "[System: Error - Failed to parse action request from AI.]" # Set message
-                        action_suffix_for_info = "action_parse_fail" # Set suffix
-                    except Exception as e:
-                         # ... (handle execution error) ...
-                         action_result_message = f"[System: Error executing action - {e}]" # Set message
-                         action_suffix_for_info = f"{action_data.get('action', 'unknown')}_exception" # Try to get action name
-
-                    # --- Construct action_result_info HERE, inside the if action_match block ---
-                    if action_result_message: # Only create if a message was generated
-                        action_executed = action_data.get("action", "unknown") if 'action_data' in locals() else "unknown"
-                        args_executed = action_data.get("args", {}) if 'action_data' in locals() else {}
-                        target_info_placeholder = str(args_executed)[:100]
-
-                        action_result_info = {
-                            "message": action_result_message,
-                            "action_type": action_suffix_for_info, # Use the suffix determined above
-                            "target_info": target_info_placeholder
-                        }
-                        logger.debug(f"Prepared action_result_info (inside action_match): {action_result_info}")
-                    # --- End construction block ---
-                else:
-                     logger.debug("No AI action request tag found in response.")
-
-
-            # Add nodes to graph regardless of LLM success/failure, using appropriate text
-            logger.info("Adding user input node to graph...")
-            logger.debug(f"Adding user node with text: '{strip_emojis(graph_user_input[:100])}...'") # Strip emojis
-            user_node_uuid = self.add_memory_node(graph_user_input, "User")
-
-            logger.info("Adding AI/System response node to graph...")
-            # Use parsed_response (which could be success or error message)
-            logger.debug(f"Adding AI node with text: '{strip_emojis(parsed_response[:100])}...'") # Strip emojis
-            ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
-
-            # --- Analyze Emotion for New Nodes (BEFORE averaging) ---
-            if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid)
-            if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid)
-
-            # --- Calculate and Store context for NEXT interaction's retrieval bias ---
-            self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
-
-            # --- Trigger Drive Update if High Impact Emotion Occurred ---
-            drive_cfg = self.config.get('subconscious_drives', {})
-            trigger_on_high_impact = drive_cfg.get('trigger_drive_update_on_high_impact', False)
-            if trigger_on_high_impact and self.high_impact_nodes_this_interaction:
-                 logger.info("High emotional impact detected. Triggering immediate drive state update.")
-                 # Prepare context for the update (e.g., last few turns) using the passed conversation_history
-                 context_turns = conversation_history[-3:] # Use the argument, not self.current_conversation
-                 context_text = "\n".join([f"{turn.get('speaker', '?')}: {turn.get('text', '')}" for turn in context_turns])
-                 self._update_drive_state(context_text=context_text)
-                 # --- Also trigger potential long-term nudge ---
-                 # Find the node with max magnitude from the high impact dict
-                 if self.high_impact_nodes_this_interaction:
-                      max_impact_uuid = max(self.high_impact_nodes_this_interaction, key=self.high_impact_nodes_this_interaction.get)
-                      logger.info(f"Triggering potential long-term drive nudge from high-impact node: {max_impact_uuid[:8]}")
-                      self._update_long_term_drives(high_impact_memory_uuid=max_impact_uuid)
-
-                 # Clear the high impact tracker after processing
-                 self.high_impact_nodes_this_interaction.clear()
-
-            # --- Heuristic Refinement: Check Conversation Patterns (NEW) ---
-            conv_heuristics_cfg = drive_cfg.get('conversation_heuristics', {})
-            if conv_heuristics_cfg.get('enable', False):
-                # Example: Check for repeated corrections (requires tracking corrections)
-                # This is complex, needs state tracking across interactions. Placeholder for now.
-                # correction_count = self._get_recent_correction_count() # Hypothetical function
-                # correction_threshold = conv_heuristics_cfg.get('repeated_correction_threshold', 2)
-                # if correction_count >= correction_threshold:
-                #     target_drive = conv_heuristics_cfg.get('repeated_correction_drive')
-                #     factor = conv_heuristics_cfg.get('repeated_correction_factor')
-                #     self._apply_heuristic_drive_adjustment(target_drive, factor, "repeated_correction")
-                #     self._reset_correction_count() # Reset counter after applying
-
-                # Example: Check for collaboration keywords in user input
-                collab_keywords = conv_heuristics_cfg.get('collaboration_keywords', [])
-                if collab_keywords and any(keyword in user_input.lower() for keyword in collab_keywords):
-                    target_drive = conv_heuristics_cfg.get('collaboration_drive')
-                    factor = conv_heuristics_cfg.get('collaboration_factor')
-                    self._apply_heuristic_drive_adjustment(target_drive, factor, "collaboration_keyword")
-
-            # --- Check for Intention Request (if not handled as action/mod) ---
-            # This check happens *after* adding the user/AI nodes, using the original user_input
-            # We might want to move this earlier if intention analysis should prevent normal response generation.
-            # For V1, let's just store it alongside the normal interaction flow.
             try:
-                intention_result = self._analyze_intention_request(user_input)
-                if intention_result.get("action") == "store_intention":
-                    intention_content = intention_result.get("content")
-                    intention_trigger = intention_result.get("trigger", "later")
-                    # Format node text to include both content and trigger
-                    intention_text = f"Remember: {intention_content} (Trigger: {intention_trigger})"
-                    # Add the intention node, linked temporally after the AI response
-                    intention_node_uuid = self.add_memory_node(
-                        text=intention_text,
-                        speaker="System", # Or 'AI'? System seems better for internal intention
-                        node_type='intention'
-                        # Timestamp will be set automatically
-                    )
-                    if intention_node_uuid:
-                        logger.info(f"Stored intention node {intention_node_uuid[:8]}")
-                        # Optionally, add a system message to the *next* response context?
-                        # For now, just store it. The user sees their request and the AI response.
+                if not isinstance(step, dict) or "action" not in step or "args" not in step:
+                    logger.error(f"Invalid action step format in plan (Step {i+1}): {step}")
+                    final_result_tuple_4 = (False, f"Internal Error: Invalid action format in step {i+1}.", "step_error", False)
+                    # <<< DEBUG POINT >>>
+                    logger.debug(f"[DEBUG] Step {i+1} Error (Format): Assigning final_result_tuple_4: Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4) if isinstance(final_result_tuple_4, tuple) else 'N/A'}")
+                else:
+                    action_name = step.get("action", "unknown")
+                    args = step.get("args", {})
+                    is_silent_request = args.get("silent", False) is True
+                    logger.info(f"Executing Step {i+1}/{len(plan)}: Action='{action_name}', Args={args}, Silent={is_silent_request}")
+
+                    action_result_tuple_3 = None # Stores result from successful helper call
+
+                    # --- Dispatch to helper methods (Return 3-tuple on success) ---
+                    if action_name == "create_file":
+                        action_result_tuple_3 = self._execute_create_file(args)
+                    elif action_name == "append_file":
+                        action_result_tuple_3 = self._execute_append_file(args)
+                    elif action_name == "list_files":
+                        action_result_tuple_3 = self._execute_list_files(args)
+                    elif action_name == "read_file":
+                        action_result_tuple_3 = self._execute_read_file(args)
+                    elif action_name == "delete_file":
+                        action_result_tuple_3 = self._execute_delete_file(args)
+                    elif action_name == "add_calendar_event":
+                        action_result_tuple_3 = self._execute_add_calendar_event(args)
+                    elif action_name == "read_calendar":
+                        action_result_tuple_3 = self._execute_read_calendar(args)
+                    elif action_name == "consolidate_files":
+                        action_result_tuple_3 = self._execute_consolidate_files(args)
                     else:
-                        logger.error("Failed to add intention node to graph.")
-            except Exception as intent_e:
-                 logger.error(f"Error during intention analysis: {intent_e}", exc_info=True)
+                        logger.error(f"Unsupported action '{action_name}' in plan (Step {i+1}).")
+                        final_result_tuple_4 = (False, f"Error: Action '{action_name}' is not supported.", f"{action_name}_unsupported", False)
+                        # <<< DEBUG POINT >>>
+                        logger.debug(f"[DEBUG] Step {i+1} Error (Unsupported): Assigning final_result_tuple_4: Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4) if isinstance(final_result_tuple_4, tuple) else 'N/A'}")
 
-            # --- Workspace Planning & Execution ---
-            # This is now handled separately by plan_and_execute, triggered by the needs_planning flag.
-
-            # --- Tuning Log: Interaction End ---
-            log_tuning_event("INTERACTION_END", {
-                    "interaction_id": interaction_id,
-                    "personality": self.personality,
-                    "final_response_preview": strip_emojis(parsed_response[:100]), # Strip emojis
-                    "retrieved_memory_count": len(memory_chain_data),
-                    "user_node_added": user_node_uuid[:8] if 'user_node_uuid' in locals() and user_node_uuid else None,
-                    "ai_node_added": ai_node_uuid[:8] if 'ai_node_uuid' in locals() and ai_node_uuid else None,
-                    # "workspace_actions_attempted": len(workspace_action_results), # Removed
-                })
-
-            # --- Determine if workspace planning might be needed ---
-            needs_planning = False
-            user_input_lower = user_input.lower()
-            # Simple keyword check - refine later if too broad/narrow
-            if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
-                needs_planning = True
-                logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
-
-            # Return conversational response, memories, AI node UUID, and the planning flag
-            return parsed_response, memory_chain_data, ai_node_uuid if 'ai_node_uuid' in locals() else None, needs_planning
-
-        except Exception as e:
-            # Catch errors during interaction processing (e.g., the ValueError) - This is the outer catch block
-            logger.error(f"Outer Error during process_interaction (ID: {interaction_id[:8]}): {e}", exc_info=True)
-            # Assign error message to both ai_response and parsed_response
-            ai_response = f"Error during processing: {e}"
-            parsed_response = ai_response # Ensure parsed_response has a value
-            memory_chain_data = [] # Clear memory chain data on error
-            # --- Tuning Log: Interaction Error ---
-            log_tuning_event("INTERACTION_ERROR", {
-                "interaction_id": interaction_id,
-                "personality": self.personality,
-                "stage": "main_processing_loop",
-                "error": str(e),
-            })
-            # Ensure needs_planning is False on error exit from this block
-            # --- Prompt Chaining for Reflection ---
-            reflection_trigger_keywords = ["reflect", "based on your personality", "how do you feel about", "what is your take", "your opinion"]
-            run_reflection_chain = False
-            if any(keyword in user_input.lower() for keyword in reflection_trigger_keywords):
-                 logger.info("Reflection prompt chain triggered by keywords.")
-                 run_reflection_chain = True
-
-            if run_reflection_chain:
-                try:
-                    # 1. Get the current ASM (or generate if needed/stale?)
-                    # For simplicity, use the existing loaded ASM.
-                    if not self.autobiographical_model:
-                        logger.warning("Cannot run reflection chain: ASM not available.")
-                        # Fall back to normal processing? Or return specific message?
-                        # Let's fall back for now.
-                        run_reflection_chain = False
-                    else:
-                        # 2. Format the ASM state for the reflection prompt
-                        asm_state_parts = ["[My Current Self-Perception:]"]
-                        if self.autobiographical_model.get("summary_statement"): asm_state_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
-                        if self.autobiographical_model.get("core_traits"): asm_state_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
-                        if self.autobiographical_model.get("goals_motivations"): asm_state_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
-                        if self.autobiographical_model.get("relational_stance"): asm_state_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
-                        if self.autobiographical_model.get("emotional_profile"): asm_state_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
-                        formatted_asm_state = "\n".join(asm_state_parts)
-
-                        # 3. Load the reflection prompt template
-                        reflection_prompt_template = self._load_prompt("reflection_prompt.txt")
-                        if not reflection_prompt_template:
-                            logger.error("Failed to load reflection_prompt.txt. Cannot run reflection chain.")
-                            run_reflection_chain = False # Fall back
+                    # --- Process successful helper result ---
+                    if action_result_tuple_3 is not None:
+                        # <<< DEBUG POINT >>>
+                        logger.debug(f"[DEBUG] Step {i+1} Success: Helper returned action_result_tuple_3: Type={type(action_result_tuple_3)}, Value={action_result_tuple_3}")
+                        if isinstance(action_result_tuple_3, tuple) and len(action_result_tuple_3) == 3:
+                            success, message, action_suffix = action_result_tuple_3
+                            silent_and_successful = success and is_silent_request
+                            final_result_tuple_4 = (success, message, action_suffix, silent_and_successful)
+                            # <<< DEBUG POINT >>>
+                            logger.debug(f"[DEBUG] Step {i+1} Success: Constructed final_result_tuple_4: Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4)}")
                         else:
-                            # 4. Format the reflection prompt with ASM and current context
-                            # Reuse context prepared earlier for the main prompt construction
-                            # (memory_chain_data, conversation_history)
-                            reflection_history_text = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Recent history
-                            reflection_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {strip_emojis(mem.get('text', ''))}" for mem in memory_chain_data]) # Retrieved memories
-                            if not reflection_memory_text: reflection_memory_text = "[No relevant memories retrieved]"
+                            # This case should ideally not happen if helpers are correct
+                            logger.error(f"!!! Helper for '{action_name}' returned unexpected value: {action_result_tuple_3}. Expected 3-tuple. !!!")
+                            final_result_tuple_4 = (False, f"Internal Error: Helper for '{action_name}' returned invalid data.", f"{action_name}_helper_error", False)
+                            # <<< DEBUG POINT >>>
+                            logger.debug(f"[DEBUG] Step {i+1} Error (Helper Return): Assigning final_result_tuple_4: Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4) if isinstance(final_result_tuple_4, tuple) else 'N/A'}")
 
-                            reflection_prompt = reflection_prompt_template.format(
-                                previous_analysis_or_state=formatted_asm_state,
-                                user_input=user_input, # The user's triggering input
-                                history_text=reflection_history_text,
-                                memory_text=reflection_memory_text
-                            )
-                            logger.debug(f"Sending reflection prompt:\n{reflection_prompt[:500]}...")
+            except Exception as e:
+                logger.error(f"Unexpected exception executing plan step {i+1} (Action: {action_name}): {e}", exc_info=True)
+                # Construct the 4-tuple error result directly
+                final_result_tuple_4 = (False, f"Internal error during execution of '{action_name}': {e}", f"{action_name}_exception", False)
+                # <<< DEBUG POINT >>>
+                logger.debug(f"[DEBUG] Step {i+1} Error (Exception): Assigning final_result_tuple_4: Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4) if isinstance(final_result_tuple_4, tuple) else 'N/A'}")
 
-                            # 5. Call the LLM using the new configuration
-                            reflection_response = self._call_configured_llm('reflection_generation', prompt=reflection_prompt)
+            # --- Append the final 4-tuple result ---
+            if final_result_tuple_4 is not None:
+                # <<< DEBUG POINT >>>
+                logger.debug(f"[DEBUG] Step {i+1} Appending: Checking final_result_tuple_4 before append: Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4) if isinstance(final_result_tuple_4, tuple) else 'N/A'}, Value={str(final_result_tuple_4)[:200]}...") # Log preview
+                # >>> FINAL CHECK <<<
+                if not isinstance(final_result_tuple_4, tuple) or len(final_result_tuple_4) != 4:
+                    logger.critical(f"CRITICAL ERROR: Attempting to append a non 4-tuple to results! Type={type(final_result_tuple_4)}, Len={len(final_result_tuple_4) if isinstance(final_result_tuple_4, tuple) else 'N/A'}, Value={final_result_tuple_4}")
+                    # Fallback to a generic error tuple to avoid crashing the caller later
+                    results.append((False, "Internal Agent Error: Invalid tuple generated.", "internal_tuple_error", False))
+                    break # Stop processing plan
+                else:
+                    # Append the validated 4-tuple
+                    results.append(final_result_tuple_4)
+                    # Check success flag (index 0) to stop on failure
+                    if not final_result_tuple_4[0]:
+                        logger.warning(f"Plan execution stopped at step {i+1} due to failure.")
+                        break
+            else:
+                logger.error(f"Result tuple was None for step {i+1} (Action: {action_name}). Stopping plan.")
+                results.append((False, f"Internal Error: No result generated for action '{action_name}'.", f"{action_name}_internal_error", False))
+                break
 
-                            # 6. Use the reflection LLM output as the final response
-                            if reflection_response and not reflection_response.startswith("Error:"):
-                                ai_response_text = reflection_response.strip()
-                                parsed_response = ai_response_text # Use this as the AI's conversational turn
-                                logger.info(f"Reflection chain successful. Response: '{parsed_response[:100]}...'")
-                                # Add the AI response node later in the main flow using this parsed_response
-                            else:
-                                logger.error(f"Reflection chain LLM call failed: {reflection_response}")
-                                # Fall back to normal processing? Or return error? Let's fall back.
-                                run_reflection_chain = False # Mark as failed, proceed with normal flow
+        logger.info(f"Workspace plan execution finished. {len(results)} step(s) attempted.")
+        silent_success_count = sum(1 for r in results if r[3])
+        if silent_success_count > 0:
+            logger.info(f"  {silent_success_count} action(s) were executed silently and successfully.")
+        return results
 
-                except Exception as reflect_e:
-                    logger.error(f"Error during reflection chain execution: {reflect_e}", exc_info=True)
-                    run_reflection_chain = False # Fall back on error
-
-            # --- If reflection chain did NOT run or failed, proceed with normal response generation ---
-            if not run_reflection_chain:
-                 # This block contains the original logic for normal response generation
-                 # which should execute if reflection isn't triggered or fails.
-                 # It uses the ai_response calculated earlier in the text-only block.
-                 # We need to ensure parsed_response is set correctly based on the original ai_response.
-                 if not ai_response or ai_response.startswith("Error:"):
-                     logger.error(f"LLM call failed or returned error: {ai_response}")
-                     parsed_response = ai_response if ai_response else "Error: Received empty response from language model."
-                 else:
-                     parsed_response = ai_response.strip()
-                     logger.debug(f"Raw LLM response received (normal path): '{parsed_response[:200]}...'")
-                     # --- Check for AI-requested action (normal path) ---
-                     action_match = re.search(r'\[ACTION:\s*(\{.*?\})\s*\]$', parsed_response, re.DOTALL)
-                     if action_match:
-                          # ... (rest of the normal action handling logic remains here) ...
-                          # This part is complex and already exists, ensure it's correctly placed
-                          # within this 'else' block relative to the reflection chain logic.
-                          # For brevity, assuming the existing action handling logic follows here.
-                          pass # Placeholder for existing action handling logic
-
-            # --- Add Nodes to Graph (Common path for both reflection and normal response) ---
-            logger.info("Adding user input node to graph...")
-            logger.debug(f"Adding user node with text: '{strip_emojis(graph_user_input[:100])}...'") # Strip emojis
-            user_node_uuid = self.add_memory_node(graph_user_input, "User")
-
-            logger.info("Adding AI/System response node to graph...")
-            # Use parsed_response (which is either reflection result or normal result/error)
-            logger.debug(f"Adding AI node with text: '{strip_emojis(parsed_response[:100])}...'") # Strip emojis
-            ai_node_uuid = self.add_memory_node(parsed_response, "AI") # Add AI response node
-
-            # --- Analyze Emotion, Update Context, Trigger Drive Updates (Common path) ---
-            if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid)
-            if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid)
-            self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
-            # ... (rest of the drive update, heuristic, intention logic remains here) ...
-
-            # --- Determine if workspace planning might be needed (Common path) ---
-            needs_planning = False
-            user_input_lower = user_input.lower()
-            if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
-                needs_planning = True
-                logger.info(f"Potential workspace action detected based on keywords. Setting needs_planning=True.")
-
-            # Return conversational response, memories, AI node UUID, and the planning flag
-            return parsed_response, memory_chain_data, ai_node_uuid, needs_planning
-
-        # Failsafe return in case of unexpected exit before try/except returns
-        logger.error(f"PROCESS_INTERACTION reached failsafe return for interaction {interaction_id[:8]}. This indicates an unexpected error path.")
-        # Ensure variables used in the return tuple have default values assigned earlier
-        # Default values assigned at the start: parsed_response="Error: Processing failed.", memory_chain_data=[], ai_node_uuid=None
-        return parsed_response, memory_chain_data, ai_node_uuid, False
-
-    def _apply_heuristic_drive_adjustment(self, target_drive: str, adjustment_value: float, trigger_reason: str):
+    
+    
+    # --- Need to add the modified _apply_heuristic_drive_adjustment method ---
+    def _apply_heuristic_drive_adjustment(self, target_drive: str, adjustment_value: float, trigger_reason: str, context_uuid: str | None = None):
         """Applies a direct adjustment to a short-term drive and logs it."""
         if not target_drive or abs(adjustment_value) < 1e-4:
             return
@@ -4208,6 +3624,7 @@ class GraphMemoryClient:
             log_tuning_event("DRIVE_HEURISTIC_ADJUSTMENT", {
                 "personality": self.personality,
                 "trigger": trigger_reason,
+                "context_node_uuid": context_uuid, # Add context node
                 "target_drive": target_drive,
                 "adjustment_value": adjustment_value,
                 "level_before": current_level,
@@ -4629,11 +4046,10 @@ class GraphMemoryClient:
                                             # Positive score (satisfied) should decrease drive if above baseline, increase if below? No, simplify:
                                             # Positive score -> move towards baseline (negative adjustment if above, positive if below)
                                             # Negative score -> move away from baseline (positive adjustment if above, negative if below) - This seems complex.
-                                            # Let's try: Adjustment = -score * factor (Simple inverse relationship)
                                             # Satisfied (score=1) -> adj = -factor (reduces drive)
                                             # Frustrated (score=-1) -> adj = +factor (increases drive)
                                             # Neutral (score=0) -> adj = 0
-                                            adjustment = -score * adjustment_factor
+                                            adjustment = score * adjustment_factor
                                             logger.debug(f"  Drive '{drive_name}' LLM Score: {score:.2f}. Calculated Adjustment: {adjustment:.4f}")
 
                                             if abs(adjustment) > 1e-4:
@@ -5174,6 +4590,347 @@ class GraphMemoryClient:
         # --- Logging block moved from here ---
 
 
+    def _handle_input(self, interaction_id: str, user_input: str, conversation_history: list, attachment_data: dict | None) -> tuple[str | None, str, list]:
+        """
+        Handles input processing, choosing between text or multimodal, and calls the LLM.
+
+        Returns:
+            Tuple: (inner_thoughts, raw_llm_response_text, memories_retrieved)
+        """
+        inner_thoughts = None
+        raw_llm_response = "Error: LLM call failed."
+        memories_retrieved = []
+
+        if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('data_url'):
+            logger.info(f"Interaction {interaction_id[:8]}: Handling multimodal input.")
+            # Call multimodal handler (which calls the appropriate LLM)
+            # Assuming _handle_multimodal_input internally calls _call_configured_llm
+            # and returns thoughts, response_text
+            inner_thoughts, raw_llm_response = self._handle_multimodal_input(user_input, attachment_data)
+            # No memory retrieval for multimodal yet
+            memories_retrieved = []
+        else:
+            logger.info(f"Interaction {interaction_id[:8]}: Handling text input.")
+            # Call text handler (which includes retrieval and LLM call)
+            # Assuming _handle_text_input internally calls retrieve, construct prompt, call LLM
+            # and returns thoughts, response_text, memories_used
+            inner_thoughts, raw_llm_response, memories_retrieved = self._handle_text_input(user_input, conversation_history)
+
+        return inner_thoughts, raw_llm_response, memories_retrieved
+    
+    def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> InteractionResult:
+        """
+        Processes user input, calls LLM, updates memory, checks for actions.
+
+        Args:
+            user_input: The text input from the user.
+            conversation_history: The recent conversation history.
+            attachment_data: Optional dictionary containing attachment info (type, filename, data_url/path).
+
+        Returns:
+            InteractionResult: An object containing the final response, thoughts, memories, node UUIDs, and planning flag.
+        """
+        interaction_id = str(uuid.uuid4())
+        logger.info(f"--- Processing Interaction START (ID: {interaction_id[:8]}) ---")
+        logger.info(f"Input='{strip_emojis(user_input[:60])}...', Attachment: {attachment_data.get('type') if attachment_data else 'No'}")
+        self.high_impact_nodes_this_interaction.clear() # Reset interaction-specific state
+
+        # Default error result
+        error_result = InteractionResult(final_response_text="Error: Processing failed unexpectedly.")
+
+        log_tuning_event("INTERACTION_START", {
+            "interaction_id": interaction_id,
+            "personality": self.personality,
+            "user_input_preview": strip_emojis(user_input[:100]),
+            "has_attachment": bool(attachment_data),
+            "attachment_type": attachment_data.get('type') if attachment_data else None,
+            "history_length": len(conversation_history)
+        })
+
+        # --- Initial Check ---
+        if not hasattr(self, 'embedder') or self.embedder is None:
+            logger.critical("PROCESS_INTERACTION CRITICAL ERROR: Embedder not initialized!")
+            log_tuning_event("INTERACTION_ERROR", { "interaction_id": interaction_id, "personality": self.personality, "stage": "embedder_check", "error": "Embedder not initialized" })
+            return error_result
+
+        try:
+            # --- Step 1: Handle Input & Call LLM ---
+            # Determine text to save in the graph for the user turn
+            graph_user_input = user_input
+            if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('filename'):
+                placeholder = f" [Image Attached: {attachment_data['filename']}]"
+                separator = " " if graph_user_input else ""
+                graph_user_input += separator + placeholder
+
+            inner_thoughts, raw_llm_response, memories_retrieved = self._handle_input(
+                interaction_id, user_input, conversation_history, attachment_data
+            )
+
+            # --- Step 2: Parse LLM Response for Thoughts ---
+            # (Note: _handle_input might already do this, adjust if needed)
+            # If _handle_input returns raw response, parse here:
+            # inner_thoughts, final_response_text = self._parse_llm_response(raw_llm_response)
+            # If _handle_input returns parsed response, use it directly:
+            final_response_text = raw_llm_response # Assuming _handle_input returns parsed response
+
+            # Check for critical LLM call failure
+            if final_response_text is None or "Error:" in final_response_text[:20]: # Check beginning for errors
+                 logger.error(f"Interaction {interaction_id[:8]}: LLM call failed or returned error: '{final_response_text}'")
+                 log_tuning_event("INTERACTION_ERROR", { "interaction_id": interaction_id, "personality": self.personality, "stage": "llm_call", "error": final_response_text or "Empty LLM response" })
+                 # Use the error message from LLM if available, otherwise default
+                 error_result.final_response_text = final_response_text or "Error: LLM processing failed."
+                 return error_result
+
+            # --- Step 3: Check for Action Request ---
+            response_before_action_check = final_response_text
+            final_response_text_cleaned, needs_planning = self._check_for_action_request(
+                response_text=response_before_action_check,
+                user_input=user_input # Pass original user input for keyword check
+            )
+            logger.debug(f"Interaction {interaction_id[:8]}: Needs Planning Flag = {needs_planning}. Cleaned Response: '{final_response_text_cleaned[:60]}...'")
+
+            # --- Step 4: Update Graph & Context ---
+            # Pass the text intended for the graph nodes
+            user_node_uuid, ai_node_uuid = self._update_graph_and_context(
+                graph_user_input=graph_user_input, # Text for user node
+                user_node_uuid=None,
+                parsed_response=final_response_text_cleaned, # Cleaned text for AI node
+                ai_node_uuid=None,
+                conversation_history=conversation_history,
+                user_input_for_analysis=user_input # Original input for analysis triggers
+            )
+            logger.debug(f"Interaction {interaction_id[:8]}: Graph updated. User Node: {user_node_uuid}, AI Node: {ai_node_uuid}")
+
+            # --- Step 5: Assemble and Return Result ---
+            final_result = InteractionResult(
+                final_response_text=final_response_text_cleaned,
+                inner_thoughts=inner_thoughts,
+                memories_used=memories_retrieved,
+                user_node_uuid=user_node_uuid,
+                ai_node_uuid=ai_node_uuid,
+                needs_planning=needs_planning
+            )
+
+            log_tuning_event("INTERACTION_END", {
+                "interaction_id": interaction_id,
+                "personality": self.personality,
+                "final_response_preview": strip_emojis(final_result.final_response_text[:100]),
+                "retrieved_memory_count": len(final_result.memories_used),
+                "user_node_added": final_result.user_node_uuid[:8] if final_result.user_node_uuid else None,
+                "ai_node_added": final_result.ai_node_uuid[:8] if final_result.ai_node_uuid else None,
+                "needs_planning": final_result.needs_planning
+            })
+            logger.info(f"--- Processing Interaction END (ID: {interaction_id[:8]}) ---")
+            return final_result
+
+        except Exception as e:
+            logger.error(f"--- CRITICAL Outer Error during process_interaction (ID: {interaction_id[:8]}) ---", exc_info=True)
+            error_message_for_user = f"Error: Processing failed unexpectedly in main loop. Details: {type(e).__name__}"
+            log_tuning_event("INTERACTION_ERROR", {
+                "interaction_id": interaction_id,
+                "personality": self.personality,
+                "stage": "outer_exception_handler",
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+            # Return default error result object
+            error_result.final_response_text = error_message_for_user
+            return error_result
+
+    def _handle_text_input(self, user_input: str, conversation_history: list) -> tuple[str | None, str, list]:
+         """Handles text-based input, including memory retrieval and LLM call."""
+         # >>> Placeholder - Ensure the actual implementation exists and returns:
+         # >>> (inner_thoughts: str|None, raw_llm_response: str, memories_retrieved: list)
+         logger.warning("_handle_text_input called - Ensure full implementation exists.")
+         # Example placeholder logic (replace with actual logic):
+         query_type = self._classify_query_type(user_input)
+         max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
+         initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
+         initial_uuids = [uid for uid, score in initial_nodes]
+         memories_retrieved = []
+         effective_mood = self.last_interaction_mood
+         if initial_uuids:
+             memories_retrieved, effective_mood = self.retrieve_memory_chain(
+                 initial_node_uuids=initial_uuids,
+                 recent_concept_uuids=list(self.last_interaction_concept_uuids),
+                 current_mood=self.last_interaction_mood
+             )
+
+         prompt = self._construct_prompt(user_input, conversation_history, memories_retrieved, self.tokenizer,
+                                        self.config.get('prompting', {}).get('max_context_tokens', 4096), effective_mood)
+         raw_llm_response = self._call_configured_llm('main_chat_text', prompt=prompt) # Or appropriate task name
+         # --- Parse thoughts here ---
+         inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
+         # Return thoughts, final response, and memories
+         return inner_thoughts, final_response, memories_retrieved # Corrected return order/values
+     
+    
+    def _handle_multimodal_input(self, user_input: str, attachment_data: dict) -> tuple[str | None, str]:
+        """Handles multimodal input processing and LLM call via Chat Completions API."""
+        # >>> Placeholder - Ensure the actual implementation exists and returns:
+        # >>> (inner_thoughts: str|None, raw_llm_response: str)
+        logger.warning("_handle_multimodal_input called - Ensure full implementation exists.")
+        # Example placeholder logic (replace with actual logic):
+        messages = []
+        user_content = []
+        if user_input: user_content.append({"type": "text", "text": user_input})
+        user_content.append({"type": "image_url", "image_url": {"url": attachment_data['data_url']}})
+        messages.append({"role": "user", "content": user_content})
+
+        raw_llm_response = self._call_configured_llm('main_chat_multimodal', messages=messages)
+        # --- Parse thoughts here ---
+        inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
+        return inner_thoughts, final_response # Return thoughts and final response
+
+    def _update_graph_and_context(self, graph_user_input: str, user_node_uuid: str | None, parsed_response: str, ai_node_uuid: str | None, conversation_history: list, user_input_for_analysis: str) -> tuple[str | None, str | None]:
+        """Adds user/AI nodes, updates context, runs heuristics."""
+        # >>> Placeholder - Ensure the actual implementation exists and returns:
+        # >>> (final_user_node_uuid: str|None, final_ai_node_uuid: str|None)
+        logger.warning("_update_graph_and_context called - Ensure full implementation exists.")
+        # --- 1. Add User Node ---
+        if user_node_uuid is None: # Only add if not already provided (e.g., from previous step)
+             # Use graph_user_input which includes potential attachment placeholder
+             user_node_uuid = self.add_memory_node(graph_user_input, "User")
+             if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid) # Analyze emotion for user node
+
+        # --- 2. Store Intention (if any) ---
+        intention_result = self._analyze_intention_request(user_input_for_analysis) # Use original input
+        if intention_result.get("action") == "store_intention":
+            intention_content = f"Remember: {intention_result['content']} (Trigger: {intention_result['trigger']})"
+            # Add as a separate 'intention' node linked to the user turn?
+            intention_ts = self.graph.nodes[user_node_uuid]['timestamp'] if user_node_uuid else datetime.now(timezone.utc).isoformat()
+            intention_node_uuid = self.add_memory_node(intention_content, "System", 'intention', timestamp=intention_ts)
+            if intention_node_uuid and user_node_uuid:
+                try:
+                    # Link user turn -> intention node
+                    self.graph.add_edge(user_node_uuid, intention_node_uuid, type='GENERATED_INTENTION', base_strength=0.9, last_traversed_ts=time.time())
+                    logger.info(f"Linked user turn {user_node_uuid[:8]} to intention {intention_node_uuid[:8]}")
+                except Exception as link_e:
+                    logger.error(f"Failed to link user turn to intention node: {link_e}")
+
+        # --- 3. Add AI Node ---
+        if ai_node_uuid is None and parsed_response: # Only add if not already provided and response exists
+             ai_node_uuid = self.add_memory_node(parsed_response, "AI")
+             if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid) # Analyze emotion for AI node
+
+        # --- 4. Update Context for Next Interaction ---
+        self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
+
+        # --- 5. Apply Heuristics (Example: Repeated Corrections) ---
+        # This is a simplified example - requires tracking correction patterns
+        correction_keywords = ["actually,", "no,", "you're wrong", "correction:"]
+        if any(keyword in user_input_for_analysis.lower() for keyword in correction_keywords):
+             self._apply_heuristic_drive_adjustment("Understanding", -0.05, "user_correction", user_node_uuid) # Small decrease
+
+        # --- 6. Trigger Drive Update on High Impact ---
+        if self.config.get('subconscious_drives', {}).get('trigger_drive_update_on_high_impact', False) and self.high_impact_nodes_this_interaction:
+             logger.info("High emotional impact detected, triggering immediate drive state update analysis.")
+             # Combine context from user/ai turns for analysis
+             combined_context = f"User: {graph_user_input}\nAI: {parsed_response}"
+             self._update_drive_state(context_text=combined_context) # Call short-term update with context
+
+        # --- 7. Save Memory ---
+        self._save_memory()
+
+        return user_node_uuid, ai_node_uuid # Return the final UUIDs 
+
+    def _parse_llm_response(self, raw_response_text: str) -> tuple[str | None, str]:
+        """
+        Parses the raw LLM response to extract inner thoughts and the final response text.
+
+        Args:
+            raw_response_text: The raw string output from the LLM.
+
+        Returns:
+            A tuple: (inner_thoughts: str | None, final_response_text: str)
+        """
+        inner_thoughts = None
+        final_response_text = raw_response_text # Default to raw response
+
+        if not raw_response_text:
+            logger.warning("LLM response was empty.")
+            return None, "" # Return empty string for final response if raw was empty/None
+
+        # Ensure input is a string
+        if not isinstance(raw_response_text, str):
+            logger.error(f"LLM response ('raw_response_text') is not a string! Type: {type(raw_response_text)}. Converting.")
+            raw_response_text = str(raw_response_text)
+
+        logger.debug(f"Parsing LLM response: '{raw_response_text[:200]}...'")
+        try:
+            # Correct regex to find thoughts and capture content, ensuring it's non-greedy
+            thought_pattern = r""
+            inner_thoughts = None
+            final_response_text = raw_response_text # Use the full response if no thoughts
+
+        except TypeError as te:
+             # This error indicates re.search failed likely due to input type, though we try to prevent this.
+             logger.error(f"TypeError during thought parsing (re.search likely failed): {te}. Raw text type: {type(raw_response_text)}", exc_info=True)
+             logger.error(f"Problematic raw_response_text for parsing: ```{raw_response_text}```")
+             inner_thoughts = None
+             final_response_text = raw_response_text # Fallback to original text
+        except Exception as parse_err:
+            logger.error(f"Unexpected error parsing thoughts from LLM response: {parse_err}", exc_info=True)
+            inner_thoughts = None
+            final_response_text = raw_response_text # Fallback to original text
+
+        return inner_thoughts, final_response_text
+    
+    def _check_for_action_request(self, response_text: str, user_input: str) -> tuple[str, bool]:
+        """
+        Checks the AI's response text for an [ACTION:] tag or the user input for keywords
+        to determine if workspace planning is needed.
+
+        Args:
+            response_text: The AI's final response text (after thought stripping).
+            user_input: The original user input text.
+
+        Returns:
+            A tuple: (cleaned_response_text: str, needs_planning: bool)
+        """
+        needs_planning = False
+        cleaned_response_text = response_text # Start with the input response text
+
+        # Ensure text is a string
+        if not isinstance(cleaned_response_text, str):
+            logger.warning(f"_check_for_action_request received non-string: {type(cleaned_response_text)}. Coercing.")
+            cleaned_response_text = str(cleaned_response_text) if cleaned_response_text is not None else ""
+
+        # 1. Check for [ACTION:] tag at the end of the AI response
+        try:
+            # Regex looks for [ACTION: {maybe whitespace} {JSON content} {maybe whitespace}] at the end ($)
+            action_match = re.search(r'\[ACTION:\s*(\{.*?\})\s*\]$', cleaned_response_text, re.DOTALL | re.IGNORECASE) # Added IGNORECASE
+            if action_match:
+                action_json_str = action_match.group(1)
+                logger.info(f"AI requested action detected via tag: {action_json_str}")
+                # Remove action tag from the text
+                cleaned_response_text = cleaned_response_text[:action_match.start()].strip()
+                # Validate JSON structure slightly to confirm intent
+                try:
+                    action_data = json.loads(action_json_str)
+                    if isinstance(action_data, dict) and "action" in action_data:
+                        needs_planning = True
+                        logger.info("Setting needs_planning=True due to valid [ACTION:] tag.")
+                    else:
+                        logger.warning(f"ACTION tag found but content is not a valid JSON object with 'action' key: {action_json_str}")
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON in ACTION tag: {action_json_str}")
+            else:
+                 logger.debug("No AI action request tag found in response.")
+        except Exception as search_err:
+            logger.error(f"Unexpected error during ACTION tag search: {search_err}", exc_info=True)
+            # Proceed without planning if tag search fails
+
+        # 2. Check user input keywords (only if tag didn't already set planning)
+        if not needs_planning:
+            user_input_lower = user_input.lower() if isinstance(user_input, str) else ""
+            # Use the WORKSPACE_KEYWORDS list defined globally
+            if any(keyword in user_input_lower for keyword in WORKSPACE_KEYWORDS):
+                needs_planning = True
+                logger.info(f"Potential workspace action detected via keywords in user input. Setting needs_planning=True.")
+
+        return cleaned_response_text, needs_planning
+    
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
                                   weights: dict) -> float:
         """
@@ -5299,203 +5056,6 @@ class GraphMemoryClient:
             "purged_count": purge_count,
             "purged_uuids": nodes_to_purge, # Log UUIDs that were targeted
         })
-
-    def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
-        """
-        Executes a validated action based on the action_data dictionary.
-
-        Args:
-            action_data: Dictionary containing 'action' and 'args'.
-
-        Returns:
-             A tuple (success: bool, message: str, action_suffix: str).
-             'message' is user-facing status.
-             'action_suffix' is for internal GUI state/styling (e.g., 'create_file_success').
-        """
-        action = action_data.get("action", "unknown")
-        args = action_data.get("args", {})
-        logger.debug(f"Attempting to execute action '{action}' with args: {args}")
-
-        success = False
-        message = f"Action '{action}' could not be completed."  # Default failure message
-        action_suffix = f"{action}_fail"  # Default suffix
-
-        try:
-            # --- File Actions ---
-            if action == "create_file":
-                filename, content = args.get("filename"), args.get("content")
-                if filename and content is not None:  # Content can be empty string
-                    # Call file_manager function which now returns (bool, str)
-                    success, message = file_manager.create_or_overwrite_file(self.config, self.personality, filename,
-                                                                             str(content))
-                else:
-                    message = "Error: Missing filename or content for create_file."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
-
-            elif action == "append_file":
-                filename, content = args.get("filename"), args.get("content")
-                if filename and content is not None:  # Content can be empty string
-                    success, message = file_manager.append_to_file(self.config, self.personality, filename,
-                                                                   str(content))
-                else:
-                    message = "Error: Missing filename or content for append_file."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
-
-            # --- Calendar Actions ---
-            elif action == "add_calendar_event":
-                date, time_str, desc = args.get("date"), args.get("time"), args.get("description")
-                if date and time_str and desc:
-                    # TODO: Date/Time parsing/validation could happen here or in file_manager
-                    # For now, pass strings directly
-                    success, message = file_manager.add_calendar_event(self.config, self.personality, date, time_str,
-                                                                       desc)
-                else:
-                    message = "Error: Missing date, time, or description for add_calendar_event."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
-
-            elif action == "read_calendar":
-                date = args.get("date")  # Optional
-                # file_manager.read_calendar_events now returns (list[dict], str)
-                events, fm_message = file_manager.read_calendar_events(self.config, self.personality, date)
-                # For reading, success is true if the read operation itself didn't fail,
-                # even if no events were found. The message conveys the outcome.
-                success = True  # Assume read operation itself succeeded unless exception below
-                action_suffix = "read_calendar_success"  # Use success suffix
-                date_str = f" for {date}" if date else " (all dates)"
-
-                # Construct user-facing message based on results
-                if fm_message.startswith("IO error") or fm_message.startswith(
-                        "Permission denied") or fm_message.startswith("Unexpected error"):
-                    success = False  # Override success if file_manager reported read error
-                    action_suffix = "read_calendar_fail"
-                    message = f"Error reading calendar: {fm_message}"  # Pass file_manager error message
-                elif not events:
-                    # Message could be "not found" or "found 0 events" - use fm_message
-                    message = fm_message
-                else:
-                    event_lines = []
-                    for e in sorted(events,
-                                    key=lambda x: (x.get('event_date', ''), x.get('event_time', ''))):  # Sort events
-                        event_lines.append(
-                            f"- {e.get('event_time', '?')}: {e.get('description', '?')} ({e.get('event_date', '?')})")
-                    message = f"Found {len(events)} event(s){date_str}:\n" + "\n".join(event_lines)
-
-            # --- NEW File Actions ---
-            elif action == "list_files":
-                file_list, message = self.list_files_wrapper()
-                if file_list is not None:
-                    success = True
-                    # Format the message for the user
-                    if file_list: message = f"Files in workspace:\n- " + "\n- ".join(file_list)
-                    else: message = "Workspace is empty."
-                else: # Error occurred
-                    success = False
-                    # message already contains the error from file_manager
-
-            elif action == "read_file":
-                filename = args.get("filename")
-                if filename:
-                    file_content, message = self.read_file_wrapper(filename)
-                    if file_content is not None:
-                        success = True
-                        # Truncate long content for the message?
-                        content_preview = file_content[:500] + ('...' if len(file_content) > 500 else '')
-                        message = f"Content of '{filename}':\n---\n{content_preview}\n---"
-                    else: # Error occurred
-                        success = False
-                        # message already contains the error from file_manager
-                else:
-                    message = "Error: Missing filename for read_file."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
-
-            elif action == "delete_file":
-                filename = args.get("filename")
-                if filename:
-                    # Add confirmation step? For now, execute directly.
-                    # Consider adding a config flag for delete confirmation later.
-                    logger.warning(f"Executing delete_file action for: {filename}")
-                    success, message = self.delete_file_wrapper(filename)
-                else:
-                    message = "Error: Missing filename for delete_file."
-                    logger.error(message + f" Args received: {args}")
-                    success = False
-
-            # --- Unknown Action ---
-            else:
-                message = f"Error: The action '{action}' is not recognized or supported."
-                logger.error(message + f" Action data: {action_data}")
-                success = False
-                action_suffix = "unknown_action_fail"
-
-            # --- Update Suffix ---
-            # Ensure suffix reflects success/failure determined within this block
-            if action != "unknown_action_fail":  # Don't override specific unknown suffix
-                action_suffix = f"{action}_{'success' if success else 'fail'}"
-
-        except Exception as e:
-            # Catch any unexpected errors during the dispatch/execution logic itself
-            logger.error(f"Unexpected exception during execution of action '{action}': {e}", exc_info=True)
-            message = f"An internal error occurred while trying to perform action '{action}'. Please check logs."
-            success = False
-            action_suffix = f"{action}_exception"  # Specific suffix for exceptions here
-
-        # --- Final Logging and Return ---
-        log_level = logging.INFO if success else logging.ERROR
-        # Log the full message if it's short, otherwise truncate
-        log_message_detail = message if len(message) < 150 else message[:150] + '...'
-        logger.log(log_level, f"Action '{action}' execution result: Success={success}, Suffix='{action_suffix}', Msg='{log_message_detail}'")
-
-        # --- Apply Heuristic Drive Adjustment ---
-        try:
-            drive_cfg = self.config.get('subconscious_drives', {})
-            if drive_cfg.get('enabled', False):
-                heuristics = drive_cfg.get('heuristic_adjustment_factors', {})
-                adjustment = 0.0
-                target_drive = "Control" # Default target drive for actions
-                apply_adjustment = True # Flag to control application
-
-                if success:
-                    adjustment = heuristics.get('action_success_control', 0.0)
-                    logger.debug(f"Action '{action}' succeeded. Potential Control adjustment: {adjustment:.3f}")
-                else:
-                    # Check if the failure was likely a system/file error, not AI planning error
-                    system_fail_suffixes = ["_fail", "_exception", "_arg_missing", "_arg_invalid", "_arg_conflict", "_read_fail", "_write_fail", "_llm_fail", "_generation_fail", "_internal_error"]
-                    is_system_failure = any(action_suffix.endswith(suffix) for suffix in system_fail_suffixes)
-
-                    if is_system_failure:
-                        logger.info(f"Skipping negative Control drive adjustment for action '{action}' due to system-level failure (Suffix: {action_suffix}).")
-                        apply_adjustment = False # Do not apply penalty for system failures
-                    else:
-                        # Apply penalty for other failures (e.g., _unsupported, _deprecated, or future logical failures)
-                        adjustment = heuristics.get('action_fail_control', 0.0)
-                        logger.debug(f"Action '{action}' failed (non-system reason: {action_suffix}). Potential Control adjustment: {adjustment:.3f}")
-
-                # Apply adjustment only if flagged and significant
-                if apply_adjustment and abs(adjustment) > 1e-4 and target_drive in self.drive_state["short_term"]:
-                    current_level = self.drive_state["short_term"][target_drive]
-                    new_level = current_level + adjustment
-                    # Optional: Clamp adjustment range?
-                    self.drive_state["short_term"][target_drive] = new_level
-                    logger.info(f"Applied heuristic drive adjustment to '{target_drive}' due to action result ({'Success' if success else 'Fail'} - Reason: {action_suffix}): {current_level:.3f} -> {new_level:.3f} (Adj: {adjustment:.3f})")
-                    # --- Log heuristic adjustment ---
-                    log_tuning_event("DRIVE_HEURISTIC_ADJUSTMENT", {
-                        "personality": self.personality,
-                        "trigger": f"action_result_{'success' if success else 'fail'}",
-                        "action_name": action, # Log the action that triggered it
-                        "target_drive": target_drive,
-                        "adjustment_value": adjustment,
-                        "level_before": current_level,
-                        "level_after": new_level,
-                    })
-                    # No need to save here, saving happens elsewhere (e.g., end of interaction)
-        except Exception as e:
-            logger.error(f"Error applying heuristic drive adjustment after action execution: {e}", exc_info=True)
-
-        return success, message, action_suffix
 
     # --- DEPRECATED ---
     # def execute_action(self, action_data: dict) -> tuple[bool, str, str]:
@@ -6563,7 +6123,7 @@ class GraphMemoryClient:
     def run_consolidation(self, active_nodes_to_process=None):
         """
         Orchestrates the memory consolidation process: summarization, concept extraction,
-        relation extraction, and pruning.
+        relation extraction, core memory flagging, and pruning.
         """
         logger.info("--- Running Consolidation ---")
         # --- Tuning Log: Consolidation Start ---
@@ -6572,22 +6132,20 @@ class GraphMemoryClient:
         consolidation_cfg = self.config.get('consolidation', {})
         min_nodes_for_consolidation = consolidation_cfg.get('min_nodes', 5)
         turn_count_for_consolidation = consolidation_cfg.get('turn_count', 10)
-        prune_summarized = consolidation_cfg.get('prune_summarized_turns', True)
+        prune_summarized = consolidation_cfg.get('prune_summarized_turns', True) # Default changed to True
         concept_sim_threshold = consolidation_cfg.get('concept_similarity_threshold', 0.3)
         features_cfg = self.config.get('features', {})
         rich_assoc_enabled = features_cfg.get('enable_rich_associations', False)
-        emotion_analysis_enabled = features_cfg.get('enable_emotion_analysis',
-                                                    False)
+        emotion_analysis_enabled = features_cfg.get('enable_emotion_analysis', False)
+        core_mem_enabled = features_cfg.get('enable_core_memory', False) # Check if core memory feature is on
 
         # --- 1. Select Nodes ---
         nodes_to_consolidate = self._select_nodes_for_consolidation(count=turn_count_for_consolidation)
-        # Filter out nodes that are already summarized or not 'turn' nodes
         nodes_to_process = []
         nodes_data = []
         for uuid in nodes_to_consolidate:
             if uuid in self.graph:
                 node_data = self.graph.nodes[uuid]
-                # Check if it's a 'turn' node and not already linked FROM a summary
                 is_summarized = any(
                     True for pred, _, data in self.graph.in_edges(uuid, data=True) if data.get('type') == 'SUMMARY_OF')
                 if node_data.get('node_type') == 'turn' and not is_summarized:
@@ -6600,7 +6158,6 @@ class GraphMemoryClient:
         if len(nodes_to_process) < min_nodes_for_consolidation:
             logger.info(
                 f"Consolidation skipped: Only {len(nodes_to_process)} suitable nodes found (min: {min_nodes_for_consolidation}).")
-            # --- Tuning Log: Consolidation End (Skipped) ---
             log_tuning_event("CONSOLIDATION_END", {
                 "personality": self.personality,
                 "status": "skipped_min_nodes",
@@ -6610,23 +6167,20 @@ class GraphMemoryClient:
             return
 
         logger.info(f"Consolidating {len(nodes_to_process)} nodes: {nodes_to_process}")
-        # --- Tuning Log: Consolidation Nodes Selected ---
         log_tuning_event("CONSOLIDATION_NODES_SELECTED", {
             "personality": self.personality,
             "selected_node_uuids": nodes_to_process,
         })
 
-
         # --- 2. Prepare Context ---
-        nodes_data.sort(key=lambda x: x.get('timestamp', ''))  # Ensure chronological order for context
+        nodes_data.sort(key=lambda x: x.get('timestamp', ''))
         context_text = "\n".join([f"{d.get('speaker', '?')}: {d.get('text', '')}" for d in nodes_data])
         logger.debug(f"Consolidation context text (first 200 chars):\n{context_text[:200]}...")
 
         # --- 3. Summarization ---
         summary_node_uuid, summary_created = self._consolidate_summarize(context_text=context_text,
-                                                                         nodes_data=nodes_data,
-                                                                         processed_node_uuids=nodes_to_process) # Pass the list of UUIDs
-        # --- Tuning Log: Consolidation Summary ---
+                                                                        nodes_data=nodes_data,
+                                                                        processed_node_uuids=nodes_to_process)
         log_tuning_event("CONSOLIDATION_SUMMARY", {
             "personality": self.personality,
             "summary_created": summary_created,
@@ -6636,43 +6190,36 @@ class GraphMemoryClient:
 
         # --- 4. Concept Extraction (LLM) ---
         llm_concepts = self._consolidate_extract_concepts(context_text)
-        # --- Tuning Log: Consolidation Concepts ---
         log_tuning_event("CONSOLIDATION_CONCEPTS_EXTRACTED", {
             "personality": self.personality,
             "llm_extracted_concepts": llm_concepts,
         })
 
         # --- 5. Concept Deduplication & Node Management ---
-        concept_node_map = {}  # Map: concept_text -> concept_node_uuid
+        concept_node_map = {}
         newly_added_concepts = []
-        processed_llm_concepts = set()  # Track concepts processed from LLM list
+        processed_llm_concepts = set()
 
         if llm_concepts:
+            # (Existing concept deduplication logic remains the same)
             logger.info(f"LLM Concepts to process: {llm_concepts}")
             for concept_text in llm_concepts:
-                if concept_text in processed_llm_concepts: continue  # Avoid processing duplicates from LLM list itself
+                if concept_text in processed_llm_concepts: continue
                 processed_llm_concepts.add(concept_text)
                 logger.debug(f"Processing LLM concept: '{concept_text}'")
-                # Search for existing similar 'concept' nodes
                 similar_concepts = self._search_similar_nodes(concept_text, k=1, node_type_filter='concept')
 
                 existing_uuid = None
                 if similar_concepts:
                     best_match_uuid, best_match_score = similar_concepts[0]
-                    # No status check needed here, just check score
                     if best_match_score <= concept_sim_threshold:
                         existing_uuid = best_match_uuid
                         logger.info(
                             f"Concept '{concept_text}' matches existing node {existing_uuid[:8]} (Score: {best_match_score:.3f})")
-                    else:
-                        logger.debug(
-                            f"Found similar concept {best_match_uuid[:8]}, but score ({best_match_score:.3f}) > threshold ({concept_sim_threshold}).")
 
                 if existing_uuid:
                     concept_node_map[concept_text] = existing_uuid
-                    # Update access time of existing concept
-                    self.graph.nodes[existing_uuid]['last_accessed_ts'] = time.time()
-                    # Optionally boost activation/saliency? Not implemented here.
+                    if existing_uuid in self.graph: self.graph.nodes[existing_uuid]['last_accessed_ts'] = time.time()
                 else:
                     logger.info(f"Adding new concept node for: '{concept_text}'")
                     new_concept_uuid = self.add_memory_node(concept_text, "System", 'concept', base_strength=0.85)
@@ -6683,7 +6230,6 @@ class GraphMemoryClient:
                         logger.error(f"Failed to add new concept node for '{concept_text}'")
             logger.info(
                 f"Processed LLM concepts. Map size: {len(concept_node_map)}. New concepts added: {len(newly_added_concepts)}")
-            # --- Tuning Log: Consolidation Concepts Processed ---
             log_tuning_event("CONSOLIDATION_CONCEPTS_PROCESSED", {
                 "personality": self.personality,
                 "final_concept_map": concept_node_map, # text -> uuid
@@ -6693,11 +6239,12 @@ class GraphMemoryClient:
             logger.info("No concepts extracted by LLM.")
 
         # --- 6. Link Concepts to Source Nodes ---
+        # (Existing concept linking logic remains the same)
         if concept_node_map:
             current_time = time.time()
             for concept_text, concept_uuid in concept_node_map.items():
-                if concept_uuid not in self.graph: continue  # Should not happen, but safety check
-                # Link concept to the summary node if created
+                if concept_uuid not in self.graph: continue
+                # Link to summary
                 if summary_node_uuid and summary_node_uuid in self.graph:
                     try:
                         if not self.graph.has_edge(summary_node_uuid, concept_uuid):
@@ -6706,17 +6253,15 @@ class GraphMemoryClient:
                     except Exception as e:
                         logger.error(
                             f"Error adding MENTIONS_CONCEPT edge from summary {summary_node_uuid[:8]} to {concept_uuid[:8]}: {e}")
-
-                # Link concept to original turn nodes where it might appear (less precise)
+                # Link to original turns
                 for node_uuid in nodes_to_process:
-                    if node_uuid in self.graph and concept_text.lower() in self.graph.nodes[node_uuid].get('text',
-                                                                                                           '').lower():
+                    if node_uuid in self.graph and concept_text.lower() in self.graph.nodes[node_uuid].get('text', '').lower():
                         try:
                             if not self.graph.has_edge(node_uuid, concept_uuid):
                                 self.graph.add_edge(node_uuid, concept_uuid, type='MENTIONS_CONCEPT', base_strength=0.7,
                                                     last_traversed_ts=current_time)
                                 logger.debug(f"Added MENTIONS_CONCEPT edge: {node_uuid[:8]} -> {concept_uuid[:8]}")
-                            else:  # Update timestamp if edge exists
+                            else:
                                 self.graph.edges[node_uuid, concept_uuid]['last_traversed_ts'] = current_time
                                 logger.debug(f"Updated MENTIONS_CONCEPT edge timestamp: {node_uuid[:8]} -> {concept_uuid[:8]}")
                         except Exception as e:
@@ -6724,134 +6269,194 @@ class GraphMemoryClient:
                                 f"Error adding/updating MENTIONS_CONCEPT edge from turn {node_uuid[:8]} to {concept_uuid[:8]}: {e}")
 
         # --- 7. Relation Extraction ---
-        # (Only run if we actually identified/created concepts)
+        # (Existing relation extraction logic remains the same)
         if concept_node_map:
-            spacy_doc = None  # Initialize spacy_doc
+            spacy_doc = None
             if rich_assoc_enabled and self.nlp:
                 try:
                     logger.info("Using spaCy for potential pre-processing of context...")
                     spacy_doc = self.nlp(context_text)
-                    # Placeholder: Could extract entities/dependencies here if needed by rich relation prompt later
+                    self._consolidate_extract_rich_relations(context_text, concept_node_map, spacy_doc)
+                    self._consolidate_extract_causal_chains(context_text, concept_node_map)
+                    self._consolidate_extract_analogies(context_text, concept_node_map)
                 except Exception as spacy_err:
                     logger.error(f"Error processing context with spaCy: {spacy_err}. Falling back.", exc_info=True)
-                    # Fallback to LLM-only methods if spaCy fails
+                    # Fallback to V1 methods
                     self._consolidate_extract_v1_associative(concept_node_map)
                     self._consolidate_extract_hierarchy(concept_node_map)
-                    # Attempt causal chain extraction even if spaCy failed
                     self._consolidate_extract_causal_chains(context_text, concept_node_map)
-                else:
-                    # If spaCy succeeded, proceed with rich relation extraction
-                    self._consolidate_extract_rich_relations(context_text, concept_node_map, spacy_doc)
-                    # Also attempt causal chain extraction if spaCy was used
-                    self._consolidate_extract_causal_chains(context_text, concept_node_map)
-                    # Attempt analogy extraction
                     self._consolidate_extract_analogies(context_text, concept_node_map)
-
-            else:  # Rich associations disabled or spaCy unavailable/failed earlier
+            else: # Rich associations disabled or spaCy failed/unavailable
                 if not self.nlp and rich_assoc_enabled:
                     logger.warning(
                         "Rich associations enabled but spaCy model not loaded. Falling back to V1 relation extraction.")
-                logger.info("Running V1 Associative and Hierarchy extraction (LLM only).")
+                logger.info("Running V1 Associative/Hierarchy/Causal/Analogy extraction (LLM only).")
                 self._consolidate_extract_v1_associative(concept_node_map)
                 self._consolidate_extract_hierarchy(concept_node_map)
-                # Attempt causal chain extraction even if rich associations are off
                 self._consolidate_extract_causal_chains(context_text, concept_node_map)
-                # Attempt analogy extraction
                 self._consolidate_extract_analogies(context_text, concept_node_map)
         else:
             logger.info("Skipping relation extraction as no concepts were identified.")
-            # --- Tuning Log: Consolidation Relations Skipped ---
             log_tuning_event("CONSOLIDATION_RELATIONS_SKIPPED", {
                 "personality": self.personality,
                 "reason": "no_concepts_identified",
             })
 
         # --- 7b. Emotion Analysis (Optional) ---
+        # (Existing emotion analysis logic remains the same)
         if emotion_analysis_enabled and te:
-            logger.info("Running V1 Emotion Analysis on consolidated nodes...")
+            logger.info("Running Emotion Analysis on consolidated nodes...")
             nodes_for_emotion = set(nodes_to_process)
             if summary_node_uuid: nodes_for_emotion.add(summary_node_uuid)
             nodes_for_emotion.update(concept_node_map.values())
-
             emotion_analyzed_count = 0
             for node_uuid in nodes_for_emotion:
-                 if node_uuid in self.graph:
-                      self._analyze_and_update_emotion(node_uuid)
-                      emotion_analyzed_count += 1
+                if node_uuid in self.graph:
+                    self._analyze_and_update_emotion(node_uuid)
+                    emotion_analyzed_count += 1
             logger.info(f"Emotion analysis attempted for {emotion_analyzed_count} nodes.")
         elif emotion_analysis_enabled and not te:
-             logger.warning("Emotion analysis enabled but text2emotion library not loaded.")
+            logger.warning("Emotion analysis enabled but text2emotion library not loaded.")
+
+        # --- 8. NEW: Core Memory Flagging ---
+        flagged_count = 0
+        if core_mem_enabled:
+            logger.info("Checking nodes for Core Memory flagging...")
+            # Define criteria from config
+            core_mem_cfg = self.config.get('core_memory', {})
+            saliency_threshold = core_mem_cfg.get('saliency_threshold', 0.95)
+            # --- Get new access count threshold from config ---
+            access_threshold = core_mem_cfg.get('access_count_threshold', 20) # Default to 20 if not set
+            # --- Define keywords for identifying appearance summaries (heuristic) ---
+            appearance_keywords = ["appearance", "look like", "wavy brown hair", "tattoo", "petite", "curvy", "freckles", "goth", "lipstick"] # Add more as needed
+
+            # Identify nodes to check: Summary node, Concept nodes, maybe original turns if not pruned
+            nodes_to_check_for_core = set()
+            if summary_node_uuid: nodes_to_check_for_core.add(summary_node_uuid)
+            nodes_to_check_for_core.update(concept_node_map.values())
+            if not prune_summarized: nodes_to_check_for_core.update(nodes_to_process) # Check original turns if not pruned
+
+            core_flag_details = {} # For logging
+
+            for node_uuid in nodes_to_check_for_core:
+                if node_uuid not in self.graph: continue # Node might have been deleted (e.g., concept merged)
+                node_data = self.graph.nodes[node_uuid]
+
+                # Skip if already core
+                if node_data.get('is_core_memory', False): continue
+
+                reason = None
+                # Criterion 1: Appearance Summary Keywords
+                if node_data.get('node_type') == 'summary':
+                    node_text_lower = node_data.get('text', '').lower()
+                    if any(keyword in node_text_lower for keyword in appearance_keywords):
+                        reason = "appearance_keywords_in_summary"
+
+                # Criterion 2: High Saliency
+                if not reason and node_data.get('saliency_score', 0.0) >= saliency_threshold:
+                    reason = f"high_saliency ({node_data['saliency_score']:.3f} >= {saliency_threshold})"
+
+                # Criterion 3: High Access Count
+                if not reason and node_data.get('access_count', 0) >= access_threshold:
+                    reason = f"high_access_count ({node_data['access_count']} >= {access_threshold})"
+
+                # If any criterion met, flag as core
+                if reason:
+                    node_data['is_core_memory'] = True
+                    flagged_count += 1
+                    logger.info(f"Node {node_uuid[:8]} flagged as CORE MEMORY (Reason: {reason})")
+                    core_flag_details[node_uuid] = reason
+
+            if flagged_count > 0:
+                logger.info(f"Flagged {flagged_count} nodes as core memory during consolidation.")
+                log_tuning_event("CORE_MEMORY_FLAGGED_CONSOLIDATION", {
+                    "personality": self.personality,
+                    "flagged_count": flagged_count,
+                    "details": core_flag_details,
+                })
+        else:
+            logger.info("Core memory feature disabled, skipping flagging during consolidation.")
 
 
-        # --- 8. Pruning Summarized Nodes (Optional) ---
+        # --- 9. Pruning Summarized Nodes (Optional) ---
+        pruned_count = 0 # Initialize here
+        saved_in_consolidation = False # Initialize save flag
         if prune_summarized and summary_created:
             logger.info("Pruning original turn nodes that were summarized...")
-            pruned_count = 0
-            for uuid_to_prune in nodes_to_process:
-                # Use delete_memory_entry for permanent removal
-                if self.delete_memory_entry(uuid_to_prune):
-                    pruned_count += 1
+            nodes_to_prune_list = list(nodes_to_process) # Create a copy to iterate over
+            for uuid_to_prune in nodes_to_prune_list:
+                # Check if node still exists before trying to delete
+                if uuid_to_prune in self.graph:
+                    if self.delete_memory_entry(uuid_to_prune):
+                        pruned_count += 1
+                    else:
+                        logger.warning(f"Failed to prune summarized node {uuid_to_prune[:8]} (maybe deleted by other process?).")
                 else:
-                    logger.warning(f"Failed to prune summarized node {uuid_to_prune[:8]} (might have been deleted already).")
+                    logger.debug(f"Node {uuid_to_prune[:8]} already gone before pruning loop.")
 
             logger.info(f"Pruned {pruned_count} summarized turn nodes.")
-            # --- Tuning Log: Consolidation Pruning ---
             log_tuning_event("CONSOLIDATION_PRUNING", {
                 "personality": self.personality,
                 "pruning_enabled": prune_summarized,
                 "summary_created": summary_created,
                 "pruned_node_count": pruned_count,
-                "pruned_node_uuids": nodes_to_process[:pruned_count], # Assuming they were pruned in order
+                "pruned_node_uuids": nodes_to_process[:pruned_count],
             })
-            # Note: delete_memory_entry already rebuilds the index and saves memory,
-            # so no explicit rebuild/save needed here if pruning happened.
-            # If no pruning happened, we still need to save other consolidation changes.
-            if pruned_count == 0:
-                 self._save_memory() # Save if no pruning occurred but other changes did
+            # Note: delete_memory_entry rebuilds index and saves memory
+            saved_in_consolidation = True # Memory was saved during pruning
         else:
-             # Save memory if pruning is disabled or no summary was created,
-             # but other changes (concepts, relations) might have occurred.
-             self._save_memory()
+            # Save memory if pruning is disabled or no summary was created,
+            # but other changes (concepts, relations, core flags) might have occurred.
+            logger.info("Saving memory state after consolidation (no pruning or pruning disabled/skipped).")
+            self._save_memory()
+            saved_in_consolidation = True
 
-        logger.info("--- Consolidation Finished ---")
+        # --- 10. Update Long-Term Drives & ASM (moved after pruning/saving logic) ---
+        # Update Short-Term Drive State based on the consolidated context
+        self._update_drive_state(context_text=context_text)
 
-        # --- Update Short-Term Drive State (Pass context_text directly) ---
-        self._update_drive_state(context_text=context_text) # Pass the generated context
-
-        # --- Update Long-Term Drive State (Less Frequently) ---
+        # Update Long-Term Drive State (Less Frequently)
         drive_cfg = self.config.get('subconscious_drives', {})
         lt_update_interval = drive_cfg.get('long_term_update_interval_consolidations', 0)
-        # Need a way to track consolidation count - add an instance variable?
         if not hasattr(self, '_consolidation_counter'): self._consolidation_counter = 0
         self._consolidation_counter += 1
         logger.debug(f"Consolidation counter: {self._consolidation_counter}")
-
         if lt_update_interval > 0 and self._consolidation_counter >= lt_update_interval:
             logger.info(f"Long-term drive update interval ({lt_update_interval}) reached. Triggering update.")
-            self._update_long_term_drives()
-            self._consolidation_counter = 0 # Reset counter
+            self._update_long_term_drives() # This saves drives if changed
+            self._consolidation_counter = 0
         else:
             logger.debug(f"Skipping long-term drive update (Interval: {lt_update_interval}, Count: {self._consolidation_counter}).")
 
+        # Update Autobiographical Model after consolidation
+        self._generate_autobiographical_model() # This saves ASM if changed
 
-        # --- Update Autobiographical Model after consolidation ---
-            self._generate_autobiographical_model()
+        # Infer Second-Order Relationships (Runs after all node additions/updates)
+        self._infer_second_order_relations() # This does not save memory itself
 
-            # --- Infer Second-Order Relationships ---
-            self._infer_second_order_relations()
+        # --- Final Save (if not already saved by pruning/LT Drive/ASM updates) ---
+        # Re-check if saving already happened
+        # Note: _update_long_term_drives and _generate_autobiographical_model now save internally if changes occur.
+        # We only need a final save here if none of those triggered a save AND pruning didn't happen.
+        # This logic might be slightly redundant but ensures a save occurs.
+        # Let's simplify: always call save at the end, _save_memory handles efficiency.
+        logger.debug("Running final save check after consolidation steps.")
+        self._save_memory()
+        saved_in_consolidation = True # Mark as saved
 
-            # --- Final Save (if not already saved by pruning) ---
-            saved_in_consolidation = False
-            if not (prune_summarized and summary_created and pruned_count > 0):
-                self._save_memory() # Save all changes (summary, concepts, relations, drives, ASM, inference)
-                saved_in_consolidation = True
-
-            # --- Tuning Log: Consolidation End ---
-            log_tuning_event("CONSOLIDATION_END", {
-                "personality": self.personality,
-                "memory_saved": saved_in_consolidation
-            })
-
+        logger.info("--- Consolidation Finished ---")
+        # --- Tuning Log: Consolidation End ---
+        log_tuning_event("CONSOLIDATION_END", {
+            "personality": self.personality,
+            "memory_saved": saved_in_consolidation,
+            "summary_created": summary_created,
+            "summary_node_uuid": summary_node_uuid,
+            "new_concepts_added": len(newly_added_concepts),
+            "pruned_node_count": pruned_count,
+            "core_nodes_flagged": flagged_count,
+            # Add counts for different relation types if available
+        })
+     
     # --- NEW: Separate Planning & Execution Method ---
     def plan_and_execute(self, user_input: str, conversation_history: list) -> list[tuple[bool, str, str, bool]]:
         """

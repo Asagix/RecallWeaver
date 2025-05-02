@@ -222,7 +222,11 @@ core_memory:
   saliency_threshold: 0.95 # Saliency score above which a node becomes 'core'
   # emotional_impact_threshold is already under subconscious_drives
   guaranteed_retrieval_activation_factor: 0.5 # Multiplier for activation_threshold (e.g., 0.5 means include if activation > threshold*0.5)
+  # --- NEW: Access Count Threshold ---
+  access_count_threshold: 20 # Nodes accessed this many times (or more) can be flagged as core
+  # ---------------------------------
   forget_immunity: true # If true, core memories ignore forgetting score and strength decay
+
 
 # --- Activation Spreading Parameters ---
 activation:
