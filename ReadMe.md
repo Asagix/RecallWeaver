@@ -19,7 +19,7 @@ Think of it as giving your AI a searchable diary and knowledge base that grows w
 *   **Graph Database:** [NetworkX](https://networkx.org/) for flexible in-memory graph representation.
 *   **Vector Search:** [FAISS](https://github.com/facebookresearch/faiss) for efficient semantic similarity search.
 *   **Embeddings:** [Sentence Transformers](https://www.sbert.net/) for converting text into meaningful vector representations.
-*   **NLP:** [spaCy](https://spacy.io/) for relationship extraction, [text2emotion](https://pypi.org/project/text2emotion/) for basic emotion analysis.
+*   **NLP:** [spaCy](https://spacy.io/) for relationship extraction, [Hugging Face Transformers](https://huggingface.co/docs/transformers/index) for emotion classification, [VADER](https://github.com/cjhutto/vaderSentiment) for sentiment analysis.
 *   **GUI:** [PyQt6](https://riverbankcomputing.com/software/pyqt/) for the desktop chat interface.
 *   **Configuration:** [PyYAML](https://pyyaml.org/) for easy setup customization.
 
@@ -45,6 +45,7 @@ RecallWeaver boasts a rich set of features aimed at creating a more dynamic and 
     *   Consolidate multiple files into one using LLM synthesis.
     *   Add and read simple calendar events (stored in `calendar.jsonl`).
     *   Optionally perform actions silently without explicit chat confirmation.
+*   **🎭 Emotional Core:** Simulates a richer emotional state including basic emotions (via Transformer model), needs (Competence, Esteem, Belonging, etc.), fears (Failure, Rejection, etc.), and preferences (Clarity, Politeness, etc.). Uses LLM interpretation for needs/fears/prefs analysis and generates dynamic system instructions to influence the AI's tone and focus.
 *   **🖼️ Multimodal Input:** Supports attaching and processing images within the chat via KoboldCpp's multimodal capabilities.
 *   **💬 Graphical User Interface (PyQt6):**
     *   Familiar chat interface with message bubbles.
@@ -82,7 +83,8 @@ Getting RecallWeaver up and running involves a few steps:
     pip install -r requirements.txt
     ```
     *   **Note on FAISS:** The `requirements.txt` likely includes `faiss-cpu`. If you have an NVIDIA GPU and CUDA installed, you might get better performance by installing `faiss-gpu` instead. Consult the [FAISS documentation](https://github.com/facebookresearch/faiss/blob/main/INSTALL.md) for details.
-    *   **Note on PyTorch:** `torch` is usually installed automatically as a dependency. If you encounter issues, you might need to install it manually following instructions on the [PyTorch website](https://pytorch.org/).
+    *   **Note on PyTorch:** `torch` is required by the `transformers` library for the emotion model. It's listed in `requirements.txt` and usually installed automatically. If you encounter issues (especially GPU-related), you might need to install a specific version manually following instructions on the [PyTorch website](https://pytorch.org/).
+    *   **Note on Transformers:** The first time you run the application after installation, the `transformers` library might download the specified emotion classification model (e.g., `SamLowe/roberta-base-go_emotions`), which can take some time and disk space.
 
 4.  **Download spaCy Model:**
     RecallWeaver uses a spaCy model for advanced relationship extraction during consolidation. Download the recommended English model:
@@ -117,7 +119,7 @@ Before running, review and potentially modify `config.yaml`:
 *   **`embedding_model`**, **`tokenizer_name`**: Models used for embeddings and token counting. Defaults are generally good (`all-MiniLM-L6-v2`, `google/gemma3-27b-it`).
 *   **`llm_models`**: Configure parameters (max length, temperature, etc.) for different LLM tasks (chat, summary, analysis).
 *   **`features`**: Enable or disable specific features like saliency, emotion analysis, forgetting, etc.
-*   **`activation`**, **`consolidation`**, **`forgetting`**, **`memory_strength`**, **`subconscious_drives`**: Fine-tune parameters controlling memory retrieval, consolidation, forgetting, and the drive system.
+*   **`activation`**, **`consolidation`**, **`forgetting`**, **`memory_strength`**, **`subconscious_drives`**, **`emotional_core`**: Fine-tune parameters controlling memory retrieval, consolidation, forgetting, the drive system, and the new emotional core simulation.
 *   **`gui_style`**: Customize the appearance of the chat bubbles and UI elements.
 
 ## Running the Application

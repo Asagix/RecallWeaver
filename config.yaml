@@ -207,15 +207,25 @@ llm_models:
     top_p: 0.95
     top_k: 60
     min_p: 0.0
+  # --- Emotional Analysis Task (NEW) ---
+  emotional_analysis:
+    api_type: "generate" # Or chat_completions if preferred
+    model_name: "koboldcpp-default" # Use a capable model
+    max_length: 512 # Allow enough space for JSON output + rationale
+    temperature: 0.2 # Low temp for structured output
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
 
 
 # --- Feature Flags ---
 features:
   enable_saliency: true # Enable/disable saliency calculations
-  enable_emotion_analysis: true # Enable/disable basic emotion analysis during consolidation
+  enable_emotion_analysis: false # DEPRECATED: Replaced by EmotionalCore
   enable_forgetting: true # Enable/disable nuanced forgetting
   enable_rich_associations: true # Enable/disable LLM-based rich association extraction (Phase 1.1+)
   enable_core_memory: true # NEW: Master switch for core memory system
+  enable_emotional_core: true # NEW: Master switch for the new EmotionalCore system
 
 # --- Core Memory System ---
 core_memory:
@@ -581,3 +591,18 @@ saliency:
     - "birthday"
   importance_saliency_boost: 0.4 # Additive boost to initial saliency if keywords found
   flag_important_as_core: true # Automatically flag nodes with importance keywords as core memory
+
+
+# --- Emotional Core Configuration (NEW) ---
+emotional_core:
+  enabled: true # Master switch, redundant with features.enable_emotional_core but good practice
+  emotion_model_name: "SamLowe/roberta-base-go_emotions" # Model for basic emotion classification
+  analysis_prompt_file: "emotional_analysis_prompt.txt" # Prompt for LLM interpretation
+  llm_task_name: "emotional_analysis" # Task name in llm_models section for analysis LLM call
+  mood_valence_factor: 0.3 # How much EmotionalCore valence influences final mood (0-1)
+  mood_arousal_factor: 0.2 # How much EmotionalCore arousal influences final mood (0-1)
+  store_insights_enabled": false # Store significant emotional findings back to KG?
+  basic_emotion_threshold": 0.3 # Min probability to consider a basic emotion present
+  vader_sentiment_threshold": 0.05 # VADER compound score threshold for positive/negative
+  # Definitions for needs/fears/preferences can be kept here or moved entirely into the prompt file
+  # needs_fears_prefs_definitions: { ... } # Example structure in emotional_core.py defaults

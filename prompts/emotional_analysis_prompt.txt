@@ -1,0 +1,62 @@
+Analyze the provided user input and conversation context to identify relevant simulated human needs, fears, and preferences that are being triggered or addressed. Output your analysis ONLY as a valid JSON object containing three keys: "needs", "fears", and "preferences".
+
+**Definitions:**
+
+**Needs (Desires for well-being):**
+{needs_definitions}
+
+**Fears (Concerns about potential negative outcomes):**
+{fears_definitions}
+
+**Preferences (Likes/Dislikes in interaction):**
+{preferences_definitions}
+
+**Input Context:**
+
+*Knowledge Graph Context:*
+{kg_context}
+
+*Recent Conversation History:*
+{history_context}
+
+*Latest User Input:*
+{user_input}
+
+**Analysis Task:**
+
+Based *only* on the provided input and context:
+1.  Identify any **Needs** being expressed, sought, met, or threatened.
+2.  Identify any **Fears** being expressed or potentially triggered.
+3.  Identify any **Preferences** being met (positive) or violated (negative).
+
+For each identified item, provide:
+-   `confidence`: Your confidence level (0.0 to 1.0) that this item is relevant.
+-   `rationale`: A brief explanation for why you identified this item, citing specific parts of the input/context.
+
+**Output Format (JSON ONLY):**
+
+```json
+{{
+  "needs": {{
+    "NeedName1": {{"confidence": 0.8, "rationale": "User expressed desire for..."}},
+    "NeedName2": {{"confidence": 0.6, "rationale": "AI's previous response addressed..."}}
+    // ... other relevant needs
+  }},
+  "fears": {{
+    "FearName1": {{"confidence": 0.7, "rationale": "User mentioned concerns about..."}}
+    // ... other relevant fears
+  }},
+  "preferences": {{
+    "PreferenceName1": {{"type": "positive", "confidence": 0.9, "rationale": "User explicitly stated appreciation for..."}},
+    "PreferenceName2": {{"type": "negative", "confidence": 0.5, "rationale": "User's tone suggests dislike for..."}}
+    // ... other relevant preferences (positive or negative)
+  }}
+}}
+```
+
+**Important:**
+-   If no items are identified for a category (needs, fears, preferences), output an empty dictionary `{}` for that key.
+-   Focus solely on the provided text and context. Do not invent information.
+-   Provide the output strictly in the specified JSON format. Do not include any text before or after the JSON object.
+
+JSON Analysis:

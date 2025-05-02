@@ -22,6 +22,7 @@ from networkx.readwrite import json_graph
 from datetime import datetime, timezone, timedelta
 
 from workspace_agent import WorkspaceAgent
+from emotional_core import EmotionalCore # <<< NEW IMPORT
 
 # Keywords that might indicate a need for workspace planning
 WORKSPACE_KEYWORDS = [
@@ -68,12 +69,7 @@ except ImportError:
     ZoneInfoNotFoundError = Exception # Placeholder
 from collections import defaultdict
 
-# *** Import Emotion Analysis Library ***
-try:
-    import text2emotion as te
-except ImportError:
-    logging.warning("text2emotion library not found. Emotion analysis will be disabled. Run `pip install text2emotion`")
-    te = None
+# *** Removed text2emotion import ***
 
 # *** Import file manager ***
 import file_manager # Assuming file_manager.py exists in the same directory
@@ -219,6 +215,7 @@ class GraphMemoryClient:
         self.pending_re_greeting = None # Store generated re-greeting message
         # --- Track nodes with high emotional impact within a single interaction ---
         self.high_impact_nodes_this_interaction = {} # uuid -> magnitude
+        self.emotional_core = None # Initialize EmotionalCore attribute
 
         os.makedirs(self.data_dir, exist_ok=True)
         embedding_model_name = self.config.get('embedding_model', 'all-MiniLM-L6-v2')
@@ -327,6 +324,25 @@ class GraphMemoryClient:
              self.tokenizer = None
 
         self._load_memory() # Loads data from self.data_dir
+
+        # --- Initialize Emotional Core ---
+        # Must happen after config is loaded but before memory load? No, after memory load is fine.
+        try:
+            if self.config.get('features', {}).get('enable_emotional_core', False):
+                 logger.info("Instantiating EmotionalCore...")
+                 self.emotional_core = EmotionalCore(self, self.config) # Pass self (client) and config
+                 if not self.emotional_core.is_enabled:
+                     logger.warning("EmotionalCore instantiated but is disabled internally.")
+                     self.emotional_core = None # Set back to None if disabled
+                 else:
+                     logger.info("EmotionalCore instantiated successfully.")
+            else:
+                 logger.info("EmotionalCore feature is disabled in main config.")
+                 self.emotional_core = None
+        except Exception as e:
+             logger.error(f"Failed to instantiate EmotionalCore: {e}", exc_info=True)
+             self.emotional_core = None # Ensure it's None on error
+
         self._load_initial_history() # Load initial history after main memory load
         self._check_and_generate_re_greeting() # Check and generate re-greeting after history load
 
@@ -402,122 +418,8 @@ class GraphMemoryClient:
         # Return a copy to prevent external modification? Deep copy might be safer if nested.
         return self.drive_state.copy() if self.drive_state else {}
 
-
-    # --- Emotion Analysis Helper ---
-    def _analyze_and_update_emotion(self, node_uuid: str):
-        """Analyzes text of a node and updates its emotion attributes."""
-        if not te: # Check if library was imported
-            # logger.debug("text2emotion library not available, skipping emotion analysis.")
-            return
-        if not self.config.get('features', {}).get('enable_emotion_analysis', False):
-            # logger.debug("Emotion analysis feature disabled in config.")
-            return
-
-        if node_uuid not in self.graph:
-            logger.warning(f"Cannot analyze emotion for non-existent node: {node_uuid}")
-            return
-
-        node_data = self.graph.nodes[node_uuid]
-        text_to_analyze = node_data.get('text')
-
-        if not text_to_analyze:
-            # logger.debug(f"Node {node_uuid[:8]} has no text, skipping emotion analysis.")
-            return
-
-        try:
-            # logger.debug(f"Analyzing emotion for node {node_uuid[:8]}...")
-            emotion_scores = te.get_emotion(text_to_analyze)
-            # Example: Map primary emotions to valence/arousal (Russell's Circumplex Model)
-            # This is a VERY simplified mapping and needs refinement.
-            # Valence: Happy(+) vs Sad/Angry/Fear(-)
-            # Arousal: Angry/Fear/Surprise(+) vs Sad(-) vs Happy/Neutral(~)
-            valence = 0.0
-            arousal = 0.0 # Start slightly above zero baseline
-
-            # Positive Valence
-            valence += emotion_scores.get('Happy', 0.0) * 0.8
-            valence += emotion_scores.get('Surprise', 0.0) * 0.2 # Surprise can be +/-
-
-            # Negative Valence (Reduced impact of Sad/Fear)
-            valence -= emotion_scores.get('Sad', 0.0) * 0.7 # Reduced from 0.9
-            valence -= emotion_scores.get('Angry', 0.0) * 0.7
-            valence -= emotion_scores.get('Fear', 0.0) * 0.6 # Reduced from 0.8
-
-            # Arousal (Reduced impact of Fear, slightly increased Happy)
-            arousal += emotion_scores.get('Angry', 0.0) * 0.8
-            arousal += emotion_scores.get('Fear', 0.0) * 0.6 # Reduced from 0.9
-            arousal += emotion_scores.get('Surprise', 0.0) * 0.7
-            # Sadness still lowers arousal
-            arousal -= emotion_scores.get('Sad', 0.0) * 0.3
-            # Happy contributes slightly more to arousal
-            arousal += emotion_scores.get('Happy', 0.0) * 0.5 # Increased from 0.4
-
-            # --- Log raw calculated values before clamping ---
-            log_tuning_event("EMOTION_ANALYSIS_RAW", {
-                "personality": self.personality,
-                "node_uuid": node_uuid,
-                "raw_scores": emotion_scores,
-                "calculated_valence_unclamped": valence,
-                "calculated_arousal_unclamped": arousal,
-            })
-
-            # Clamp values (e.g., -1 to 1 for valence, 0 to 1 for arousal)
-            final_valence = max(-1.0, min(1.0, valence))
-            final_arousal = max(0.0, min(1.0, arousal)) # Ensure arousal is non-negative
-
-            # Update node attributes
-            node_data['emotion_valence'] = final_valence
-            # node_data['emotion_valence'] = final_valence # Duplicate line removed
-            node_data['emotion_arousal'] = final_arousal
-
-            logger.info(f"Updated emotion for node {node_uuid[:8]}: V={final_valence:.2f}, A={final_arousal:.2f} (Scores: {emotion_scores})")
-            # --- Log final clamped values ---
-            log_tuning_event("EMOTION_ANALYSIS_FINAL", {
-                "personality": self.personality,
-                "node_uuid": node_uuid,
-                "final_valence": final_valence,
-                "final_arousal": final_arousal,
-            })
-
-            # --- Check for High Emotional Impact ---
-            try:
-                magnitude = math.sqrt(final_valence**2 + final_arousal**2)
-                impact_threshold = self.config.get('subconscious_drives', {}).get('emotional_impact_threshold', 1.0) # Get threshold from config
-                if magnitude >= impact_threshold:
-                    logger.info(f"Node {node_uuid[:8]} registered as high emotional impact (Magnitude: {magnitude:.3f} >= {impact_threshold:.3f})")
-                    self.high_impact_nodes_this_interaction[node_uuid] = magnitude
-                    # Log this specific event
-                    log_tuning_event("EMOTIONAL_IMPACT_DETECTED", {
-                        "personality": self.personality,
-                        "node_uuid": node_uuid,
-                        "magnitude": magnitude,
-                        "threshold": impact_threshold,
-                        "valence": final_valence,
-                        "arousal": final_arousal,
-                    })
-                    # --- NEW: Flag as Core Memory if High Impact ---
-                    if self.config.get('features', {}).get('enable_core_memory', False):
-                        if not node_data.get('is_core_memory', False): # Check if not already core
-                            node_data['is_core_memory'] = True
-                            logger.info(f"Node {node_uuid[:8]} flagged as CORE MEMORY due to high emotional impact.")
-                            # Log this promotion
-                            log_tuning_event("CORE_MEMORY_FLAGGED", {
-                                "personality": self.personality,
-                                "node_uuid": node_uuid,
-                                "reason": "high_emotional_impact",
-                                "magnitude": magnitude,
-                                "threshold": impact_threshold,
-                            })
-                            # Save immediately? Or defer? Let's defer for now.
-            except Exception as impact_e:
-                logger.error(f"Error checking emotional impact / flagging core memory for node {node_uuid[:8]}: {impact_e}", exc_info=True)
-
-        except Exception as e:
-            logger.error(f"Error during text2emotion analysis for node {node_uuid[:8]}: {e}", exc_info=True)
-            # Optionally reset to default if analysis fails?
-            # node_data['emotion_valence'] = self.config.get('emotion_analysis', {}).get('default_valence', 0.0)
-            # node_data['emotion_arousal'] = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
-
+    # --- Emotion Analysis Helper (REMOVED) ---
+    # def _analyze_and_update_emotion(self, node_uuid: str): ... (Removed - Handled by EmotionalCore)
 
     # --- Config Loading Method ---
     def _load_config(self, config_path):
@@ -4900,7 +4802,7 @@ class GraphMemoryClient:
         # --- 3. Add AI Node ---
         if ai_node_uuid is None and parsed_response: # Only add if not already provided and response exists
              ai_node_uuid = self.add_memory_node(parsed_response, "AI")
-             if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid) # Analyze emotion for AI node
+             # if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid) # Removed old emotion call
 
         # --- 4. Update Context for Next Interaction ---
         self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
@@ -6404,8 +6306,7 @@ class GraphMemoryClient:
                     self._analyze_and_update_emotion(node_uuid)
                     emotion_analyzed_count += 1
             logger.info(f"Emotion analysis attempted for {emotion_analyzed_count} nodes.")
-        elif emotion_analysis_enabled and not te:
-            logger.warning("Emotion analysis enabled but text2emotion library not loaded.")
+        # Removed check for text2emotion library
 
         # --- 8. NEW: Core Memory Flagging ---
         flagged_count = 0
