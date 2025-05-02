@@ -2400,15 +2400,20 @@ class GraphMemoryClient:
 
         strength_cfg = self.config.get('memory_strength', {})
         purge_threshold = strength_cfg.get('purge_threshold', 0.01)
-        # min_age_days = strength_cfg.get('purge_min_age_days', 60) # REMOVED
-        # min_age_seconds = min_age_days * 24 * 3600 # REMOVED
+        # --- Get NEW Purge Criteria from Config ---
+        min_purge_age_days = strength_cfg.get('purge_min_age_days', 30) # Default 30 days
+        max_purge_saliency = strength_cfg.get('purge_max_saliency', 0.2) # Default max saliency 0.2
+        max_purge_access_count = strength_cfg.get('purge_max_access_count', 3) # Default max access count 3
+        min_purge_age_seconds = min_purge_age_days * 24 * 3600
 
-        logger.warning(f"--- Purging Weak Nodes (Strength < {purge_threshold}) ---") # Removed age from log message
+        logger.warning(f"--- Purging Weak Nodes (Strength<{purge_threshold}, Age>{min_purge_age_days}d, Sal<{max_purge_saliency}, Access<{max_purge_access_count}) ---")
         # --- Tuning Log: Purge Start ---
         log_tuning_event("PURGE_START", {
             "personality": self.personality,
             "strength_threshold": purge_threshold,
-            # "min_age_days": min_age_days, # REMOVED
+            "min_age_days": min_purge_age_days,
+            "max_saliency": max_purge_saliency,
+            "max_access_count": max_purge_access_count,
         })
 
         purge_count = 0
