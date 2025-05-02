@@ -2271,6 +2271,31 @@ class GraphMemoryClient:
         score += norm_inv_connectivity * weights.get('connectivity_factor', 0.0)
         score += norm_inv_access_count * weights.get('access_count_factor', 0.0) # Added access count factor
 
+        # --- Log Raw and Normalized Factors ---
+        log_tuning_event("FORGETTABILITY_FACTORS", {
+            "personality": self.personality,
+            "node_uuid": node_uuid,
+            "node_type": node_type,
+            "raw_factors": {
+                "recency_sec": recency_sec,
+                "activation": activation,
+                "saliency": saliency,
+                "emotion_magnitude": emotion_magnitude,
+                "degree": degree,
+                "access_count": access_count,
+            },
+            "normalized_factors": {
+                "norm_recency": norm_recency,
+                "norm_inv_activation": norm_inv_activation,
+                "norm_type_forgettability": norm_type_forgettability,
+                "norm_inv_saliency": norm_inv_saliency,
+                "norm_inv_emotion": norm_inv_emotion,
+                "norm_inv_connectivity": norm_inv_connectivity,
+                "norm_inv_access_count": norm_inv_access_count,
+            },
+            "weights": weights, # Log the weights used for this calculation
+        })
+
         # Clamp intermediate score 0-1 before applying resistance factors
         intermediate_score = max(0.0, min(1.0, score))
         logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Intermediate Score: {intermediate_score:.3f}")
@@ -2296,20 +2321,38 @@ class GraphMemoryClient:
             logger.debug(f"    Node {node_uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}")
 
         # --- Apply Core Memory Resistance/Immunity ---
-        if self.config.get('features', {}).get('enable_core_memory', False):
-            if node_data.get('is_core_memory', False):
-                if self.config.get('core_memory', {}).get('forget_immunity', False):
-                    logger.debug(f"    Node {node_uuid[:8]} is Core Memory and immunity is enabled. Setting forgettability to 0.0.")
-                    final_adjusted_score = 0.0 # Immune to forgetting
-                else:
-                    # Apply a strong resistance factor if immunity is off but it's still core
-                    core_resistance_factor = weights.get('core_memory_resistance_factor', 0.1) # Add this weight to config later if needed
-                    final_adjusted_score *= core_resistance_factor
-                    logger.debug(f"    Node {node_uuid[:8]} is Core Memory (Immunity OFF). Applying resistance factor {core_resistance_factor:.2f}. Final Score: {final_adjusted_score:.4f}")
+        is_core = node_data.get('is_core_memory', False)
+        core_mem_enabled = self.config.get('features', {}).get('enable_core_memory', False)
+        core_mem_cfg = self.config.get('core_memory', {})
+        core_immunity_enabled = core_mem_cfg.get('forget_immunity', True) # Default immunity to True now
+
+        if core_mem_enabled and is_core:
+            if core_immunity_enabled:
+                logger.debug(f"    Node {node_uuid[:8]} is Core Memory and immunity is enabled. Setting forgettability to 0.0.")
+                final_adjusted_score = 0.0 # Immune to forgetting
+            else:
+                # Apply a strong resistance factor if immunity is off but it's still core
+                core_resistance_factor = weights.get('core_memory_resistance_factor', 0.05) # Use updated default
+                final_adjusted_score *= core_resistance_factor
+                logger.debug(f"    Node {node_uuid[:8]} is Core Memory (Immunity OFF). Applying resistance factor {core_resistance_factor:.2f}. Score updated to: {final_adjusted_score:.4f}")
 
         # Final clamp and log before returning
         final_adjusted_score = max(0.0, min(1.0, final_adjusted_score))
         logger.debug(f"    Final calculated forgettability score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
+
+        # --- Log Final Score ---
+        log_tuning_event("FORGETTABILITY_FINAL_SCORE", {
+            "personality": self.personality,
+            "node_uuid": node_uuid,
+            "node_type": node_type,
+            "intermediate_score": intermediate_score,
+            "score_after_type_resistance": score_after_type_resistance,
+            "score_after_emotion_resistance": final_adjusted_score if 'emotion_magnitude_resistance_factor' in weights else score_after_type_resistance, # Log score before core check
+            "is_core_memory": is_core,
+            "core_immunity_enabled": core_immunity_enabled,
+            "final_forgettability_score": final_adjusted_score,
+            "current_memory_strength": node_data.get('memory_strength', 1.0), # Log current strength for context
+        })
 
         return final_adjusted_score
 
@@ -2373,13 +2416,43 @@ class GraphMemoryClient:
         nodes_to_purge = []
         nodes_snapshot = list(self.graph.nodes(data=True)) # Snapshot
 
+        purge_check_details = {} # For logging detailed checks
+
         for uuid, data in nodes_snapshot:
+            # --- Check ALL Purge Criteria ---
             current_strength = data.get('memory_strength', 1.0)
-            # --- Purge only based on strength ---
-            if current_strength < purge_threshold:
+            current_saliency = data.get('saliency_score', 0.0)
+            current_access_count = data.get('access_count', 0)
+            last_accessed = data.get('last_accessed_ts', 0)
+            age_seconds = current_time - last_accessed
+            is_core = data.get('is_core_memory', False)
+
+            # Store check results for logging
+            check_results = {
+                "strength_ok": current_strength < purge_threshold,
+                "age_ok": age_seconds >= min_purge_age_seconds,
+                "saliency_ok": current_saliency < max_purge_saliency,
+                "access_count_ok": current_access_count < max_purge_access_count,
+                "is_not_core": not is_core,
+            }
+            purge_check_details[uuid] = {
+                "strength": current_strength, "saliency": current_saliency,
+                "access_count": current_access_count, "age_days": age_seconds / 86400.0,
+                "is_core": is_core, "checks": check_results
+            }
+
+            # Check if ALL conditions are met
+            if all(check_results.values()):
                 nodes_to_purge.append(uuid)
-                logger.debug(f"Marked weak node {uuid[:8]} for purging (Strength: {current_strength:.3f})")
-            # else: pass # Node strength is above threshold
+                logger.debug(f"Marked node {uuid[:8]} for purging (Strength: {current_strength:.3f}, Age: {age_seconds/86400.0:.1f}d, Sal: {current_saliency:.3f}, Access: {current_access_count}, Core: {is_core})")
+            # else: logger.debug(f"Node {uuid[:8]} did not meet all purge criteria.") # Can be verbose
+
+        # Log detailed checks before deletion
+        log_tuning_event("PURGE_CHECKS", {
+            "personality": self.personality,
+            "check_details": purge_check_details,
+            "nodes_marked_for_purge": nodes_to_purge,
+        })
 
         # Perform deletion
         if nodes_to_purge:

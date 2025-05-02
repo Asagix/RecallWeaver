@@ -354,20 +354,22 @@ forgetting:
   # --- Forgettability Score Weights (used to calculate strength reduction) ---
   weights:
     # Factors increasing forgettability score (leading to more strength reduction):
-    recency_factor: 0.15     # Reduced significantly - Recency alone shouldn't cause forgetting important things
-    activation_factor: 0.1   # Reduced - Low activation alone shouldn't cause forgetting important things
+    recency_factor: 0.05     # Reduced SIGNIFICANTLY - Recency alone should NOT cause forgetting important things
+    activation_factor: 0.02  # Reduced SIGNIFICANTLY - Low activation alone should NOT cause forgetting important things
     node_type_factor: 0.1    # Keep moderate weight for type
     # Factors decreasing forgettability (Resistance):
     # These use inverse normalization, so apply positive weights from config
     # (Config weights represent importance of the factor)
-    saliency_factor: 0.4     # Increased significantly - High saliency strongly resists forgetting
-    emotion_factor: 0.2      # Increased - Emotional memories resist forgetting
+    saliency_factor: 0.6     # Increased SIGNIFICANTLY - High saliency strongly resists forgetting
+    emotion_factor: 0.3      # Increased SIGNIFICANTLY - Emotional memories resist forgetting
     connectivity_factor: 0.05 # Keep low - Connectivity is less important than saliency/emotion
-    access_count_factor: 0.05 # Keep low - Access count is less important than saliency/emotion
-    emotion_magnitude_resistance_factor: 0.2 # Increased - Stronger emotions resist forgetting more
-    core_memory_resistance_factor: 0.1 # NEW: Multiplier for core memory if immunity is OFF (0.1 = 90% reduction in forgettability)
+    access_count_factor: 0.1 # Increased moderately - Access count provides some resistance
+    emotion_magnitude_resistance_factor: 0.25 # Increased - Stronger emotions resist forgetting more
+    core_memory_resistance_factor: 0.05 # NEW: Multiplier for core memory if immunity is OFF (0.05 = 95% reduction in forgettability)
     # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
     recency_decay_constant: 0.000005 # Keep this for the recency component calculation
+    # --- NEW: Cap for Recency Contribution ---
+    max_norm_recency_cap: 0.95 # Limit max impact of recency (0.0 to 1.0)
   # --- Decay Resistance (Lower factor = Slower decay) ---
   # Multiplies the final forgettability score. Core memories should have very low factors.
   decay_resistance:
@@ -382,7 +384,10 @@ memory_strength:
   initial_value: 1.0 # Starting strength for new nodes
   decay_rate: 0.15 # Factor applied to forgettability score for strength reduction
   purge_threshold: 0.01 # Strength below which nodes are eligible for permanent deletion by purge_weak_nodes
-  # purge_min_age_days: 60 # REMOVED: Purge is now based only on strength threshold
+  # --- NEW: Purge Criteria ---
+  purge_min_age_days: 30 # Minimum age in DAYS before a node can be considered for purging (even if strength is low)
+  purge_max_saliency: 0.2 # Node saliency must be BELOW this to be purged
+  purge_max_access_count: 3 # Node access count must be BELOW this to be purged
 
 # --- GUI Style Configuration ---
 # (Keep existing style config)
@@ -555,8 +560,8 @@ saliency:
   activation_influence: 0.1 # How much saliency boosts activation spreading
   # guaranteed_saliency_threshold moved to activation section for clarity
   feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
-  saliency_decay_rate: 0.0005 # NEW: How much saliency decays per hour (e.g., 0.0005 = 0.05% decay per hour) - Reduced significantly
-  recall_boost_factor: 0.04 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased slightly from 0.03
+  saliency_decay_rate: 0.0001 # NEW: How much saliency decays per hour (e.g., 0.0001 = 0.01% decay per hour) - Reduced SIGNIFICANTLY MORE
+  recall_boost_factor: 0.05 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased slightly more
   # --- Importance Keywords & Boosts ---
   importance_keywords: # Keywords that trigger importance boost during node creation
     - "important"
