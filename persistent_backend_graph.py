@@ -4791,7 +4791,9 @@ class GraphMemoryClient:
          initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
          initial_uuids = [uid for uid, score in initial_nodes]
          memories_retrieved = []
-         effective_mood = self.last_interaction_mood
+         effective_mood = self.last_interaction_mood # Start with mood from last interaction
+
+         # --- Retrieve memory chain (this applies drive influence internally) ---
          if initial_uuids:
              memories_retrieved, effective_mood = self.retrieve_memory_chain(
                  initial_node_uuids=initial_uuids,
