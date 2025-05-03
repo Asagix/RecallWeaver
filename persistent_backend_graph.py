@@ -2959,7 +2959,7 @@ class GraphMemoryClient:
             logger.debug(
                 f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
 
-        # --- Assemble Final Prompt ---
+        # --- Assemble Final Prompt (Order: Time, Workspace, System Notes, Emo Instructions, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag) ---
         final_parts = []
         final_parts.append(time_info_block)
         # Add workspace context block

@@ -26,14 +26,13 @@ tzdata
 spacy>=3.7.2,<3.8.0 # Constrained to match en_core_web_sm-3.7.1
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz#egg=en_core_web_sm
 
-# NLP for Emotion Analysis
-text2emotion
-emoji<2.0.0 # Pin emoji version for text2emotion compatibility
+# NLP for Emotion/Sentiment Analysis
+vaderSentiment # Added for EmotionalCore
+# text2emotion # Removed
+# emoji<2.0.0 # Removed (was for text2emotion)
 
 # Dependencies for specific tokenizers (e.g., Gemma)
 protobuf
 tiktoken
 sentencepiece # Required by GemmaTokenizer (even slow version)
-
-vaderSentiment
-hf_xet
+# hf_xet # Removed - Unrelated?
