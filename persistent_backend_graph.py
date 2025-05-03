@@ -6293,20 +6293,8 @@ class GraphMemoryClient:
                 "reason": "no_concepts_identified",
             })
 
-        # --- 7b. Emotion Analysis (Optional) ---
-        # (Existing emotion analysis logic remains the same)
-        if emotion_analysis_enabled and te:
-            logger.info("Running Emotion Analysis on consolidated nodes...")
-            nodes_for_emotion = set(nodes_to_process)
-            if summary_node_uuid: nodes_for_emotion.add(summary_node_uuid)
-            nodes_for_emotion.update(concept_node_map.values())
-            emotion_analyzed_count = 0
-            for node_uuid in nodes_for_emotion:
-                if node_uuid in self.graph:
-                    self._analyze_and_update_emotion(node_uuid)
-                    emotion_analyzed_count += 1
-            logger.info(f"Emotion analysis attempted for {emotion_analyzed_count} nodes.")
-        # Removed check for text2emotion library
+        # --- 7b. Emotion Analysis (DEPRECATED - Handled by EmotionalCore if enabled) ---
+        # (Old text2emotion logic removed)
 
         # --- 8. NEW: Core Memory Flagging ---
         flagged_count = 0
