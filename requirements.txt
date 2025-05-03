@@ -34,3 +34,6 @@ emoji<2.0.0 # Pin emoji version for text2emotion compatibility
 protobuf
 tiktoken
 sentencepiece # Required by GemmaTokenizer (even slow version)
+
+vaderSentiment
+hf_xet

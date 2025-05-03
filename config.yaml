@@ -216,6 +216,14 @@ llm_models:
     top_p: 0.95
     top_k: 40
     min_p: 0.0
+  file_content_generation:
+    api_type: "generate" # Or chat_completions if preferred
+    model_name: "koboldcpp-default"
+    max_length: 1024 # Allow reasonable length for file content
+    temperature: 0.6 # Balance creativity and coherence
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
 
 
 # --- Feature Flags ---
