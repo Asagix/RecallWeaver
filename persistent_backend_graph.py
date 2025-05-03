@@ -1167,6 +1167,33 @@ class GraphMemoryClient:
                 "mood_after": effective_mood,
                 "drive_state_short_term": self.drive_state.get("short_term"), # Log state that caused adjustment
             })
+
+        # --- Apply EmotionalCore Mood Hints (NEW) ---
+        if self.emotional_core and self.emotional_core.is_enabled:
+            valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
+            arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
+            valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
+            arousal_factor = self.emotional_core.config.get("mood_arousal_factor", 0.2)
+
+            if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
+                logger.info(f"Applying EmotionalCore mood hints: V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
+                current_v, current_a = effective_mood # Mood after drive influence
+                # Apply hints additively, scaled by factors
+                new_v = current_v + (valence_hint * valence_factor)
+                new_a = current_a + (arousal_hint * arousal_factor)
+                # Clamp final mood
+                effective_mood = (max(-1.0, min(1.0, new_v)), max(0.0, min(1.0, new_a)))
+                logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
+                log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
+                    "personality": self.personality,
+                    "mood_after_drives": (current_v, current_a),
+                    "valence_hint": valence_hint,
+                    "arousal_hint": arousal_hint,
+                    "valence_factor": valence_factor,
+                    "arousal_factor": arousal_factor,
+                    "mood_after_emocore": effective_mood,
+                })
+
         else:
              logger.debug("Subconscious drives disabled or no config/state found, using original mood.")
              # --- Log that no adjustment was made ---
@@ -2505,6 +2532,7 @@ class GraphMemoryClient:
                             len(tokenizer.encode(system_note_block)) +  # Add system note tokens
                             len(tokenizer.encode(asm_block)) +  # Add ASM block tokens
                             len(tokenizer.encode(drive_block)) +  # Add Drive block tokens
+                            len(tokenizer.encode(emotional_instructions_block)) + # Add Emotional Instructions tokens
                             len(tokenizer.encode(user_input_fmt)) +
                             len(tokenizer.encode(final_model_tag)))
         except Exception as e:
@@ -2869,7 +2897,7 @@ class GraphMemoryClient:
             logger.debug(
                 f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
 
-        # --- Assemble Final Prompt ---
+        # --- Assemble Final Prompt (Order: Time, Workspace, System Notes, Emo Instructions, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag) ---
         final_parts = []
         final_parts.append(time_info_block)
         # Add workspace context block
@@ -2937,10 +2965,10 @@ class GraphMemoryClient:
         # Add workspace context block
         if workspace_context_str:
             final_parts.append(workspace_context_str)
-        # Add instruction about temporal awareness AND action capability
-        # --- System Instructions for AI ---
+        # Add system instructions (as separate model turns)
         system_instructions = [
-            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
+            # --- General Context Instructions ---
+            "[System Note: Be aware of the current time provided. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
             "[System Note: **Synthesize** the information from the 'Relevant Past Information' (memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
@@ -2970,13 +2998,18 @@ class GraphMemoryClient:
             "    - **For `create_file`:** Signal your *intent* by providing a brief description. The system will handle filename/content generation separately. Use `[ACTION: {\"action\": \"create_file\", \"args\": {\"description\": \"Brief description of what to save, e.g., 'List of project ideas'\"}}]`.",
             "  Only use the ACTION tag if you decide an action is necessary based on the context.]",
             # --- NEW: Instruction for handling retrieved intentions ---
-            "[System Note: If you see a retrieved memory starting with 'Remember:' (indicating a stored intention), check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]"
+            "[System Note: If you see a retrieved memory starting with 'Remember:' (indicating a stored intention), check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]",
+            # --- Thought Process Instruction ---
+            "[System Note: CRITICAL - Before generating your response to the user, first output your internal thought process, rationale, or step-by-step thinking relevant to formulating the response. Enclose these thoughts STRICTLY within <thought> and </thought> tags. After the closing </thought> tag, provide the final conversational response meant for the user. The final response itself should NOT contain the <thought> tags or directly refer to 'inner thoughts' unless appropriate for the persona/context.]",
         ]
-        # Add each instruction line as a separate system turn for clarity
         for instruction in system_instructions:
             final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
 
-        # --- Add Context Blocks (Order: Time, Workspace, System Notes, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag) ---
+        # --- Add Emotional Instructions Block (if generated) ---
+        if emotional_instructions_block:
+            final_parts.append(emotional_instructions_block)
+
+        # --- Add Other Context Blocks ---
         if asm_block: final_parts.append(asm_block)
         if drive_block: final_parts.append(drive_block)
         if core_mem_ctx_str: final_parts.append(core_mem_ctx_str) # Add Core Memories
@@ -4729,11 +4762,30 @@ class GraphMemoryClient:
             return error_result
 
     def _handle_text_input(self, user_input: str, conversation_history: list) -> tuple[str | None, str, list]:
-         """Handles text-based input, including memory retrieval and LLM call."""
-         # >>> Placeholder - Ensure the actual implementation exists and returns:
-         # >>> (inner_thoughts: str|None, raw_llm_response: str, memories_retrieved: list)
-         logger.warning("_handle_text_input called - Ensure full implementation exists.")
-         # Example placeholder logic (replace with actual logic):
+         """Handles text-based input, including emotional analysis, memory retrieval, and LLM call."""
+         logger.info("Handling text input...") # Changed log level
+
+         # --- 1. Emotional Analysis (if enabled) ---
+         if self.emotional_core and self.emotional_core.is_enabled:
+             try:
+                 # Prepare context for analysis
+                 history_context_str = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Last 5 turns
+                 kg_context_str = self._get_kg_context_for_emotion(user_input)
+                 logger.debug(f"Emotional Analysis Context: History='{history_context_str[:100]}...', KG='{kg_context_str[:100]}...'")
+
+                 # Run analysis
+                 self.emotional_core.analyze_input(
+                     user_input=user_input,
+                     history_context=history_context_str,
+                     kg_context=kg_context_str
+                 )
+                 # Aggregate results (tendency/mood hints stored in self.emotional_core)
+                 self.emotional_core.aggregate_and_combine()
+             except Exception as emo_e:
+                 logger.error(f"Error during emotional analysis: {emo_e}", exc_info=True)
+                 # Continue processing even if emotional analysis fails
+
+         # --- 2. Memory Retrieval ---
          query_type = self._classify_query_type(user_input)
          max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
          initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
@@ -4744,16 +4796,31 @@ class GraphMemoryClient:
              memories_retrieved, effective_mood = self.retrieve_memory_chain(
                  initial_node_uuids=initial_uuids,
                  recent_concept_uuids=list(self.last_interaction_concept_uuids),
-                 current_mood=self.last_interaction_mood
+                 current_mood=effective_mood # Pass the mood potentially influenced by drives
              )
+        else:
+            logger.info("No initial nodes found for retrieval.")
 
-         prompt = self._construct_prompt(user_input, conversation_history, memories_retrieved, self.tokenizer,
-                                        self.config.get('prompting', {}).get('max_context_tokens', 4096), effective_mood)
-         raw_llm_response = self._call_configured_llm('main_chat_text', prompt=prompt) # Or appropriate task name
-         # --- Parse thoughts here ---
-         inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
-         # Return thoughts, final response, and memories
-         return inner_thoughts, final_response, memories_retrieved # Corrected return order/values
+        # --- 3. Construct Prompt (incorporates emotional instructions) ---
+        # effective_mood from retrieve_memory_chain already includes drive influence
+        prompt = self._construct_prompt(
+            user_input=user_input,
+            conversation_history=conversation_history,
+            memory_chain=memories_retrieved,
+            tokenizer=self.tokenizer,
+            max_context_tokens=self.config.get('prompting', {}).get('max_context_tokens', 4096),
+            current_mood=effective_mood # Pass mood after drive influence
+        )
+
+        # --- 4. Call LLM ---
+        raw_llm_response = self._call_configured_llm('main_chat_text', prompt=prompt)
+
+        # --- 5. Parse LLM Response ---
+        inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
+
+        # --- 6. Return Results ---
+        # Return thoughts, final response, and memories
+        return inner_thoughts, final_response, memories_retrieved
      
     
     def _handle_multimodal_input(self, user_input: str, attachment_data: dict) -> tuple[str | None, str]:
@@ -6584,9 +6651,37 @@ class GraphMemoryClient:
              error_type = type(plan_exec_e).__name__
              workspace_action_results.append((False, f"Internal Error ({error_type}): {plan_exec_e}", "planning_exception", False))
 
-        logger.info(f"--- Finished Workspace Planning & Execution [ID: {task_id}] ---")
-        return workspace_action_results
+    def _get_kg_context_for_emotion(self, user_input: str, k: int = 3) -> str:
+        """
+        Retrieves relevant context from the knowledge graph for emotional analysis.
+        (Basic implementation: ASM summary + text from k most similar nodes).
+        """
+        context_parts = []
+        # 1. Add ASM Summary
+        if self.autobiographical_model:
+            asm_summary = self.autobiographical_model.get("summary_statement", "")
+            if asm_summary:
+                context_parts.append(f"AI Self-Summary: {asm_summary}")
 
+        # 2. Add text from k most similar nodes to user input
+        if k > 0 and self.index and self.index.ntotal > 0:
+            try:
+                similar_nodes = self._search_similar_nodes(user_input, k=k)
+                if similar_nodes:
+                    context_parts.append("\nRelevant Past Snippets:")
+                    for node_uuid, score in similar_nodes:
+                        if node_uuid in self.graph:
+                            node_data = self.graph.nodes[node_uuid]
+                            speaker = node_data.get('speaker', '?')
+                            text = node_data.get('text', '')
+                            context_parts.append(f"- {speaker}: {text[:150]}{'...' if len(text) > 150 else ''}")
+            except Exception as e:
+                logger.error(f"Error retrieving similar nodes for emotional context: {e}", exc_info=True)
+
+        if not context_parts:
+            return "[No relevant KG context found]"
+
+        return "\n".join(context_parts)
 
 
 #Function call
