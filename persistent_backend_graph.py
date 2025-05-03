@@ -6447,167 +6447,157 @@ class GraphMemoryClient:
             # Add counts for different relation types if available
         })
      
-    # --- NEW: Separate Planning & Execution Method ---
+    
     def plan_and_execute(self, user_input: str, conversation_history: list) -> list[tuple[bool, str, str, bool]]:
         """
         Plans and executes workspace actions based on user input and conversation context.
         Called separately by the worker thread if flagged by process_interaction.
         Returns list of tuples: (success, message, action_suffix, silent_and_successful)
         """
-        logger.info(f"--- Starting Separate Workspace Planning & Execution for input: '{strip_emojis(user_input[:50])}...' ---") # Strip emojis
+        task_id = str(uuid.uuid4())[:8] # Generate a short ID for this planning task
+        logger.info(f"--- Starting Workspace Planning & Execution [ID: {task_id}] for input: '{strip_emojis(user_input[:50])}...' ---") # Strip emojis
         workspace_action_results = [] # Initialize results list
 
         try:
-            # 1. Retrieve Relevant Memories (similar to process_interaction, maybe simpler?)
-            #    We need some context for the planning prompt. Let's retrieve based on user input.
+            # 1. Retrieve Relevant Memories
+            logger.debug(f"[{task_id}] Retrieving memories for planning context...")
             query_type = self._classify_query_type(user_input)
             max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
             initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
             initial_uuids = [uid for uid, score in initial_nodes]
             memory_chain_data = []
+            effective_mood = self.last_interaction_mood # Use last known mood
             if initial_uuids:
-                # Use current mood/concepts if available, otherwise defaults
                 concepts_for_retrieval = self.last_interaction_concept_uuids
-                mood_for_retrieval = self.last_interaction_mood
-                memory_chain_data = self.retrieve_memory_chain(
+                retrieved_nodes, effective_mood = self.retrieve_memory_chain(
                     initial_node_uuids=initial_uuids,
                     recent_concept_uuids=list(concepts_for_retrieval),
-                    current_mood=mood_for_retrieval
+                    current_mood=effective_mood # Pass the potentially updated mood
                 )
-                # Unpack the tuple: retrieve_memory_chain returns (nodes_list, effective_mood)
-                retrieved_nodes, _ = memory_chain_data # memory_chain_data currently holds the tuple
-                memory_chain_data = retrieved_nodes # Now memory_chain_data holds the list of nodes
-            # If initial_uuids was empty, memory_chain_data remains []
-            logger.info(f"Retrieved {len(memory_chain_data)} memories for planning context.") # This should now use the list
+                memory_chain_data = retrieved_nodes
+            logger.info(f"[{task_id}] Retrieved {len(memory_chain_data)} memories for planning context.")
 
             # 2. Prepare Planning Prompt Context
+            logger.debug(f"[{task_id}] Preparing context for planning prompt...")
             planning_history_text = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Strip emojis
             planning_memory_text = "\n".join([f"- {mem.get('speaker', '?')} ({self._get_relative_time_desc(mem.get('timestamp',''))}): {strip_emojis(mem.get('text', ''))}" for mem in memory_chain_data]) # Strip emojis
             if not planning_memory_text: planning_memory_text = "[No relevant memories retrieved]"
 
-            # --- Get current workspace files ---
             workspace_files, list_msg = file_manager.list_files(self.config, self.personality)
             if workspace_files is None:
-                logger.error(f"Failed to list workspace files for planning context: {list_msg}")
+                logger.error(f"[{task_id}] Failed list workspace files for planning context: {list_msg}")
                 workspace_files_list_str = "[Error retrieving file list]"
             elif not workspace_files:
                 workspace_files_list_str = "[Workspace is empty]"
             else:
                 workspace_files_list_str = "\n".join([f"- {fname}" for fname in sorted(workspace_files)])
-            logger.debug(f"Workspace files for planning prompt:\n{workspace_files_list_str}")
+            logger.debug(f"[{task_id}] Workspace files for planning prompt:\n{workspace_files_list_str}")
 
-            # --- Format ASM Context for Planning Prompt ---
             asm_context_str = "[AI Self-Model: Not Available]"
             if self.autobiographical_model:
-                try:
-                    asm_parts = []
-                    if self.autobiographical_model.get("summary_statement"): asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
-                    if self.autobiographical_model.get("core_traits"): asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
-                    if self.autobiographical_model.get("goals_motivations"): asm_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
-                    if self.autobiographical_model.get("relational_stance"): asm_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
-                    if self.autobiographical_model.get("emotional_profile"): asm_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
-                    if asm_parts: asm_context_str = "\n".join(asm_parts)
-                except Exception as asm_fmt_e:
-                    logger.error(f"Error formatting ASM for planning prompt: {asm_fmt_e}")
-                    asm_context_str = "[AI Self-Model: Error Formatting]"
-            logger.debug(f"ASM context for planning prompt:\n{asm_context_str}")
+                 # ... (ASM formatting remains the same) ...
+                 try:
+                     asm_parts = []
+                     if self.autobiographical_model.get("summary_statement"): asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
+                     if self.autobiographical_model.get("core_traits"): asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+                     if self.autobiographical_model.get("goals_motivations"): asm_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
+                     if self.autobiographical_model.get("relational_stance"): asm_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
+                     if self.autobiographical_model.get("emotional_profile"): asm_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
+                     if asm_parts: asm_context_str = "\n".join(asm_parts)
+                 except Exception as asm_fmt_e: logger.error(f"Error formatting ASM for planning prompt: {asm_fmt_e}"); asm_context_str = "[AI Self-Model: Error Formatting]"
+            logger.debug(f"[{task_id}] ASM context for planning prompt:\n{asm_context_str}")
 
             planning_prompt_template = self._load_prompt("workspace_planning_prompt.txt")
             if not planning_prompt_template:
-                logger.error("Workspace planning prompt template missing. Cannot generate plan.")
-                workspace_action_results.append((False, "Internal Error: Planning prompt missing.", "planning_error"))
+                logger.error(f"[{task_id}] Workspace planning prompt template missing. Cannot generate plan.")
+                workspace_action_results.append((False, "Internal Error: Planning prompt missing.", "planning_error", False)) # Added silent flag
                 return workspace_action_results
 
-            # --- Manual Prompt Construction using .replace() ---
             try:
+                # --- Manual Prompt Construction using .replace() ---
                 planning_prompt = planning_prompt_template # Start with the raw template
-
-                # Define placeholders and their values
-                replacements = {
-                    "{user_request}": user_input,
-                    "{history_text}": planning_history_text,
-                    "{memory_text}": planning_memory_text,
-                    "{workspace_files_list}": workspace_files_list_str,
+                replacements = { # Define placeholders and their values
+                    "{user_request}": user_input, "{history_text}": planning_history_text,
+                    "{memory_text}": planning_memory_text, "{workspace_files_list}": workspace_files_list_str,
                     "{asm_context}": asm_context_str
                 }
-
-                # Iteratively replace each placeholder
-                for placeholder, value in replacements.items():
-                    # Ensure value is a string before replacing
-                    str_value = str(value) if value is not None else ""
+                for placeholder, value in replacements.items(): # Iteratively replace
+                    str_value = str(value) if value is not None else "" # Ensure value is string
                     planning_prompt = planning_prompt.replace(placeholder, str_value)
-
-                # Check if any placeholders remain (indicates an error or missing variable)
                 remaining_placeholders = re.findall(r'\{[a-zA-Z0-9_]+\}', planning_prompt)
-                if remaining_placeholders:
-                    logger.error(f"Placeholders remain after replacement: {remaining_placeholders}. This indicates an error.")
-                    # Handle error - maybe raise or return specific error message
-                    raise ValueError(f"Unreplaced placeholders found: {remaining_placeholders}")
-
-                logger.debug(f"Sending workspace planning prompt (Constructed via .replace()):\n{planning_prompt[:400]}...")
+                if remaining_placeholders: raise ValueError(f"Unreplaced placeholders found: {remaining_placeholders}")
+                logger.info(f"[{task_id}] Sending workspace planning prompt to LLM...") # Changed level to INFO
+                logger.debug(f"[{task_id}] Planning Prompt Preview:\n{planning_prompt[:500]}...") # Added preview log
 
             except Exception as replace_e:
-                 logger.error(f"Error during manual prompt construction via .replace(): {replace_e}", exc_info=True)
-                 workspace_action_results.append((False, f"Internal Error during planning prompt construction: {replace_e}", "planning_format_error", False))
+                 logger.error(f"[{task_id}] Error during planning prompt construction: {replace_e}", exc_info=True)
+                 workspace_action_results.append((False, f"Internal Error: Planning prompt construction: {replace_e}", "planning_format_error", False))
                  return workspace_action_results
-            # --- End Manual Prompt Construction ---
 
             # 3. Call Planning LLM
             plan_response_str = self._call_configured_llm('workspace_planning', prompt=planning_prompt)
 
             # 4. Parse Plan
             parsed_plan = None
+            logger.debug(f"[{task_id}] Raw planning LLM response: ```{plan_response_str}```") # Log raw response
             if plan_response_str and not plan_response_str.startswith("Error:"):
                 try:
-                    logger.debug(f"Raw workspace plan response: ```{strip_emojis(plan_response_str)}```") # Strip emojis
+                    # Improved JSON list extraction
                     match = re.search(r'(\[.*?\])', plan_response_str, re.DOTALL | re.MULTILINE)
                     if match:
                         plan_json_str = match.group(1)
+                        logger.debug(f"[{task_id}] Extracted plan JSON string: {plan_json_str}") # Log extracted string
                         parsed_plan = json.loads(plan_json_str)
                         if not isinstance(parsed_plan, list):
-                            logger.error(f"Parsed plan is not a list: {parsed_plan}")
-                            parsed_plan = None
+                            logger.error(f"[{task_id}] Parsed plan is not a list: {type(parsed_plan)}")
+                            parsed_plan = None # Treat as invalid
+                        else:
+                             logger.info(f"[{task_id}] Successfully parsed plan: {parsed_plan}") # Log parsed plan
                     else:
-                        logger.warning(f"Could not extract JSON list '[]' from planning response. Raw: '{plan_response_str}'")
+                        logger.warning(f"[{task_id}] Could not extract JSON list '[]' from planning response.")
+                        parsed_plan = None # No valid plan found
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON plan response: {e}. Raw: '{plan_response_str}'")
+                    logger.error(f"[{task_id}] Failed to parse JSON plan response: {e}. Raw: '{plan_response_str}'")
                     parsed_plan = None
             elif plan_response_str.startswith("Error:"):
-                 logger.error(f"Workspace planning LLM call failed: {plan_response_str}")
-                 # Return 4-tuple for consistency
+                 logger.error(f"[{task_id}] Workspace planning LLM call failed: {plan_response_str}")
                  workspace_action_results.append((False, f"Planning Error: {plan_response_str}", "planning_llm_error", False))
                  return workspace_action_results # Return LLM error result
+            else: # Empty response from LLM
+                logger.warning(f"[{task_id}] Workspace planning LLM returned empty response.")
+                parsed_plan = [] # Treat as empty plan
 
             # 5. Execute Plan (if valid)
-            if parsed_plan is not None:
+            if parsed_plan is not None: # Check if parsing was successful (even if list is empty)
                 if isinstance(parsed_plan, list) and len(parsed_plan) > 0:
-                    logger.info(f"Workspace plan parsed with {len(parsed_plan)} step(s). Executing...")
-                    # Import agent here to avoid circular dependency at top level
-                    from workspace_agent import WorkspaceAgent
-                    # Pass the current client instance (self) to the agent
-                    agent = WorkspaceAgent(self)
-                    workspace_action_results = agent.execute_plan(parsed_plan)
-                    logger.info(f"Workspace plan execution finished. Results: {workspace_action_results}")
+                    logger.info(f"[{task_id}] Plan contains {len(parsed_plan)} step(s). Instantiating WorkspaceAgent...")
+                    try:
+                        # Pass the current client instance (self) to the agent
+                        agent = WorkspaceAgent(self)
+                        logger.info(f"[{task_id}] Calling WorkspaceAgent.execute_plan...")
+                        workspace_action_results = agent.execute_plan(parsed_plan)
+                        logger.info(f"[{task_id}] WorkspaceAgent execution finished. Results count: {len(workspace_action_results)}")
+                    except Exception as agent_exec_e:
+                         logger.error(f"[{task_id}] Error during WorkspaceAgent execution: {agent_exec_e}", exc_info=True)
+                         workspace_action_results.append((False, f"Internal Error: Agent execution failed: {agent_exec_e}", "agent_execution_error", False))
                 elif isinstance(parsed_plan, list) and len(parsed_plan) == 0:
-                    logger.info("LLM generated an empty plan (no workspace actions needed).")
-                    # Return empty results list, indicating no actions taken (empty list is fine)
-                else: # Plan parsed but invalid (e.g., not list)
-                     logger.error("Parsed plan was invalid (not a list). No actions executed.")
-                     # Return 4-tuple for consistency
-                     workspace_action_results.append((False, "Internal Error: Invalid plan generated by LLM.", "planning_invalid_plan", False))
-            else: # Plan parsing failed or no plan found
-                 logger.info("No valid workspace plan found or parsed. No actions executed.")
-                 # Return empty results list, indicating no actions taken (empty list is fine)
+                    logger.info(f"[{task_id}] LLM generated an empty plan. No workspace actions executed.")
+                    # Return empty results list (or a specific success message?)
+                    # workspace_action_results.append((True, "No actions required by plan.", "no_actions", True)) # Example message
+                else: # Plan parsed but invalid (e.g., not list) - handled above by setting parsed_plan to None
+                     logger.error(f"[{task_id}] Parsed plan was invalid. No actions executed.")
+                     workspace_action_results.append((False, "Internal Error: Invalid plan structure from LLM.", "planning_invalid_plan", False))
+            else: # Plan parsing failed or no plan found in response
+                 logger.warning(f"[{task_id}] No valid workspace plan parsed from LLM response. No actions executed.")
+                 workspace_action_results.append((False, "Planning Error: Could not parse plan from LLM.", "planning_parse_fail", False))
 
         except Exception as plan_exec_e:
-             logger.error(f"Unexpected error during plan_and_execute: {plan_exec_e}", exc_info=True)
-             # Return 4-tuple for consistency - include exception type in message
+             logger.error(f"[{task_id}] Unexpected error during plan_and_execute: {plan_exec_e}", exc_info=True)
              error_type = type(plan_exec_e).__name__
-             workspace_action_results.append((False, f"Internal Error during planning/execution ({error_type}): {plan_exec_e}", "planning_exception", False))
+             workspace_action_results.append((False, f"Internal Error ({error_type}): {plan_exec_e}", "planning_exception", False))
 
-        logger.info(f"--- Finished Separate Workspace Planning & Execution ---")
+        logger.info(f"--- Finished Workspace Planning & Execution [ID: {task_id}] ---")
         return workspace_action_results
-
 
 
 
