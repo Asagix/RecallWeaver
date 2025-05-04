@@ -1206,6 +1206,31 @@ class GraphMemoryClient:
                  "reason": "Drives disabled or state missing",
              })
 
+         # --- Apply EmotionalCore Mood Hints (NEW) ---
+         if self.emotional_core and self.emotional_core.is_enabled:
+             valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
+             arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
+             valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
+             arousal_factor = self.emotional_core.config.get("mood_arousal_factor", 0.2)
+
+             if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
+                 logger.info(f"Applying EmotionalCore mood hints: V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
+                 current_v, current_a = effective_mood # Mood after drive influence
+                 # Apply hints additively, scaled by factors
+                 new_v = current_v + (valence_hint * valence_factor)
+                 new_a = current_a + (arousal_hint * arousal_factor)
+                 # Clamp final mood
+                 effective_mood = (max(-1.0, min(1.0, new_v)), max(0.0, min(1.0, new_a)))
+                 logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
+                 log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
+                     "personality": self.personality,
+                     "mood_after_drives": (current_v, current_a),
+                     "valence_hint": valence_hint,
+                     "arousal_hint": arousal_hint,
+                     "valence_factor": valence_factor,
+                     "arousal_factor": arousal_factor,
+                     "mood_after_emocore": effective_mood,
+                 })
 
         # --- Emotional Context Config (Uses effective_mood) ---
         emo_ctx_cfg = act_cfg.get('emotional_context', {})
@@ -2527,7 +2552,18 @@ class GraphMemoryClient:
                 logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
                 drive_block = ""
 
-        try:
+       # --- Get Emotional Instructions (NEW) ---
+       emotional_instructions_block = ""
+       if self.emotional_core and self.emotional_core.is_enabled:
+           try:
+               emo_instructions = self.emotional_core.craft_prompt_instructions()
+               if emo_instructions:
+                   emotional_instructions_block = f"{model_tag}{emo_instructions}{end_turn}\n"
+                   logger.debug("Adding emotional instructions block to prompt.")
+           except Exception as emo_instr_e:
+               logger.error(f"Error crafting emotional instructions: {emo_instr_e}", exc_info=True)
+
+       try:
             fixed_tokens = (len(tokenizer.encode(time_info_block)) +
                             len(tokenizer.encode(system_note_block)) +  # Add system note tokens
                             len(tokenizer.encode(asm_block)) +  # Add ASM block tokens
