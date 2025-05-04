@@ -217,9 +217,7 @@ llm_models:
     top_k: 40
     min_p: 0.0
   # Removed duplicate file_content_generation entry
-    temperature: 0.6 # Balance creativity and coherence
-    top_p: 0.95
-    top_k: 50
+    # Removed duplicate temperature, top_p, top_k, min_p lines that belonged to the duplicate entry
     min_p: 0.0
 
 
