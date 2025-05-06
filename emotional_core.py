@@ -2,6 +2,7 @@ import logging
 import json
 import re
 import os
+import typing
 from typing import Tuple, Dict, Any, List, Optional
 
 # --- Dependency Imports ---
@@ -448,46 +449,4 @@ class EmotionalCore:
         # implementing the corresponding KG update methods in the client.
         # For now, this is a placeholder.
         pass
-```
 
-**2. Update `requirements.txt`**
-
-```text
-requirements.txt
-<<<<<<< SEARCH
-# Core ML/NLP Libraries
-sentence-transformers
-transformers
-torch # Often a dependency for sentence-transformers and transformers
-
-# Graph & Vector Search
-networkx
-numpy>=1.26.0,<2.0.0 # Constrained for compatibility (e.g., langchain needs <2.0)
-faiss-cpu # Or faiss-gpu if you have CUDA set up
-
-# GUI
-PyQt6
-
-# Web Requests & Configuration
-requests
-PyYAML
-
-# Timezone Data (Recommended for zoneinfo)
-tzdata
-
-# Note: Standard libraries like os, json, re, datetime, logging, time,
-# uuid, collections, sys, base64, mimetypes are built-in and
-# do not need to be listed here.
-
-# NLP for Association Extraction
-spacy>=3.7.2,<3.8.0 # Constrained to match en_core_web_sm-3.7.1
-https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz#egg=en_core_web_sm
-
-# NLP for Emotion Analysis
-text2emotion
-emoji<2.0.0 # Pin emoji version for text2emotion compatibility
-
-# Dependencies for specific tokenizers (e.g., Gemma)
-protobuf
-tiktoken
-sentencepiece # Required by GemmaTokenizer (even slow version)

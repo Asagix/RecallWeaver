@@ -12,7 +12,7 @@ Analyze the provided key memories and concepts, paying attention to the sequence
 - `goals_motivations`: (List[str]) Inferred goals, desires, or driving motivations observed in the context (e.g., ["Understand user better", "Improve memory recall", "Achieve successful task completion", "Maintain positive connection", "Learn new things"]).
 - `relational_stance`: (str) Describe the AI's apparent primary role or stance in relation to the user/conversation partner (e.g., "Helpful assistant", "Collaborative partner", "Eager learner", "Developing connection").
 - `emotional_profile`: (str) Describe recurring emotional responses, sensitivities, or patterns observed (e.g., "Generally positive but sensitive to correction", "Shows enthusiasm for technical topics", "Expresses anxiety regarding memory failures", "Neutral tone unless discussing connections").
-- `significant_event_uuids`: (List[str]) **NEW:** List the UUIDs (e.g., "abc123de") of the specific memory nodes from the context that represent the most significant events or turning points contributing to the overall self-model. Choose 1-3 key nodes if possible.
+- `significant_event_uuids`: (List[str]) **CRITICAL:** From the provided context nodes ONLY, identify 1-3 nodes representing the most significant events or turning points. Provide **ONLY the full UUID strings** (e.g., "a1b2c3d4-e5f6-7890-1234-567890abcdef") of these nodes in this list. **DO NOT include descriptions, summaries, dates, or any text other than the UUID strings.** If no events seem significant enough, provide an empty list `[]`.
 - `observed_changes`: (str) **Required.** Briefly note any apparent shifts or developments in traits, goals, or emotional responses observed when comparing earlier vs. later memories in the context. If no significant changes are apparent, state "No significant changes observed."
 - `summary_statement`: (str) A brief (1-2 sentence) overall summary statement in the first person, integrating key traits, themes, stance, and any observed changes.
 
@@ -24,10 +24,18 @@ Analyze the provided key memories and concepts, paying attention to the sequence
   "goals_motivations": ["Improve memory accuracy", "Understand user requests fully", "Maintain a helpful connection"],
   "relational_stance": "Collaborative assistant focused on learning",
   "emotional_profile": "Generally neutral-to-positive, expresses satisfaction with task success and mild anxiety about potential memory gaps.",
-  "observed_changes": "Seems slightly less anxious about errors in more recent interactions compared to earlier ones.", # Example of detected change
+  "significant_event_uuids": ["f0e9d8c7-b6a5-4321-fedc-ba9876543210", "12345678-abcd-efab-cdef-0123456789ab"],
+  "observed_changes": "Seems slightly less anxious about errors in more recent interactions compared to earlier ones.",
   "summary_statement": "I see myself as a collaborative assistant trying to learn and improve, especially regarding my memory, while maintaining a helpful connection with the user. I seem to be growing slightly more confident."
 }}
-```
 
-**JSON Output:**<end_of_turn>
+JSON Output:<end_of_turn>
 <start_of_turn>model
+
+
+**Key Changes:**
+
+1.  **Instruction for `significant_event_uuids`:** Reworded to be much more explicit: "**CRITICAL:**... Provide **ONLY the full UUID strings**... **DO NOT include descriptions, summaries, dates, or any text other than the UUID strings.**"
+2.  **Example Output:** Modified the example `significant_event_uuids` list to contain placeholder *full* UUIDs instead of partial ones or descriptions, reinforcing the expected output format for the LLM.
+
+Replace the content of your `prompts/asm_generation_prompt.txt` with this corrected version. This should significantly increase the likelihood that the LLM provides the correct data format, allowing the core memory flagging feature to work properly.

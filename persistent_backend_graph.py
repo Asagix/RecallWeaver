@@ -1147,8 +1147,8 @@ class GraphMemoryClient:
                 # Arousal: If factor is positive, positive deviation increases arousal. If factor is negative, positive deviation decreases arousal.
                 # However, arousal is often increased by *both* strong satisfaction and strong frustration.
                 # Let's use the *magnitude* of the deviation for arousal, scaled by the factor's sign.
-                arousal_adj = arousal_factor * deviation # Keep simple for now, factor sign determines direction. Review config factors.
-                arousal_adj = arousal_factors.get(drive_name, 0.0) * deviation
+                # Simplified logic: factor sign determines direction. Review config factors.
+                arousal_adj = arousal_factor * deviation
                 valence_adjustment += valence_adj
                 arousal_adjustment += arousal_adj
                 logger.debug(f"  Drive '{drive_name}': Act={current_activation:.2f}, DynBase={dynamic_baseline:.2f}, Dev={deviation:.2f} -> V_adj={valence_adj:.3f}, A_adj={arousal_adj:.3f}")
@@ -1173,9 +1173,9 @@ class GraphMemoryClient:
                 "mood_after": effective_mood,
                 "drive_state_short_term": self.drive_state.get("short_term"), # Log state that caused adjustment
             })
-
-        # --- Apply EmotionalCore Mood Hints (NEW) ---
-        if self.emotional_core and self.emotional_core.is_enabled:
+        # --- Apply EmotionalCore Mood Hints (NEW) - This block was moved outside the else ---
+        # Note: This applies hints *after* potential drive adjustment, or to the original mood if drives were disabled.
+        elif self.emotional_core and self.emotional_core.is_enabled: # Check if it should run even if drives are disabled
             valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
             arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
             valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
@@ -1183,7 +1183,7 @@ class GraphMemoryClient:
 
             if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
                 logger.info(f"Applying EmotionalCore mood hints: V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
-                current_v, current_a = effective_mood # Mood after drive influence
+                current_v, current_a = effective_mood # Mood potentially after drive influence
                 # Apply hints additively, scaled by factors
                 new_v = current_v + (valence_hint * valence_factor)
                 new_a = current_a + (arousal_hint * arousal_factor)
@@ -1192,7 +1192,7 @@ class GraphMemoryClient:
                 logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
                 log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
                     "personality": self.personality,
-                    "mood_after_drives": (current_v, current_a),
+                    "mood_after_drives": (current_v, current_a), # Log mood *before* hint application
                     "valence_hint": valence_hint,
                     "arousal_hint": arousal_hint,
                     "valence_factor": valence_factor,
@@ -1200,43 +1200,43 @@ class GraphMemoryClient:
                     "mood_after_emocore": effective_mood,
                 })
 
-        else:
+        else: # Drives were disabled or no state/config found
              logger.debug("Subconscious drives disabled or no config/state found, using original mood.")
-             # --- Log that no adjustment was made ---
+             # --- Log that no drive adjustment was made ---
              log_tuning_event("RETRIEVAL_MOOD_DRIVE_ADJUSTMENT", {
                  "personality": self.personality,
                  "mood_before": mood_before_drive_influence,
                  "valence_adjustment": 0.0,
                  "arousal_adjustment": 0.0,
-                 "mood_after": effective_mood,
+                 "mood_after": effective_mood, # Will be same as mood_before here
                  "reason": "Drives disabled or state missing",
              })
+             # --- Apply EmotionalCore Mood Hints (NEW) even if drives disabled ---
+             if self.emotional_core and self.emotional_core.is_enabled:
+                 valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
+                 arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
+                 valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
+                 arousal_factor = self.emotional_core.config.get("mood_arousal_factor", 0.2)
 
-         # --- Apply EmotionalCore Mood Hints (NEW) ---
-         if self.emotional_core and self.emotional_core.is_enabled:
-             valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
-             arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
-             valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
-             arousal_factor = self.emotional_core.config.get("mood_arousal_factor", 0.2)
+                 if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
+                     logger.info(f"Applying EmotionalCore mood hints (drives disabled): V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
+                     current_v, current_a = effective_mood # Original mood
+                     # Apply hints additively, scaled by factors
+                     new_v = current_v + (valence_hint * valence_factor)
+                     new_a = current_a + (arousal_hint * arousal_factor)
+                     # Clamp final mood
+                     effective_mood = (max(-1.0, min(1.0, new_v)), max(0.0, min(1.0, new_a)))
+                     logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
+                     log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
+                         "personality": self.personality,
+                         "mood_after_drives": (current_v, current_a), # Log mood *before* hint application
+                         "valence_hint": valence_hint,
+                         "arousal_hint": arousal_hint,
+                         "valence_factor": valence_factor,
+                         "arousal_factor": arousal_factor,
+                         "mood_after_emocore": effective_mood,
+                     })
 
-             if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
-                 logger.info(f"Applying EmotionalCore mood hints: V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
-                 current_v, current_a = effective_mood # Mood after drive influence
-                 # Apply hints additively, scaled by factors
-                 new_v = current_v + (valence_hint * valence_factor)
-                 new_a = current_a + (arousal_hint * arousal_factor)
-                 # Clamp final mood
-                 effective_mood = (max(-1.0, min(1.0, new_v)), max(0.0, min(1.0, new_a)))
-                 logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
-                 log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
-                     "personality": self.personality,
-                     "mood_after_drives": (current_v, current_a),
-                     "valence_hint": valence_hint,
-                     "arousal_hint": arousal_hint,
-                     "valence_factor": valence_factor,
-                     "arousal_factor": arousal_factor,
-                     "mood_after_emocore": effective_mood,
-                 })
 
         # --- Emotional Context Config (Uses effective_mood) ---
         emo_ctx_cfg = act_cfg.get('emotional_context', {})
@@ -1246,7 +1246,7 @@ class GraphMemoryClient:
         emo_boost = emo_ctx_cfg.get('boost_factor', 0.0) # Additive boost
         emo_penalty = emo_ctx_cfg.get('penalty_factor', 0.0) # Subtractive penalty
 
-        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (SalInf: {activation_influence:.2f}, GuarSal>=: {guaranteed_saliency_threshold}, FocusBoost: {context_focus_boost}, RecentConcepts: {len(recent_concept_uuids_set)}, EmoCtx: {emo_ctx_enabled})")
+        logger.info(f"Starting retrieval. Initial nodes: {initial_node_uuids} (SalInf: {activation_influence:.2f}, GuarSal>=: {guaranteed_saliency_threshold}, FocusBoost: {context_focus_boost}, RecentConcepts: {len(recent_concept_uuids_set)}, EmoCtx: {emo_ctx_enabled}, Mood: {effective_mood})")
         # --- Tuning Log: Retrieval Start ---
         # Note: interaction_id is not directly available here, log context separately
         log_tuning_event("RETRIEVAL_START", {
@@ -1260,7 +1260,9 @@ class GraphMemoryClient:
             "emotional_context_enabled": emo_ctx_enabled,
         })
 
-        if self.graph.number_of_nodes() == 0: logger.warning("Graph empty."); return []
+        if self.graph.number_of_nodes() == 0:
+            logger.warning("Graph empty.")
+            return [], effective_mood # Return empty list and the effective mood
 
         activation_levels = defaultdict(float)
         current_time = time.time()
@@ -1280,14 +1282,15 @@ class GraphMemoryClient:
                     is_recent_concept = uuid in recent_concept_uuids_set
                     mentions_recent_concept = False
                     if not is_recent_concept: # Only check outgoing edges if node itself isn't the concept
-                         try:
-                              for succ_uuid in self.graph.successors(uuid):
-                                   if succ_uuid in recent_concept_uuids_set:
-                                        edge_data = self.graph.get_edge_data(uuid, succ_uuid)
-                                        if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
-                                             mentions_recent_concept = True
-                                             break
-                         except Exception as e: logger.warning(f"Error checking concept links for focus boost on {uuid[:8]}: {e}")
+                        try:
+                            for succ_uuid in self.graph.successors(uuid):
+                                if succ_uuid in recent_concept_uuids_set:
+                                    edge_data = self.graph.get_edge_data(uuid, succ_uuid)
+                                    if edge_data and edge_data.get('type') == 'MENTIONS_CONCEPT':
+                                        mentions_recent_concept = True
+                                        break
+                        except Exception as e:
+                             logger.warning(f"Error checking concept links for focus boost on {uuid[:8]}: {e}")
 
                     if is_recent_concept or mentions_recent_concept:
                          boost_applied = 1.0 + context_focus_boost
@@ -1314,11 +1317,13 @@ class GraphMemoryClient:
                 activation_levels[uuid] = final_initial_activation
                 node_data['last_accessed_ts'] = current_time # Update access time
                 valid_initial_nodes.add(uuid)
-                logger.debug(f"Initialized node {uuid[:8]} - Strength: {initial_strength:.3f}, BaseAct: {base_initial_activation:.3f}, CtxBoost: {boost_applied:.2f}, Priming: {priming_applied:.2f}, FinalAct: {final_initial_activation:.3f}")
+                logger.debug(f"Initialized node {uuid[:8]} - Strength: {initial_strength:.3f}, BaseAct: {base_initial_activation:.3f}, CtxBoost: {boost_applied:.2f}, Priming: {priming_applied:.2f}, Intention: {intention_applied:.2f}, FinalAct: {final_initial_activation:.3f}")
             else:
                 logger.warning(f"Initial node {uuid} not in graph.")
 
-        if not activation_levels: logger.warning("No valid initial nodes found in graph."); return []
+        if not activation_levels:
+            logger.warning("No valid initial nodes found in graph.")
+            return [], effective_mood # Return empty list and the effective mood
 
         logger.debug(f"Valid initial nodes: {len(valid_initial_nodes)}")
         active_nodes = set(activation_levels.keys()) # Nodes currently considered for spreading FROM
@@ -1332,29 +1337,34 @@ class GraphMemoryClient:
 
             for source_uuid in nodes_to_process:
                 source_data = self.graph.nodes.get(source_uuid)
-                if not source_data: continue
+                if not source_data:
+                    continue
                 source_act = activation_levels.get(source_uuid, 0)
                 # Safely get saliency score, default to 0 if missing or not a number for calculation
                 raw_saliency = source_data.get('saliency_score', 0.0)
                 source_saliency = raw_saliency if isinstance(raw_saliency, (int, float)) else 0.0
 
-                if source_act < 1e-6: continue # Skip if effectively inactive
+                if source_act < 1e-6:
+                    continue # Skip if effectively inactive
 
                 neighbors = set(self.graph.successors(source_uuid)) | set(self.graph.predecessors(source_uuid))
 
                 for neighbor_uuid in neighbors:
-                    if neighbor_uuid == source_uuid: continue
+                    if neighbor_uuid == source_uuid:
+                        continue
                     neighbor_data = self.graph.nodes.get(neighbor_uuid)
-                    if not neighbor_data: continue
+                    if not neighbor_data:
+                        continue
 
                     # No status check needed here anymore
 
                     is_forward = self.graph.has_edge(source_uuid, neighbor_uuid)
                     edge_data = self.graph.get_edge_data(source_uuid, neighbor_uuid) if is_forward else self.graph.get_edge_data(neighbor_uuid, source_uuid)
-                    if not edge_data: continue
+                    if not edge_data:
+                        continue
 
                     edge_type = edge_data.get('type', 'UNKNOWN')
-                    type_factor = prop_unknown # Default
+                    # type_factor = prop_unknown # Default - Redundant, assigned below
 
                     # --- Assign base type_factor based on edge_type ---
                     base_type_factor = prop_unknown # Default
@@ -1366,10 +1376,10 @@ class GraphMemoryClient:
                     elif edge_type == 'CAUSES': base_type_factor = prop_causes # Assume forward A->B means A causes B
                     elif edge_type == 'PART_OF': base_type_factor = prop_part_of
                     elif edge_type == 'HAS_PROPERTY': base_type_factor = prop_has_prop
-                    elif edge_type == 'ENABLES': type_factor = prop_enables
-                    elif edge_type == 'PREVENTS': type_factor = prop_prevents
-                    elif edge_type == 'CONTRADICTS': type_factor = prop_contradicts
-                    elif edge_type == 'SUPPORTS': type_factor = prop_supports
+                    elif edge_type == 'ENABLES': base_type_factor = prop_enables # Corrected assignment
+                    elif edge_type == 'PREVENTS': base_type_factor = prop_prevents # Corrected assignment
+                    elif edge_type == 'CONTRADICTS': base_type_factor = prop_contradicts # Corrected assignment
+                    elif edge_type == 'SUPPORTS': base_type_factor = prop_supports # Corrected assignment
                     elif edge_type == 'EXAMPLE_OF': base_type_factor = prop_example_of
                     elif edge_type == 'MEASURES': base_type_factor = prop_measures
                     elif edge_type == 'LOCATION_OF': base_type_factor = prop_location_of
@@ -1381,21 +1391,21 @@ class GraphMemoryClient:
                     # --- Dynamic Edge Weighting based on Drive State ---
                     drive_weight_multiplier = 1.0 # Default: no change
                     if drives_enabled and drive_state_snapshot.get("short_term"):
-                        # Example: Boost HIERARCHICAL/CAUSES if Understanding drive is high (low deviation = unmet need)
+                        # Example: Boost HIERARCHICAL/CAUSES if Understanding drive is low (negative deviation = unmet need)
                         understanding_level = drive_state_snapshot["short_term"].get("Understanding", 0.0)
                         understanding_baseline = base_drives.get("Understanding", 0.0) + (drive_state_snapshot["long_term"].get("Understanding", 0.0) * long_term_influence)
                         understanding_deviation = understanding_level - understanding_baseline
                         if understanding_deviation < -0.1: # If Understanding need is unmet
-                            if edge_type in ['HIERARCHICAL', 'CAUSES', 'SUMMARY_OF']:
+                            if edge_type in ['HIERARCHICAL', 'CAUSES', 'SUMMARY_OF', 'PART_OF', 'HAS_PROPERTY']: # Added related types
                                 drive_weight_multiplier = 1.2 # Boost these edge types by 20%
                                 logger.debug(f"    Drive Boost (Understanding Low): Edge {edge_type} mult={drive_weight_multiplier:.2f}")
 
-                        # Example: Boost CONNECTION if Connection drive is high (low deviation = unmet need)
+                        # Example: Boost CONNECTION if Connection drive is low (negative deviation = unmet need)
                         connection_level = drive_state_snapshot["short_term"].get("Connection", 0.0)
                         connection_baseline = base_drives.get("Connection", 0.0) + (drive_state_snapshot["long_term"].get("Connection", 0.0) * long_term_influence)
                         connection_deviation = connection_level - connection_baseline
                         if connection_deviation < -0.1: # If Connection need is unmet
-                             if edge_type in ['ASSOCIATIVE', 'ANALOGY']: # Boost related concepts
+                             if edge_type in ['ASSOCIATIVE', 'ANALOGY', 'SUPPORTS', 'MENTIONS_CONCEPT']: # Added related types
                                  drive_weight_multiplier = 1.15 # Boost by 15%
                                  logger.debug(f"    Drive Boost (Connection Low): Edge {edge_type} mult={drive_weight_multiplier:.2f}")
                         # Add more drive-based weighting rules here...
@@ -1430,7 +1440,7 @@ class GraphMemoryClient:
                             # Calculate adjustment: Boost for close (low norm_dist), penalize for far (high norm_dist)
                             # Linear scaling: Adjustment ranges from +emo_boost (at dist=0) to -emo_penalty (at dist=max_dist)
                             emo_adjustment = emo_boost * (1.0 - norm_dist) - emo_penalty * norm_dist
-                            logger.debug(f"    EmoCtx: Mood=({mood_v:.2f},{mood_a:.2f}), Nbr=({neighbor_v:.2f},{neighbor_a:.2f}), Dist={emo_dist:.3f}, NormDist={norm_dist:.3f}, Adjust={emo_adjustment:.3f}")
+                            # logger.debug(f"    EmoCtx: Mood=({mood_v:.2f},{mood_a:.2f}), Nbr=({neighbor_v:.2f},{neighbor_a:.2f}), Dist={emo_dist:.3f}, NormDist={norm_dist:.3f}, Adjust={emo_adjustment:.3f}") # Moved logging below
                             # --- Log emotional context bias calculation ---
                             log_tuning_event("RETRIEVAL_EMO_CTX_BIAS_CALC", {
                                 "personality": self.personality,
@@ -1455,11 +1465,11 @@ class GraphMemoryClient:
 
                     if act_pass > 1e-6:
                         newly_activated[neighbor_uuid] += act_pass
-                        # logger.debug(f"  Spread: {source_uuid[:8]}(A:{source_act:.2f},S:{source_saliency:.2f}) -> {neighbor_uuid[:8]}(Str:{neighbor_strength:.2f}) ({edge_type},{'F' if is_forward else 'B'}), EdgeStr:{dyn_str:.2f}, Factor:{type_factor:.2f}, SalBoost:{saliency_boost:.2f} => Pass:{act_pass:.3f}")
-                        # logger.debug(f"  Spread: {source_uuid[:8]}(A:{source_act:.2f},S:{source_saliency:.2f}) -> {neighbor_uuid[:8]} ({edge_type},{'F' if is_forward else 'B'}), Str:{dyn_str:.2f}, Factor:{type_factor:.2f}, Boost:{saliency_boost:.2f} => Pass:{act_pass:.3f}")
+                        logger.debug(f"  Spread: {source_uuid[:8]}(A:{source_act:.2f},S:{source_saliency:.2f}) -> {neighbor_uuid[:8]}(Str:{neighbor_strength:.2f}) ({edge_type},{'F' if is_forward else 'B'}), DStr:{dyn_str:.2f}, TypeF:{type_factor:.2f}, SalB:{saliency_boost:.2f}, EmoAdj:{emo_adjustment:.3f} => Pass:{act_pass:.3f}")
 
                         edge_key = (source_uuid, neighbor_uuid) if is_forward else (neighbor_uuid, source_uuid)
-                        if edge_key in self.graph.edges: self.graph.edges[edge_key]['last_traversed_ts'] = current_time
+                        if edge_key in self.graph.edges:
+                            self.graph.edges[edge_key]['last_traversed_ts'] = current_time
 
             # --- Apply Decay and Combine Activation ---
             nodes_to_decay = list(activation_levels.keys())
@@ -1468,7 +1478,8 @@ class GraphMemoryClient:
 
             for uuid in all_involved_nodes:
                  node_data = self.graph.nodes.get(uuid)
-                 if not node_data: continue
+                 if not node_data:
+                     continue
 
                  current_activation = activation_levels.get(uuid, 0.0)
                  if current_activation > 0:
@@ -1477,36 +1488,43 @@ class GraphMemoryClient:
                      # logger.debug(f"  Decay: {uuid[:8]} ({current_activation:.3f} * {decay_mult:.3f} -> {activation_levels[uuid]:.3f})")
 
                  activation_levels[uuid] += newly_activated.get(uuid, 0.0)
-                 node_data['last_accessed_ts'] = current_time
+                 # Update access time whenever activation is touched (decayed or increased)
+                 self.graph.nodes[uuid]['last_accessed_ts'] = current_time
 
-                 if activation_levels[uuid] > 1e-6:
+                 if activation_levels[uuid] > 1e-6: # Check activation *after* decay and addition
                      active_nodes.add(uuid)
-                 elif uuid in activation_levels:
+                 elif uuid in activation_levels: # If activation fell to zero or below during this step
                      del activation_levels[uuid]
 
             logger.debug(f" Step {depth+1} finished. Active Nodes: {len(active_nodes)}. Max Activation: {max(activation_levels.values()) if activation_levels else 0:.3f}")
-            if not active_nodes: break
+            if not active_nodes:
+                 break
 
         # --- Interference Simulation Step ---
         interference_cfg = act_cfg.get('interference', {})
+        interference_applied_count = 0 # Initialize here
+        penalized_nodes = set() # Initialize here
         if interference_cfg.get('enable', False) and self.index and self.index.ntotal > 0:
             logger.info("--- Applying Interference Simulation ---")
             check_threshold = interference_cfg.get('check_threshold', 0.15)
             sim_threshold = interference_cfg.get('similarity_threshold', 0.25) # L2 distance
             penalty_factor = interference_cfg.get('penalty_factor', 0.90)
             k_neighbors = interference_cfg.get('max_neighbors_check', 5)
-            penalized_nodes = set() # Track nodes penalized in this step
-            interference_applied_count = 0
+            # penalized_nodes = set() # Moved initialization up
+            # interference_applied_count = 0 # Moved initialization up
 
             # Iterate through nodes activated above the check threshold
             nodes_to_check = sorted(activation_levels.items(), key=lambda item: item[1], reverse=True)
 
             for source_uuid, source_activation in nodes_to_check:
-                if source_uuid in penalized_nodes: continue # Already penalized, skip check
-                if source_activation < check_threshold: continue # Below threshold to cause interference
+                if source_uuid in penalized_nodes:
+                    continue # Already penalized, skip check
+                if source_activation < check_threshold:
+                    continue # Below threshold to cause interference
 
                 source_embedding = self.embeddings.get(source_uuid)
-                if source_embedding is None: continue
+                if source_embedding is None:
+                    continue
 
                 # Find nearest neighbors in embedding space
                 try:
@@ -1514,10 +1532,11 @@ class GraphMemoryClient:
                     distances, indices = self.index.search(source_embed_np, k_neighbors + 1) # Search k+1 to include self potentially
 
                     local_cluster = [] # (uuid, activation, distance)
-                    if len(indices) > 0:
+                    if len(indices) > 0 and len(indices[0]) > 0: # Check if search returned results
                         for i, faiss_id in enumerate(indices[0]):
                             neighbor_uuid = self.faiss_id_to_uuid.get(int(faiss_id))
-                            if neighbor_uuid == source_uuid: continue # Skip self
+                            if neighbor_uuid is None or neighbor_uuid == source_uuid: # Check if uuid exists and skip self
+                                continue
                             neighbor_activation = activation_levels.get(neighbor_uuid)
                             distance = distances[0][i]
 
@@ -1542,6 +1561,9 @@ class GraphMemoryClient:
                                 logger.debug(f"  Interference: Dominant '{dominant_uuid[:8]}' ({max_act:.3f}) penalized '{neighbor_uuid[:8]}'. "
                                              f"Activation {original_activation:.3f} -> {activation_levels[neighbor_uuid]:.3f} (Dist: {dist:.3f})")
 
+                except AttributeError:
+                    logger.warning("Interference check failed: Faiss index or faiss_id_to_uuid mapping likely not initialized correctly.")
+                    break # Stop interference if index is broken
                 except Exception as e:
                     logger.error(f"Error during interference check for node {source_uuid[:8]}: {e}", exc_info=True)
 
@@ -1555,15 +1577,16 @@ class GraphMemoryClient:
         log_tuning_event("RETRIEVAL_INTERFERENCE_RESULT", {
             "personality": self.personality,
             "initial_node_uuids": initial_node_uuids, # Include for context
-            "interference_applied_count": interference_applied_count if 'interference_applied_count' in locals() else 0,
-            "penalized_node_uuids": list(penalized_nodes) if 'penalized_nodes' in locals() else [],
+            "interference_enabled": interference_cfg.get('enable', False),
+            "interference_applied_count": interference_applied_count,
+            "penalized_node_uuids": list(penalized_nodes),
         })
 
 
         # --- Final Selection & Update ---
         relevant_nodes_dict = {} # Use dict to avoid duplicates easily: uuid -> node_info
         processed_uuids_for_access_count = set()
-        guaranteed_added_count = 0
+        # guaranteed_added_count = 0 # Unused variable
 
         # Pass 1: Select nodes above activation threshold
         for uuid, final_activation in activation_levels.items():
@@ -1575,7 +1598,8 @@ class GraphMemoryClient:
                     if uuid not in processed_uuids_for_access_count:
                         node_data['access_count'] = node_data.get('access_count', 0) + 1
                         processed_uuids_for_access_count.add(uuid)
-                        logger.debug(f"Incremented access count for {uuid[:8]} to {node_data['access_count']}")
+                        # Don't log here, log summary later
+                        # logger.debug(f"Incremented access count for {uuid[:8]} to {node_data['access_count']}")
 
                     node_info = node_data.copy()
                     node_info['final_activation'] = final_activation
@@ -1587,10 +1611,11 @@ class GraphMemoryClient:
                         boost_factor = saliency_cfg.get('recall_boost_factor', 0.05)
                         if boost_factor > 0:
                             current_saliency = node_data.get('saliency_score', 0.0)
-                            new_saliency = min(1.0, current_saliency + boost_factor) # Additive boost, clamped
-                            if new_saliency > current_saliency:
-                                node_data['saliency_score'] = new_saliency
-                                logger.debug(f"Boosted saliency (threshold recall) for {uuid[:8]} to {new_saliency:.3f}")
+                            if isinstance(current_saliency, (int, float)): # Ensure it's a number
+                                new_saliency = min(1.0, current_saliency + boost_factor) # Additive boost, clamped
+                                if new_saliency > current_saliency:
+                                    self.graph.nodes[uuid]['saliency_score'] = new_saliency # Update graph directly
+                                    # logger.debug(f"Boosted saliency (threshold recall) for {uuid[:8]} to {new_saliency:.3f}")
 
                     # --- Emotional Reconsolidation (Threshold Pass) ---
                     if emo_ctx_enabled and emo_ctx_cfg.get('reconsolidation_enable', False):
@@ -1602,21 +1627,23 @@ class GraphMemoryClient:
                                 default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
                                 node_v = node_data.get('emotion_valence', default_v)
                                 node_a = node_data.get('emotion_arousal', default_a)
-                                mood_v, mood_a = effective_mood # Use potentially adjusted mood
-                                dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
-                                emo_dist = math.sqrt(dist_sq)
+                                # Ensure node emotions are valid numbers
+                                if isinstance(node_v, (int, float)) and isinstance(node_a, (int, float)):
+                                    mood_v, mood_a = effective_mood # Use potentially adjusted mood
+                                    dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
+                                    emo_dist = math.sqrt(dist_sq)
 
-                                if emo_dist >= recon_threshold:
-                                    # Nudge node emotion towards current mood
-                                    new_v = node_v + (mood_v - node_v) * recon_factor
-                                    new_a = node_a + (mood_a - node_a) * recon_factor
-                                    # Clamp values
-                                    new_v = max(-1.0, min(1.0, new_v))
-                                    new_a = max(0.0, min(1.0, new_a))
-                                    # Update graph node directly
-                                    self.graph.nodes[uuid]['emotion_valence'] = new_v
-                                    self.graph.nodes[uuid]['emotion_arousal'] = new_a
-                                    logger.debug(f"  EmoRecon (Thresh): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
+                                    if emo_dist >= recon_threshold:
+                                        # Nudge node emotion towards current mood
+                                        new_v = node_v + (mood_v - node_v) * recon_factor
+                                        new_a = node_a + (mood_a - node_a) * recon_factor
+                                        # Clamp values
+                                        new_v = max(-1.0, min(1.0, new_v))
+                                        new_a = max(0.0, min(1.0, new_a))
+                                        # Update graph node directly
+                                        self.graph.nodes[uuid]['emotion_valence'] = new_v
+                                        self.graph.nodes[uuid]['emotion_arousal'] = new_a
+                                        # logger.debug(f"  EmoRecon (Thresh): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
                             except Exception as e:
                                  logger.warning(f"Error during emotional reconsolidation for {uuid[:8]}: {e}")
 
@@ -1631,6 +1658,8 @@ class GraphMemoryClient:
                 if node_data:
                     is_core = node_data.get('is_core_memory', False)
                     current_saliency = node_data.get('saliency_score', 0.0)
+                    # Ensure saliency is a number for comparison
+                    current_saliency = current_saliency if isinstance(current_saliency, (int, float)) else 0.0
                     should_include = False
                     inclusion_reason = ""
 
@@ -1649,9 +1678,9 @@ class GraphMemoryClient:
                         logger.info(f"Guaranteed inclusion for node {uuid[:8]} (Reason: {inclusion_reason}, Act: {final_activation:.3f})")
                         # Increment access count if not already done
                         if uuid not in processed_uuids_for_access_count:
-                            node_data['access_count'] = node_data.get('access_count', 0) + 1
+                            self.graph.nodes[uuid]['access_count'] = self.graph.nodes[uuid].get('access_count', 0) + 1 # Update graph directly
                             processed_uuids_for_access_count.add(uuid)
-                            logger.debug(f"Incremented access count for guaranteed node {uuid[:8]} to {node_data['access_count']}")
+                            # logger.debug(f"Incremented access count for guaranteed node {uuid[:8]} to {node_data['access_count']}")
 
                         node_info = node_data.copy()
                         # Store the actual activation, even if below threshold
@@ -1664,11 +1693,11 @@ class GraphMemoryClient:
                         if saliency_enabled:
                             boost_factor = saliency_cfg.get('recall_boost_factor', 0.05)
                             if boost_factor > 0:
-                                current_saliency = node_data.get('saliency_score', 0.0)
+                                # current_saliency already fetched and validated above
                                 new_saliency = min(1.0, current_saliency + boost_factor) # Additive boost, clamped
                                 if new_saliency > current_saliency:
-                                    node_data['saliency_score'] = new_saliency
-                                    logger.debug(f"Boosted saliency (guaranteed recall) for {uuid[:8]} to {new_saliency:.3f}")
+                                    self.graph.nodes[uuid]['saliency_score'] = new_saliency # Update graph directly
+                                    # logger.debug(f"Boosted saliency (guaranteed recall) for {uuid[:8]} to {new_saliency:.3f}")
 
                         # --- Emotional Reconsolidation (Guarantee Pass) ---
                         if emo_ctx_enabled and emo_ctx_cfg.get('reconsolidation_enable', False):
@@ -1680,21 +1709,23 @@ class GraphMemoryClient:
                                     default_a = self.config.get('emotion_analysis', {}).get('default_arousal', 0.1)
                                     node_v = node_data.get('emotion_valence', default_v)
                                     node_a = node_data.get('emotion_arousal', default_a)
-                                    mood_v, mood_a = effective_mood # Use potentially adjusted mood
-                                    dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
-                                    emo_dist = math.sqrt(dist_sq)
+                                    # Ensure node emotions are valid numbers
+                                    if isinstance(node_v, (int, float)) and isinstance(node_a, (int, float)):
+                                        mood_v, mood_a = effective_mood # Use potentially adjusted mood
+                                        dist_sq = (node_v - mood_v)**2 + (node_a - mood_a)**2
+                                        emo_dist = math.sqrt(dist_sq)
 
-                                    if emo_dist >= recon_threshold:
-                                        # Nudge node emotion towards current mood
-                                        new_v = node_v + (mood_v - node_v) * recon_factor
-                                        new_a = node_a + (mood_a - node_a) * recon_factor
-                                        # Clamp values
-                                        new_v = max(-1.0, min(1.0, new_v))
-                                        new_a = max(0.0, min(1.0, new_a))
-                                        # Update graph node directly
-                                        self.graph.nodes[uuid]['emotion_valence'] = new_v
-                                        self.graph.nodes[uuid]['emotion_arousal'] = new_a
-                                        logger.debug(f"  EmoRecon (Guar): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
+                                        if emo_dist >= recon_threshold:
+                                            # Nudge node emotion towards current mood
+                                            new_v = node_v + (mood_v - node_v) * recon_factor
+                                            new_a = node_a + (mood_a - node_a) * recon_factor
+                                            # Clamp values
+                                            new_v = max(-1.0, min(1.0, new_v))
+                                            new_a = max(0.0, min(1.0, new_a))
+                                            # Update graph node directly
+                                            self.graph.nodes[uuid]['emotion_valence'] = new_v
+                                            self.graph.nodes[uuid]['emotion_arousal'] = new_a
+                                            # logger.debug(f"  EmoRecon (Guar): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
                                 except Exception as e:
                                      logger.warning(f"Error during emotional reconsolidation for guaranteed node {uuid[:8]}: {e}")
 
@@ -1703,6 +1734,9 @@ class GraphMemoryClient:
             logger.info(f"Added {core_added_count} additional nodes due to Core Memory guarantee.")
         if saliency_guaranteed_added_count > 0:
             logger.info(f"Added {saliency_guaranteed_added_count} additional nodes due to high saliency guarantee.")
+        if len(processed_uuids_for_access_count) > 0:
+             logger.info(f"Incremented access count for {len(processed_uuids_for_access_count)} retrieved nodes.")
+
 
         # Convert dict back to list and sort
         relevant_nodes = list(relevant_nodes_dict.values())
@@ -1715,11 +1749,14 @@ class GraphMemoryClient:
             log_parts = []
             for n in relevant_nodes:
                 marker = ""
-                if n.get('guaranteed_inclusion') == 'core': marker = "**" # Core marker
-                elif n.get('guaranteed_inclusion') == 'saliency': marker = "*" # Saliency marker
+                if n.get('guaranteed_inclusion') == 'core':
+                     marker = "**" # Core marker
+                elif n.get('guaranteed_inclusion') == 'saliency':
+                     marker = "*" # Saliency marker
                 log_parts.append(f"{n['uuid'][:8]}({n['final_activation']:.3f}{marker})")
             logger.info(f"Final nodes ({len(relevant_nodes)} total): [{', '.join(log_parts)}]")
-        else: logger.info("No relevant nodes found above threshold.")
+        else:
+            logger.info("No relevant nodes found above threshold or guaranteed.")
 
         # --- Corrected Debug Logging ---
         logger.debug("--- Retrieved Node Details (Top 5) ---")
@@ -1729,8 +1766,9 @@ class GraphMemoryClient:
             strength_val = node.get('memory_strength', '?')
             saliency_str = f"{saliency_val:.2f}" if isinstance(saliency_val, (int, float)) else str(saliency_val)
             strength_str = f"{strength_val:.2f}" if isinstance(strength_val, (int, float)) else str(strength_val)
+            guar_str = f" Guar:{node.get('guaranteed_inclusion')}" if node.get('guaranteed_inclusion') else ""
             # Format the log message including strength
-            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Str:{strength_str} Count:{node.get('access_count','?')} Sal:{saliency_str} Text: '{strip_emojis(node.get('text', 'N/A')[:80])}...'") # Strip emojis
+            logger.debug(f"  {i+1}. ({node['final_activation']:.3f}) UUID:{node['uuid'][:8]} Str:{strength_str} Count:{node.get('access_count','?')} Sal:{saliency_str}{guar_str} Text: '{strip_emojis(node.get('text', 'N/A')[:80])}...'") # Strip emojis
         logger.debug("------------------------------------")
 
         # --- Tuning Log: Retrieval Result ---
@@ -1739,6 +1777,8 @@ class GraphMemoryClient:
             "type": n.get('node_type'),
             "final_activation": n.get('final_activation'),
             "saliency_score": n.get('saliency_score'),
+            "memory_strength": n.get('memory_strength'),
+            "access_count": n.get('access_count'),
             "guaranteed": n.get('guaranteed_inclusion'),
             "text_preview": n.get('text', '')[:50]
         } for n in relevant_nodes]
@@ -1749,7 +1789,8 @@ class GraphMemoryClient:
             "activation_threshold": activation_threshold,
             "guaranteed_saliency_threshold": guaranteed_saliency_threshold,
             "final_retrieved_count": len(relevant_nodes),
-            "final_retrieved_nodes": final_retrieved_data,
+            "final_retrieved_nodes": final_retrieved_data, # Log detailed info
+            "effective_mood": effective_mood, # Log the mood used for retrieval
         })
 
         # --- Dynamic ASM Check (Experimental) ---
@@ -1758,8 +1799,15 @@ class GraphMemoryClient:
             contradiction_threshold = asm_check_cfg.get('contradiction_saliency_threshold', 0.8)
             contradiction_found = False
             contradicting_node_uuid = None
+            node_text = "" # Initialize outside loop
+            asm_summary = "" # Initialize outside loop
+            node_saliency = 0.0 # Initialize outside loop
+
             for node_info in relevant_nodes: # Check retrieved nodes
                 node_saliency = node_info.get('saliency_score', 0.0)
+                # Ensure saliency is numeric for comparison
+                node_saliency = node_saliency if isinstance(node_saliency, (int, float)) else 0.0
+
                 if node_saliency >= contradiction_threshold:
                     # Simple check: Does node text contradict ASM summary statement?
                     # This requires an LLM call for robust checking. Placeholder logic:
@@ -1781,7 +1829,7 @@ class GraphMemoryClient:
                         })
                         break # Handle first contradiction found for now
 
-            if contradiction_found:
+            if contradiction_found and contradicting_node_uuid: # Ensure node UUID is set
                 # Trigger action: e.g., flag ASM for review, or trigger targeted regeneration
                 logger.warning(f"*** Potential ASM Contradiction Detected! *** Node {contradicting_node_uuid[:8]} vs Current ASM.")
                 # Simple flag for now, actual regeneration needs more logic
@@ -1793,9 +1841,9 @@ class GraphMemoryClient:
                 log_tuning_event("ASM_CONTRADICTION_FLAGGED", {
                     "personality": self.personality,
                     "conflicting_node_uuid": contradicting_node_uuid,
-                    "conflicting_node_text_preview": node_text[:100] if 'node_text' in locals() else "N/A",
-                    "conflicting_node_saliency": node_saliency if 'node_saliency' in locals() else "N/A",
-                    "asm_summary_preview": asm_summary[:100] if 'asm_summary' in locals() else "N/A",
+                    "conflicting_node_text_preview": node_text[:100],
+                    "conflicting_node_saliency": node_saliency,
+                    "asm_summary_preview": asm_summary[:100],
                     "asm_state_at_detection": self.autobiographical_model.copy() # Log the ASM state when contradiction found
                 })
                 # Optionally trigger _generate_autobiographical_model immediately with specific context?
@@ -2459,22 +2507,30 @@ class GraphMemoryClient:
         Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, ASM, and emotional instructions.
         Applies memory strength budgeting.
         """
-        # Use the correct logger name: 'logger'
-        logger.debug(
-            f"_construct_prompt received user_input: '{user_input}', Mood: {current_mood}")  # Corrected logger name
+        logger.debug(f"_construct_prompt received user_input: '{user_input}', Mood: {current_mood}")
 
         if tokenizer is None:
-            logger.error("Tokenizer unavailable for prompt construction.")  # Corrected logger name
+            logger.error("Tokenizer unavailable for prompt construction.")
+            # Provide a minimal prompt even without tokenizer
             return f"<start_of_turn>user\n{user_input}<end_of_turn>\n<start_of_turn>model\n"
 
         # --- Time formatting ---
         time_str = "[Current time unavailable]"
         try:
-            localtz = ZoneInfo("Europe/Berlin") if ZoneInfo else timezone.utc
+            # Use ZoneInfo for proper timezone handling if available (Python 3.9+)
+            localtz = ZoneInfo("Europe/Berlin") # Use a known timezone string
+        except ImportError:
+            logger.warning("zoneinfo module not available, falling back to UTC.")
+            localtz = timezone.utc # Fallback to UTC if zoneinfo is not installed
+        except Exception as e:
+            logger.warning(f"Could not initialize ZoneInfo, falling back to UTC: {e}")
+            localtz = timezone.utc # Fallback to UTC on other errors
+
+        try:
             now = datetime.now(localtz)
             time_str = now.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
         except Exception as e:
-            logger.warning(f"Could not get/format local time: {e}")  # Corrected logger name
+            logger.warning(f"Could not get/format local time: {e}")
 
         # --- Gemma Instruct format tags ---
         start_turn, end_turn = "<start_of_turn>", "<end_of_turn>"
@@ -2482,33 +2538,32 @@ class GraphMemoryClient:
 
         # --- Format CURRENT user input ---
         user_input_fmt = f"{user_tag}{user_input}{end_turn}\n"
-        logger.debug(
-            f"Formatted current user input (user_input_fmt): '{user_input_fmt[:150]}...'")  # Corrected logger name
+        logger.debug(f"Formatted current user input (user_input_fmt): '{user_input_fmt[:150]}...'")
 
         final_model_tag = f"{model_tag}"
         time_info_block = f"{model_tag}Current time is {time_str}.{end_turn}\n"
-        asm_block = ""  # Initialize ASM block
+        asm_block = "" # Initialize ASM block
 
         # --- Format Structured ASM Block (Using updated fields) ---
         if self.autobiographical_model:
             try:
                 # Format the structured data into a readable block
                 asm_parts = ["[My Self-Perception:]"]
-                if self.autobiographical_model.get("summary_statement"): asm_parts.append(
-                    f"- Summary: {self.autobiographical_model['summary_statement']}")
-                if self.autobiographical_model.get("core_traits"): asm_parts.append(
-                    f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
-                if self.autobiographical_model.get("recurring_themes"): asm_parts.append(
-                    f"- Often Discuss: {', '.join(self.autobiographical_model['recurring_themes'])}")
+                if self.autobiographical_model.get("summary_statement"):
+                    asm_parts.append(f"- Summary: {self.autobiographical_model['summary_statement']}")
+                if self.autobiographical_model.get("core_traits"):
+                    asm_parts.append(f"- Traits: {', '.join(self.autobiographical_model['core_traits'])}")
+                if self.autobiographical_model.get("recurring_themes"):
+                    asm_parts.append(f"- Often Discuss: {', '.join(self.autobiographical_model['recurring_themes'])}")
                 # Use new fields
-                if self.autobiographical_model.get("goals_motivations"): asm_parts.append(
-                    f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
-                if self.autobiographical_model.get("relational_stance"): asm_parts.append(
-                    f"- My Role: {self.autobiographical_model['relational_stance']}")
-                if self.autobiographical_model.get("emotional_profile"): asm_parts.append(
-                    f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
+                if self.autobiographical_model.get("goals_motivations"):
+                    asm_parts.append(f"- Goals/Motivations: {', '.join(self.autobiographical_model['goals_motivations'])}")
+                if self.autobiographical_model.get("relational_stance"):
+                    asm_parts.append(f"- My Role: {self.autobiographical_model['relational_stance']}")
+                if self.autobiographical_model.get("emotional_profile"):
+                    asm_parts.append(f"- Emotional Profile: {self.autobiographical_model['emotional_profile']}")
 
-                if len(asm_parts) > 1:  # Only add block if there's content beyond the header
+                if len(asm_parts) > 1: # Only add block if there's content beyond the header
                     asm_text = "\n".join(asm_parts)
                     asm_block = f"{model_tag}{asm_text}{end_turn}\n"
                     logger.debug("Structured ASM block created.")
@@ -2516,18 +2571,20 @@ class GraphMemoryClient:
                     logger.debug("ASM dictionary present but contained no usable fields.")
             except Exception as e:
                 logger.error(f"Error formatting structured ASM for prompt: {e}", exc_info=True)
-                asm_block = ""  # Clear block on formatting error
+                asm_block = "" # Clear block on formatting error
         else:
             logger.debug("No ASM summary available to add to prompt.")
 
         # --- Token Budget Calculation ---
         prompt_cfg = self.config.get('prompting', {})
         context_headroom = prompt_cfg.get('context_headroom', 250)
-        mem_budget_ratio = prompt_cfg.get('memory_budget_ratio', 0.40)  # Slightly reduced default for memory
-        hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.45)  # Slightly reduced default for history
-        # Workspace budget is calculated later
+        mem_budget_ratio = prompt_cfg.get('memory_budget_ratio', 0.40)
+        hist_budget_ratio = prompt_cfg.get('history_budget_ratio', 0.45)
+
         # Add the system note to fixed parts
-        system_note_block = f"{model_tag}[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]{end_turn}\n"
+        # Note: System instructions are added later as separate turns for clarity
+        system_note_block = "" # Placeholder, actual system notes added later
+
         # --- Format Drive State Block ---
         drive_block = ""
         if self.config.get('subconscious_drives', {}).get('enabled', False) and self.drive_state:
@@ -2558,51 +2615,73 @@ class GraphMemoryClient:
                 logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
                 drive_block = ""
 
-       # --- Use provided emotional instructions ---
-       emotional_instructions_block = ""
-       if emotional_instructions:
+        # --- Use provided emotional instructions ---
+        emotional_instructions_block = ""
+        if emotional_instructions:
             emotional_instructions_block = f"{model_tag}{emotional_instructions}{end_turn}\n"
             logger.debug("Adding emotional instructions block (provided) to prompt.")
 
-       try:
+        # --- Calculate fixed tokens (excluding history, memory, workspace, system instructions) ---
+        try:
             fixed_tokens = (len(tokenizer.encode(time_info_block)) +
-                            len(tokenizer.encode(system_note_block)) +  # Add system note tokens
-                            len(tokenizer.encode(asm_block)) +  # Add ASM block tokens
-                            len(tokenizer.encode(drive_block)) +  # Add Drive block tokens
-                            len(tokenizer.encode(emotional_instructions_block)) + # Add Emotional Instructions tokens
+                            len(tokenizer.encode(asm_block)) +
+                            len(tokenizer.encode(drive_block)) +
+                            len(tokenizer.encode(emotional_instructions_block)) +
                             len(tokenizer.encode(user_input_fmt)) +
                             len(tokenizer.encode(final_model_tag)))
         except Exception as e:
-            logger.error(
-                f"Tokenization error for fixed prompt parts (incl. ASM/System Note): {e}")  # Corrected logger name
-            fixed_tokens = len(time_info_block) + len(user_input_fmt) + len(final_model_tag)
-            logger.warning("Using character count proxy for fixed tokens.")  # Corrected logger name
+            logger.error(f"Tokenization error for initial fixed prompt parts: {e}")
+            # Estimate if tokenization fails
+            fixed_tokens = (len(time_info_block) + len(asm_block) + len(drive_block) +
+                            len(emotional_instructions_block) + len(user_input_fmt) + len(final_model_tag))
+            logger.warning("Using character count proxy for initial fixed tokens.")
 
-        total_available_budget = max_context_tokens - fixed_tokens - context_headroom
-        logger.debug(
-            f"Token counts: Max={max_context_tokens}, Fixed={fixed_tokens}, Headroom={context_headroom}, Total Available={total_available_budget}")
+        # --- Estimate tokens for system instructions ---
+        # System instructions are added later, but we need to budget for them now.
+        system_instructions_text = """
+        [System Note: Be aware of the current time provided.]
+        [System Note: Pay close attention to sequence and timing.]
+        [System Note: **Synthesize** information.]
+        [System Note: Handle conversation breaks.]
+        [System Note: Use mood/drive state.]
+        [System Note: Use 'Self-Perception' summary.]
+        [System Note: **CRITICAL: Only use provided context.**]
+        [System Note: Action Capability Instructions...]
+        [System Note: Handle retrieved intentions.]
+        [System Note: CRITICAL - Use <thought> tags.]
+        """ # Simplified text for estimation
+        try:
+            # Estimate tokens for system instructions block (including model tags)
+            system_instructions_tokens_estimate = len(tokenizer.encode(f"{model_tag}{system_instructions_text}{end_turn}\n")) * 10 # Rough estimate, multiply by number of instructions
+        except Exception:
+            system_instructions_tokens_estimate = 300 # Fallback estimate
+
+        # Calculate total available budget AFTER accounting for fixed parts AND system instructions estimate
+        total_available_budget = max_context_tokens - fixed_tokens - system_instructions_tokens_estimate - context_headroom
+        logger.debug(f"Token counts: Max={max_context_tokens}, Fixed={fixed_tokens}, SysInstrEst={system_instructions_tokens_estimate}, Headroom={context_headroom}, Total Available={total_available_budget}")
 
         if total_available_budget <= 0:
-            logger.warning(
-                f"Low token budget ({total_available_budget}). Only including current input and time.")  # Use total_available_budget
+            logger.warning(f"Low token budget ({total_available_budget}) after fixed parts and system instructions estimate. Only including essentials.")
+            # Assemble minimal prompt: Time, User Input, Model Tag (System instructions won't fit)
             final_prompt = time_info_block + user_input_fmt + final_model_tag
-            logger.debug(f"Final Prompt (Low Budget): '{final_prompt[:150]}...'")  # Corrected logger name
-            return final_prompt  # Return early if no budget
+            logger.debug(f"Final Prompt (Low Budget): '{final_prompt[:150]}...'")
+            return final_prompt # Return early if no budget
 
         # --- Calculate Budgets (Memory & History first, Workspace gets remainder) ---
         mem_budget = int(total_available_budget * mem_budget_ratio)
         hist_budget = int(total_available_budget * hist_budget_ratio)
-        # Workspace budget is whatever is left over
         workspace_budget = total_available_budget - mem_budget - hist_budget
-        # Ensure workspace budget isn't negative if ratios exceed 1.0
-        workspace_budget = max(0, workspace_budget)
+        workspace_budget = max(0, workspace_budget) # Ensure non-negative
+        mem_budget = max(0, mem_budget) # Ensure non-negative
+        hist_budget = max(0, hist_budget) # Ensure non-negative
+
         logger.debug(f"Budget Allocation: Memory={mem_budget}, History={hist_budget}, Workspace={workspace_budget}")
-        # --- Tuning Log: Prompt Budgeting ---
         log_tuning_event("PROMPT_BUDGETING", {
             "personality": self.personality,
             "user_input_preview": user_input[:100],
             "max_context_tokens": max_context_tokens,
             "fixed_tokens": fixed_tokens,
+            "system_instructions_tokens_estimate": system_instructions_tokens_estimate,
             "headroom": context_headroom,
             "total_available_budget": total_available_budget,
             "memory_budget": mem_budget,
@@ -2613,10 +2692,8 @@ class GraphMemoryClient:
         # --- Workspace Context Construction (Summaries) ---
         workspace_context_str = ""
         cur_workspace_tokens = 0
-        # Use the calculated workspace_budget
         logger.debug(f"Constructing Workspace Context (Budget: {workspace_budget})")
 
-        # Get file list
         workspace_files, list_msg = file_manager.list_files(self.config, self.personality)
         if workspace_files is None:
             logger.error(f"Failed to list workspace files for context: {list_msg}")
@@ -2624,28 +2701,25 @@ class GraphMemoryClient:
         elif not workspace_files:
             workspace_context_str = f"{model_tag}[Workspace State: Empty]{end_turn}\n"
         else:
-            # Limit number of files to summarize based on config
             max_files_to_summarize = self.config.get('prompting', {}).get('max_files_to_summarize_in_context', 5)
             files_to_process = sorted(workspace_files)[:max_files_to_summarize]
-            logger.info(
-                f"Processing up to {len(files_to_process)} files for workspace context summary (limit: {max_files_to_summarize}).")
+            logger.info(f"Processing up to {len(files_to_process)} files for workspace context summary (limit: {max_files_to_summarize}).")
 
             ws_parts = ["[Workspace State (Filename: Summary):]"]
-            ws_header_footer_tags = f"{model_tag}{end_turn}\n"  # Approx tokens for surrounding tags
+            ws_header_footer_tags = f"{model_tag}{end_turn}\n"
             try:
                 ws_format_tokens = len(tokenizer.encode(ws_header_footer_tags + "\n".join(ws_parts)))
-            except:
-                ws_format_tokens = 50  # Estimate
+            except Exception:
+                ws_format_tokens = 50 # Estimate
 
             effective_ws_budget = workspace_budget - ws_format_tokens
 
             for filename in files_to_process:
-                summary_line = f"Filename: {filename}\nSummary: [Content unavailable or too long]"  # Default
+                summary_line = f"Filename: {filename}\nSummary: [Content unavailable or too long]" # Default
                 file_content, read_msg = file_manager.read_file(self.config, self.personality, filename)
 
                 if file_content is not None:
-                    # Limit content length before sending to summarizer to avoid excessive tokens
-                    max_content_chars = 2000  # Limit content length for summarization prompt
+                    max_content_chars = 2000
                     content_for_summary = file_content[:max_content_chars]
                     if len(file_content) > max_content_chars:
                         content_for_summary += "\n... [Content Truncated]"
@@ -2659,39 +2733,37 @@ class GraphMemoryClient:
                     logger.warning(f"Could not read file '{filename}' for context summary: {read_msg}")
                     summary_line = f"Filename: {filename}\nSummary: [Could not read file]"
 
-                # Check token count before adding
                 try:
                     line_tokens = len(tokenizer.encode(summary_line + "\n---\n"))
-                except:
-                    line_tokens = len(summary_line) // 3  # Estimate
+                except Exception:
+                    line_tokens = len(summary_line) // 3 # Estimate
 
                 if cur_workspace_tokens + line_tokens <= effective_ws_budget:
                     ws_parts.append(summary_line)
-                    ws_parts.append("---")  # Separator
+                    ws_parts.append("---") # Separator
                     cur_workspace_tokens += line_tokens
                 else:
-                    logger.warning(
-                        f"Workspace context budget ({effective_ws_budget}) reached. Skipping remaining files.")
+                    logger.warning(f"Workspace context budget ({effective_ws_budget}) reached. Skipping remaining files.")
                     ws_parts.append("[Remaining files omitted due to context length limit]")
-                    break  # Stop adding files
+                    break
 
-            # Join the parts into a single string first
             workspace_content = "\n".join(ws_parts)
-            # Then use the joined string in the f-string
             workspace_context_str = f"{model_tag}{workspace_content}{end_turn}\n"
             try:
                 cur_workspace_tokens = len(tokenizer.encode(workspace_context_str))
-            except:
-                cur_workspace_tokens = len(workspace_context_str) // 3  # Estimate
+            except Exception:
+                cur_workspace_tokens = len(workspace_context_str) // 3 # Estimate
             logger.debug(f"Actual Workspace Tokens Used: {cur_workspace_tokens}")
 
         # --- Memory Context Construction (with Strength Budgeting) ---
         mem_ctx_str = ""
+        core_mem_ctx_str = ""
         cur_mem_tokens = 0
+        cur_core_mem_tokens = 0
         mem_header = "---\n[Relevant Past Information - Use this to recall facts (like names) and context]:\n"
+        core_header = "---\n[CORE MEMORY - CRITICAL CONTEXT - Adhere Closely]:\n"
         mem_footer = "\n---"
         mem_placeholder_no_mem = "[No relevant memories found or fit budget]"
-        mem_placeholder_too_long = "[Memory Omitted Due To Length]"
         mem_placeholder_error = "[Memory Error Processing Context]"
         mem_content = mem_placeholder_no_mem # Default if no memories fit
         core_mem_content = "[No Core Memories Retrieved]" # Default for core memories
@@ -2699,7 +2771,6 @@ class GraphMemoryClient:
         included_core_mem_uuids = []
 
         if memory_chain and mem_budget > 0:
-            # Separate core vs regular memories FIRST
             core_memories = []
             regular_memories = []
             for node in memory_chain:
@@ -2708,308 +2779,194 @@ class GraphMemoryClient:
                 else:
                     regular_memories.append(node)
 
-            # Sort regular memories by strength/timestamp for budgeting
             regular_memories.sort(key=lambda x: (x.get('memory_strength', 0.0), x.get('timestamp', '')), reverse=True)
-            # Sort core memories chronologically for display
             core_memories.sort(key=lambda x: x.get('timestamp', ''))
 
-            # --- Format Core Memories (Always include if possible, within budget) ---
+            # --- Format Core Memories ---
             core_mem_parts = []
-            core_mem_tokens = 0
-            # --- Stronger Header for Core Memories ---
-            core_header = "---\n[CORE MEMORY - CRITICAL CONTEXT - Adhere Closely]:\n"
-            core_footer = "\n---"
+            core_mem_tokens_calc = 0
             try:
-                core_format_tokens = len(tokenizer.encode(f"{model_tag}{core_header}{core_footer}{end_turn}\n")) if core_memories else 0
-            except Exception: core_format_tokens = 50 if core_memories else 0
+                core_format_tokens = len(tokenizer.encode(f"{model_tag}{core_header}{mem_footer}{end_turn}\n")) if core_memories else 0
+            except Exception:
+                core_format_tokens = 50 if core_memories else 0
 
             effective_core_budget = mem_budget - core_format_tokens # Budget just for core content
 
             for node in core_memories:
                 spk = node.get('speaker', '?'); txt = node.get('text', ''); ts = node.get('timestamp', '')
                 relative_time_desc = self._get_relative_time_desc(ts)
-                # Core memories get full text (no strength truncation)
-                # --- Add [CORE] marker ---
                 fmt_mem = f"[CORE] {spk} ({relative_time_desc}): {txt}\n"
-                try: mem_tok_len = len(tokenizer.encode(fmt_mem))
-                except Exception: continue # Skip if tokenization fails
+                try:
+                    mem_tok_len = len(tokenizer.encode(fmt_mem))
+                except Exception:
+                    continue # Skip if tokenization fails
 
-                if core_mem_tokens + mem_tok_len <= effective_core_budget:
+                if core_mem_tokens_calc + mem_tok_len <= effective_core_budget:
                     core_mem_parts.append(fmt_mem)
-                    core_mem_tokens += mem_tok_len
+                    core_mem_tokens_calc += mem_tok_len
                     included_core_mem_uuids.append(node['uuid'][:8])
                 else:
                     logger.warning("Core memory budget reached. Some core memories omitted.")
-                    break # Stop adding core memories
+                    break
 
             if core_mem_parts:
-                core_mem_content = core_header + "".join(core_mem_parts) + core_footer
+                core_mem_content = core_header + "".join(core_mem_parts) + mem_footer
+                core_mem_ctx_str = f"{model_tag}{core_mem_content}{end_turn}\n"
+                try:
+                    cur_core_mem_tokens = len(tokenizer.encode(core_mem_ctx_str))
+                except Exception:
+                    cur_core_mem_tokens = len(core_mem_ctx_str) // 3 # Estimate
+            else:
+                core_mem_ctx_str = ""
+                cur_core_mem_tokens = 0
+
+
             # Update remaining budget for regular memories
-            mem_budget -= core_mem_tokens + core_format_tokens
-            mem_budget = max(0, mem_budget) # Ensure not negative
+            remaining_mem_budget = max(0, mem_budget - cur_core_mem_tokens)
 
-            # --- Format Regular Memories (Budgeted by strength) ---
+            # --- Format Regular Memories ---
             mem_parts = []
-            tmp_tokens = 0
+            regular_mem_tokens_calc = 0
             try:
-                format_tokens = len(tokenizer.encode(f"{model_tag}{mem_header}{mem_footer}{end_turn}\n"))
+                format_tokens = len(tokenizer.encode(f"{model_tag}{mem_header}{mem_footer}{end_turn}\n")) if regular_memories else 0
             except Exception:
-                format_tokens = 50
-            effective_mem_budget = mem_budget - format_tokens # Budget for regular memories
+                format_tokens = 50 if regular_memories else 0
 
-            # Process sorted REGULAR memories
+            effective_mem_budget = remaining_mem_budget - format_tokens
+
+            mem_parts_with_ts = [] # Store (timestamp, formatted_string) for sorting later
+
             for node in regular_memories:
                 spk = node.get('speaker', '?'); txt = node.get('text', ''); ts = node.get('timestamp', '')
                 strength = node.get('memory_strength', 0.0)
-                saliency = node.get('saliency_score', 0.0) # Get saliency
+                saliency = node.get('saliency_score', 0.0)
                 relative_time_desc = self._get_relative_time_desc(ts)
-                importance_marker = "" # Initialize marker
-                # Add marker for high saliency regular memories
-                if saliency >= 0.9: # Use a threshold slightly higher than guarantee?
-                    importance_marker = "[IMPORTANT] "
+                importance_marker = "[IMPORTANT] " if saliency >= 0.9 else ""
 
-                # --- Memory Strength Budgeting ---
-                # Reduce detail for weaker memories (e.g., truncate text)
-                max_chars_for_node = 1000  # Default max chars
-                if strength < 0.3:
-                    max_chars_for_node = 80  # Very weak, very short preview
-                elif strength < 0.6:
-                    max_chars_for_node = 200  # Weak, short preview
+                max_chars_for_node = 1000
+                if strength < 0.3: max_chars_for_node = 80
+                elif strength < 0.6: max_chars_for_node = 200
 
                 truncated_txt = txt[:max_chars_for_node]
                 if len(txt) > max_chars_for_node: truncated_txt += "..."
 
-                # Format memory entry (include strength indicator AND importance marker)
                 fmt_mem = f"{importance_marker}{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
                 try:
                     mem_tok_len = len(tokenizer.encode(fmt_mem))
                 except Exception as e:
-                    logger.warning(f"Tokenization error for memory item: {e}. Skipping memory item.")
+                    logger.warning(f"Tokenization error for memory item: {e}. Skipping.")
                     continue
 
-                if tmp_tokens + mem_tok_len <= effective_mem_budget:
-                    mem_parts.append(fmt_mem)
-                    tmp_tokens += mem_tok_len
-                    included_mem_uuids.append(node['uuid'][:8])
+                if regular_mem_tokens_calc + mem_tok_len <= effective_mem_budget:
+                    # Store with timestamp for later sorting
+                    mem_parts_with_ts.append((ts, fmt_mem))
+                    regular_mem_tokens_calc += mem_tok_len
+                    included_mem_uuids.append(node['uuid'][:8]) # Track included regular memories
                 else:
-                    logger.debug("Memory budget reached during context construction.")
-                    break
+                    logger.debug("Regular memory budget reached during context construction.")
+                    break # Stop processing regular memories
 
-            if mem_parts:
-                # Re-sort the *included* parts chronologically for the final prompt
-                # This requires storing timestamp along with fmt_mem temporarily
-                mem_parts_with_ts = []
-                # <<< FIX: Iterate over 'regular_memories', not 'mem_chain_sorted' >>>
-                for node in regular_memories:
-                    # Check if this node's UUID (first 8 chars) is in the list of included UUIDs
-                    if node['uuid'][:8] in included_mem_uuids:
-                        spk = node.get('speaker', '?')
-                        txt = node.get('text', '')
-                        ts = node.get('timestamp', '')
-                        strength = node.get('memory_strength', 0.0)
-                        relative_time_desc = self._get_relative_time_desc(ts)
-                        max_chars_for_node = 1000
-                        if strength < 0.3:
-                            max_chars_for_node = 80
-                        elif strength < 0.6:
-                            max_chars_for_node = 200
-                        truncated_txt = txt[:max_chars_for_node]
-                        if len(txt) > max_chars_for_node: truncated_txt += "..."
-                        # --- Add importance marker here too ---
-                        saliency = node.get('saliency_score', 0.0)
-                        importance_marker = "[IMPORTANT] " if saliency >= 0.9 else ""
-                        fmt_mem = f"{importance_marker}{spk} ({relative_time_desc}) [Str: {strength:.2f}]: {truncated_txt}\n"
-                        mem_parts_with_ts.append((ts, fmt_mem))
-
-                mem_parts_with_ts.sort(key=lambda item: item[0])  # Sort by timestamp (ascending)
-                sorted_mem_parts = [item[1] for item in mem_parts_with_ts]  # Extract sorted strings
-                mem_content = mem_header + "".join(sorted_mem_parts) + mem_footer # Regular memories content
-
-        # --- Format the final memory blocks ---
-        # Core Memory Block
-        if core_mem_content != "[No Core Memories Retrieved]":
-            full_core_mem_block = f"{model_tag}{core_mem_content}{end_turn}\n"
-        else:
-            full_core_mem_block = "" # No core block if none retrieved/fit
-
-        # Regular Memory Block
-        if mem_content != mem_placeholder_no_mem:
-            full_mem_block = f"{model_tag}{mem_content}{end_turn}\n"
-        else:
-            # Only add placeholder if NO core memories were added either
-            if not full_core_mem_block:
-                 full_mem_block = f"{model_tag}{mem_placeholder_no_mem}{end_turn}\n"
+            if mem_parts_with_ts:
+                # Sort the included regular memories chronologically
+                mem_parts_with_ts.sort(key=lambda item: item[0])
+                sorted_mem_parts = [item[1] for item in mem_parts_with_ts]
+                mem_content = mem_header + "".join(sorted_mem_parts) + mem_footer
+                mem_ctx_str = f"{model_tag}{mem_content}{end_turn}\n"
+                try:
+                    cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
+                except Exception:
+                    cur_mem_tokens = len(mem_ctx_str) // 3 # Estimate
+            elif not core_mem_ctx_str: # Only add placeholder if NO memories (core or regular) were added
+                mem_ctx_str = f"{model_tag}{mem_placeholder_no_mem}{end_turn}\n"
+                try:
+                    cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
+                except Exception:
+                    cur_mem_tokens = 50 # Estimate
             else:
-                 full_mem_block = "" # Don't add regular placeholder if core exists
+                 mem_ctx_str = "" # No regular memories, but core memories exist
+                 cur_mem_tokens = 0
 
-        # Calculate final token counts (handle potential errors)
-        try:
-            cur_core_mem_tokens = len(tokenizer.encode(full_core_mem_block)) if full_core_mem_block else 0
-            cur_mem_tokens = len(tokenizer.encode(full_mem_block)) if full_mem_block else 0
-        except Exception as e:
-            logger.error(f"Tokenization error for memory block: {e}. Using error placeholder.")
-            # Reset memory strings and tokens if tokenization fails
-            core_mem_ctx_str = ""
-            mem_ctx_str = f"{model_tag}{mem_placeholder_error}{end_turn}\n"
-            cur_core_mem_tokens = 0
-            try: # Recalculate token count for the error placeholder
+        else: # No memory chain provided or zero memory budget
+            if mem_budget <= 0: logger.debug("Memory budget is zero, skipping memory context.")
+            else: logger.debug("No memory chain provided.")
+            mem_ctx_str = f"{model_tag}{mem_placeholder_no_mem}{end_turn}\n"
+            try:
                 cur_mem_tokens = len(tokenizer.encode(mem_ctx_str))
-            except Exception: cur_mem_tokens = 50 # Estimate if even placeholder fails
-
-        # Assign strings for final prompt assembly (potentially updated by except block)
-        core_mem_ctx_str = full_core_mem_block if 'core_mem_ctx_str' not in locals() else core_mem_ctx_str # Use value from except block if it ran
-        mem_ctx_str = full_mem_block if 'mem_ctx_str' not in locals() else mem_ctx_str # Use value from except block if it ran
+            except Exception:
+                cur_mem_tokens = 50 # Estimate
+            core_mem_ctx_str = ""
+            cur_core_mem_tokens = 0
 
         # Log included UUIDs
         if included_core_mem_uuids: logger.debug(f"Included Core Memory UUIDs: {included_core_mem_uuids}")
-        if included_mem_uuids: logger.debug(f"Included Regular Memory UUIDs (chrono): {included_mem_uuids}")
+        if included_mem_uuids: logger.debug(f"Included Regular Memory UUIDs (chrono): {included_mem_uuids}") # Log the tracked UUIDs
 
-        # Check budget consistency (optional)
         total_mem_tokens_used = cur_core_mem_tokens + cur_mem_tokens
-        original_total_mem_budget = int(total_available_budget * mem_budget_ratio) # Recalculate original target
-        if total_mem_tokens_used > original_total_mem_budget + 10: # Allow small buffer
+        original_total_mem_budget = int(total_available_budget * mem_budget_ratio)
+        if total_mem_tokens_used > original_total_mem_budget + 10:
             logger.warning(f"Final memory tokens ({total_mem_tokens_used}) exceed original budget ({original_total_mem_budget}). Check logic.")
-        else:
-            logger.debug(f"Total Memory Tokens Used: {total_mem_tokens_used} (Core: {cur_core_mem_tokens}, Regular: {cur_mem_tokens})")
+        logger.debug(f"Total Memory Tokens Used: {total_mem_tokens_used} (Core: {cur_core_mem_tokens}, Regular: {cur_mem_tokens})")
 
         # --- History Context Construction ---
-        # (Keep existing history logic, but use remaining budget after memory)
-        # Recalculate remaining budget for history AFTER memory blocks are finalized
-        remaining_budget_for_hist_ws = total_available_budget - total_mem_tokens_used
+        # Recalculate remaining budget for history AFTER memory and workspace are finalized
+        remaining_budget_for_hist = total_available_budget - total_mem_tokens_used - cur_workspace_tokens
+        hist_budget = max(0, remaining_budget_for_hist) # History gets whatever is left
 
-        # Calculate workspace budget ratio based on memory and history ratios
-        workspace_budget_ratio = max(0.0, 1.0 - mem_budget_ratio - hist_budget_ratio) # Ensure non-negative
-
-        # Calculate history budget based on the ratio of history to (history + workspace) within the remaining budget
-        total_ratio_hist_ws = hist_budget_ratio + workspace_budget_ratio
-        if total_ratio_hist_ws > 1e-6: # Avoid division by zero
-            hist_budget = int(remaining_budget_for_hist_ws * (hist_budget_ratio / total_ratio_hist_ws))
-        else:
-            hist_budget = 0 # If both ratios are zero, history gets nothing
-
-        workspace_budget = remaining_budget_for_hist_ws - hist_budget # Workspace gets true remainder
-        workspace_budget = max(0, workspace_budget) # Ensure non-negative
-        hist_budget = max(0, hist_budget) # Ensure non-negative
-        logger.debug(f"Re-calculated Budgets: History={hist_budget}, Workspace={workspace_budget}")
+        logger.debug(f"Re-calculated History Budget: {hist_budget}")
 
         hist_parts = []
         cur_hist_tokens = 0
-        # Use the pre-calculated hist_budget
-        logger.debug(f"Constructing History Context (Budget: {hist_budget})")
         included_hist_count = 0
 
-        history_to_process = conversation_history  # Use history passed in
+        history_to_process = conversation_history
 
-        if history_to_process and hist_budget > 0:  # Use hist_budget here
+        if history_to_process and hist_budget > 0:
             for turn in reversed(history_to_process):
                 spk = turn.get('speaker', '?')
                 txt = turn.get('text', '')
-                logger.debug(f"Processing history turn: Speaker={spk}, Text='{txt[:80]}...'")  # Corrected logger name
+                logger.debug(f"Processing history turn: Speaker={spk}, Text='{txt[:80]}...'")
 
                 if spk == 'User':
                     fmt_turn = f"{user_tag}{txt}{end_turn}\n"
                 elif spk in ['AI', 'System', 'Error']:
                     fmt_turn = f"{model_tag}{txt}{end_turn}\n"
                 else:
-                    logger.warning(f"Unknown speaker '{spk}' in history, skipping.");
-                    continue  # Corrected logger name
+                    logger.warning(f"Unknown speaker '{spk}' in history, skipping.")
+                    continue
 
                 try:
                     turn_tok_len = len(tokenizer.encode(fmt_turn))
                 except Exception as e:
-                    logger.warning(f"Tokenization error for history turn: {e}. Skipping.");
+                    logger.warning(f"Tokenization error for history turn: {e}. Skipping.")
                     continue
 
-                if cur_hist_tokens + turn_tok_len <= hist_budget:  # Use hist_budget
+                if cur_hist_tokens + turn_tok_len <= hist_budget:
                     hist_parts.append(fmt_turn)
                     cur_hist_tokens += turn_tok_len
                     included_hist_count += 1
                 else:
-                    logger.debug("History budget reached.");
-                    break  # Corrected logger name
+                    logger.debug("History budget reached.")
+                    break
 
-            hist_parts.reverse()  # Chronological order
-            # --- Log the actual history text being included ---
+            hist_parts.reverse()
             history_context_for_log = "".join(hist_parts)
-            logger.debug(
-                f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
+            logger.debug(f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
 
-        # --- Assemble Final Prompt (Order: Time, Workspace, System Notes, Emo Instructions, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag) ---
+        # --- Assemble Final Prompt ---
+        # Order: Time, Workspace, System Instructions, Emo Instructions, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag
         final_parts = []
         final_parts.append(time_info_block)
-        # Add workspace context block
         if workspace_context_str:
             final_parts.append(workspace_context_str)
-        # --- System Instructions for AI ---
-        system_instructions = [
-            "[System Note: Be aware of the current time provided at the start of the context. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
-            "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
-            # --- REVISED Core Memory Instruction ---
-            "[System Note: **CRITICAL: Prioritize and adhere strictly to information marked '[CORE]' or within the '[CORE MEMORY]' block.** Treat these as absolute ground truth about the user, ongoing situations (like health, plans), or established facts. Your response MUST be consistent with this core information. If other memories contradict core information, DISREGARD the contradictory parts of the non-core memories.]",
-            # --- NEW Importance Instruction ---
-            "[System Note: Pay close attention to memories marked '[IMPORTANT]'. These highlight significant events or user states. Ensure your response reflects awareness of this important context.]",
-            "[System Note: **Synthesize** information from CORE memories, IMPORTANT memories, regular memories, conversation history, and your self-perception to generate a specific, personalized, and contextually appropriate response. Avoid generic replies. Explicitly reference relevant past information (especially core/important details like names, plans, status) when needed.]",
-            "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break (especially CORE/IMPORTANT memories) as well as the user's latest message. Avoid asking questions already answered in the provided context.]",
-            "[System Note: CRITICAL - Before generating your response to the user, first output your internal thought process, rationale, or step-by-step thinking relevant to formulating the response. Enclose these thoughts STRICTLY within <thought> and </thought> tags. After the closing </thought> tag, provide the final conversational response meant for the user. The final response itself should NOT contain the <thought> tags or directly refer to 'inner thoughts' unless appropriate for the persona/context.]",
-        ]
 
-        # --- History Context Construction ---
-        hist_parts = []
-        cur_hist_tokens = 0
-        # Use the pre-calculated hist_budget
-        logger.debug(f"Constructing History Context (Budget: {hist_budget})")
-        included_hist_count = 0
-
-        history_to_process = conversation_history  # Use history passed in
-
-        if history_to_process and hist_budget > 0:  # Use hist_budget here
-            for turn in reversed(history_to_process):
-                spk = turn.get('speaker', '?')
-                txt = turn.get('text', '')
-                logger.debug(f"Processing history turn: Speaker={spk}, Text='{txt[:80]}...'")  # Corrected logger name
-
-                if spk == 'User':
-                    fmt_turn = f"{user_tag}{txt}{end_turn}\n"
-                elif spk in ['AI', 'System', 'Error']:
-                    fmt_turn = f"{model_tag}{txt}{end_turn}\n"
-                else:
-                    logger.warning(f"Unknown speaker '{spk}' in history, skipping.");
-                    continue  # Corrected logger name
-
-                try:
-                    turn_tok_len = len(tokenizer.encode(fmt_turn))
-                except Exception as e:
-                    logger.warning(f"Tokenization error for history turn: {e}. Skipping.");
-                    continue
-
-                if cur_hist_tokens + turn_tok_len <= hist_budget:  # Use hist_budget
-                    hist_parts.append(fmt_turn)
-                    cur_hist_tokens += turn_tok_len
-                    included_hist_count += 1
-                else:
-                    logger.debug("History budget reached.");
-                    break  # Corrected logger name
-
-            hist_parts.reverse()  # Chronological order
-            # --- Log the actual history text being included ---
-            history_context_for_log = "".join(hist_parts)
-            logger.debug(
-                f"Included history ({cur_hist_tokens} tokens / {included_hist_count} turns):\n--- START HISTORY CONTEXT ---\n{history_context_for_log}\n--- END HISTORY CONTEXT ---")
-
-        # --- Assemble Final Prompt (Order: Time, Workspace, System Notes, Emo Instructions, ASM, Drives, Core Mem, Regular Mem, History, User Input, Model Tag) ---
-        final_parts = []
-        final_parts.append(time_info_block)
-        # Add workspace context block
-        if workspace_context_str:
-            final_parts.append(workspace_context_str)
         # Add system instructions (as separate model turns)
         system_instructions = [
-            # --- General Context Instructions ---
+            # General Context Instructions
             "[System Note: Be aware of the current time provided. Use it to inform your responses when relevant (e.g., acknowledging time of day, interpreting time-sensitive requests).]",
             "[System Note: Pay close attention to the sequence and relative timing ('X minutes ago', 'yesterday', etc.) of the provided memories and conversation history to maintain context.]",
             "[System Note: **Synthesize** the information from the 'Relevant Past Information' (memories), 'Conversation History', and your 'Self-Perception' summary to generate a **specific and personalized** response relevant to the current user query. Avoid generic templates or merely listing possibilities if the context provides specific reasons.]",
             "[System Note: When resuming a conversation after a break (indicated by timestamps or a re-greeting message from you in the history), ensure your response considers the context from *before* the break as well as the user's latest message. Avoid asking questions already answered in the provided history.]",
-            # --- Mood/Drive Tone Instruction ---
+            # Mood/Drive Tone Instruction
             f"[System Note: Your current internal state is reflected in the 'Current Drive State' block. Your calculated mood is Valence={current_mood[0]:.2f} (Pleasantness) and Arousal={current_mood[1]:.2f} (Energy). **Actively use this state** to shape your response's tone, word choice, and even content focus. For example:\n"
             f"  - High Connection need (Low deviation): Be more engaging, seek common ground.\n"
             f"  - High Safety need (Low deviation): Be more cautious, seek reassurance, avoid ambiguity.\n"
@@ -3017,11 +2974,11 @@ class GraphMemoryClient:
             f"  - High Valence (Happy/Content): Use warmer, more positive language.\n"
             f"  - High Arousal (Excited/Agitated): Use more energetic or intense language (appropriately).\n"
             f"  - Low Arousal (Calm/Sad): Use calmer or more subdued language.]" if current_mood else "[System Note: Current mood unavailable.]",
-            # --- ASM Integration Instruction (Revised for Adaptation) ---
+            # ASM Integration Instruction (Revised for Adaptation)
             "[System Note: Use your 'Self-Perception' summary (Traits, Goals, Role, etc.) as a baseline understanding of yourself. **Explicitly reference** how your traits or goals inform your current thinking or response when relevant to the user's query. However, **adapt your immediate response** based on your current Mood, Drive State deviations, and the immediate context of recent Memories and History. Note any significant shifts or contradictions observed. Prioritize recent information when it conflicts with the baseline summary.]",
-            # --- ANTI-HALLUCINATION INSTRUCTION ---
+            # ANTI-HALLUCINATION INSTRUCTION
             "[System Note: **CRITICAL: Only use information explicitly provided in the 'Relevant Past Information' (memories) or 'Conversation History' context.** If you cannot recall specific details based *only* on the provided context, state that you do not remember or cannot find that information (e.g., 'I don't recall the specifics of that event.'). **DO NOT INVENT details, events, or memories.** Ground your response firmly and exclusively in the given context.]",
-            # --- Action Capability Instructions ---
+            # Action Capability Instructions
             "[System Note: You have the ability to manage files and calendar events.",
             "  To request an action, end your *entire* response with a special tag: `[ACTION: {\"action\": \"action_name\", \"args\": {\"arg1\": \"value1\", ...}}]`.",
             "  **Available Actions:** `create_file`, `append_file`, `list_files`, `read_file`, `delete_file`, `consolidate_files`, `add_calendar_event`, `read_calendar`.",
@@ -3034,53 +2991,48 @@ class GraphMemoryClient:
             "    - For `add_calendar_event`: Use `[ACTION: {\"action\": \"add_calendar_event\", \"args\": {\"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"description\": \"Event details...\"}}]`.",
             "    - **For `create_file`:** Signal your *intent* by providing a brief description. The system will handle filename/content generation separately. Use `[ACTION: {\"action\": \"create_file\", \"args\": {\"description\": \"Brief description of what to save, e.g., 'List of project ideas'\"}}]`.",
             "  Only use the ACTION tag if you decide an action is necessary based on the context.]",
-            # --- NEW: Instruction for handling retrieved intentions ---
+            # NEW: Instruction for handling retrieved intentions
             "[System Note: If you see a retrieved memory starting with 'Remember:' (indicating a stored intention), check if the trigger condition seems relevant to the current conversation. If so, incorporate the reminder into your response or perform the implied task if appropriate (potentially using the ACTION tag).]",
-            # --- Thought Process Instruction ---
+            # Thought Process Instruction
             "[System Note: CRITICAL - Before generating your response to the user, first output your internal thought process, rationale, or step-by-step thinking relevant to formulating the response. Enclose these thoughts STRICTLY within <thought> and </thought> tags. After the closing </thought> tag, provide the final conversational response meant for the user. The final response itself should NOT contain the <thought> tags or directly refer to 'inner thoughts' unless appropriate for the persona/context.]",
         ]
         for instruction in system_instructions:
             final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
 
-        # --- Add Emotional Instructions Block (if generated) ---
         if emotional_instructions_block:
             final_parts.append(emotional_instructions_block)
-
-        # --- Add Emotional Instructions Block (if generated) ---
-        if emotional_instructions_block:
-            final_parts.append(emotional_instructions_block)
-
-        # --- Add Other Context Blocks ---
-        if asm_block: final_parts.append(asm_block)
-        if drive_block: final_parts.append(drive_block)
-        if core_mem_ctx_str: final_parts.append(core_mem_ctx_str) # Add Core Memories
-        if mem_ctx_str: final_parts.append(mem_ctx_str) # Add Regular Memories (or placeholder)
+        if asm_block:
+            final_parts.append(asm_block)
+        if drive_block:
+            final_parts.append(drive_block)
+        if core_mem_ctx_str:
+            final_parts.append(core_mem_ctx_str)
+        if mem_ctx_str:
+            final_parts.append(mem_ctx_str)
         final_parts.extend(hist_parts)
         final_parts.append(user_input_fmt)
         final_parts.append(final_model_tag)
         final_prompt = "".join(final_parts)
 
         # --- Final Logging and Checks ---
-        logger.debug(f"--- Final Prompt Structure ---")  # Corrected logger name
+        logger.debug("--- Final Prompt Structure ---")
         if len(final_prompt) > 500:
-            logger.debug(f"{final_prompt[:250]}...\n...\n...{final_prompt[-250:]}")  # Corrected logger name
+            logger.debug(f"{final_prompt[:250]}...\n...\n...{final_prompt[-250:]}")
         else:
-            logger.debug(final_prompt)  # Corrected logger name
-        logger.debug(f"--- End Final Prompt Structure ---")  # Corrected logger name
+            logger.debug(final_prompt)
+        logger.debug("--- End Final Prompt Structure ---")
 
+        final_tok_count = -1 # Initialize
         try:
             final_tok_count = len(tokenizer.encode(final_prompt))
-            logger.info(
-                f"Constructed prompt final token count: {final_tok_count} (Budget Available: {total_available_budget})")  # Use total_available_budget
+            # Use the originally calculated total_available_budget for logging comparison
+            logger.info(f"Constructed prompt final token count: {final_tok_count} (Initial Budget Available: {total_available_budget + system_instructions_tokens_estimate})") # Log against initial budget before sys instr estimate
             if final_tok_count > max_context_tokens:
-                logger.error(
-                    f"CRITICAL: Final prompt ({final_tok_count} tokens) EXCEEDS max context ({max_context_tokens}).")  # Corrected logger name
+                logger.error(f"CRITICAL: Final prompt ({final_tok_count} tokens) EXCEEDS max context ({max_context_tokens}).")
             elif final_tok_count > max_context_tokens - context_headroom:
-                logger.warning(
-                    f"Final prompt ({final_tok_count} tokens) close to max context ({max_context_tokens}). Less headroom ({max_context_tokens - final_tok_count}).")  # Corrected logger name
+                logger.warning(f"Final prompt ({final_tok_count} tokens) close to max context ({max_context_tokens}). Less headroom ({max_context_tokens - final_tok_count}).")
         except Exception as e:
-            logger.error(f"Tokenization error for final prompt: {e}")  # Corrected logger name
-            final_tok_count = -1  # Indicate error
+            logger.error(f"Tokenization error for final prompt: {e}")
 
         # --- Write final prompt to debug log file ---
         try:
@@ -3088,19 +3040,18 @@ class GraphMemoryClient:
             os.makedirs(log_dir, exist_ok=True)
             last_prompt_file = os.path.join(log_dir, 'last_prompt.txt')
             with open(last_prompt_file, 'w', encoding='utf-8') as f:
-                f.write(
-                    f"--- Prompt for Personality: {self.personality} at {datetime.now(timezone.utc).isoformat()} ---\n\n")
+                f.write(f"--- Prompt for Personality: {self.personality} at {datetime.now(timezone.utc).isoformat()} ---\n\n")
                 f.write(final_prompt)
             logger.debug(f"Wrote final prompt to {last_prompt_file}")
         except Exception as e:
             logger.error(f"Failed to write last_prompt.txt: {e}", exc_info=True)
 
-        # --- Tuning Log: Prompt Construction Result ---
         log_tuning_event("PROMPT_CONSTRUCTION_RESULT", {
             "personality": self.personality,
-            "user_input_preview": strip_emojis(user_input[:100]),  # Strip emojis
-            "included_memory_uuids": included_mem_uuids,  # From memory construction block
-            "included_history_turns": included_hist_count,  # From history construction block
+            "user_input_preview": strip_emojis(user_input[:100]),
+            "included_core_memory_uuids": included_core_mem_uuids,
+            "included_regular_memory_uuids": included_mem_uuids, # Log regular UUIDs
+            "included_history_turns": included_hist_count,
             "final_token_count": final_tok_count,
             "max_context_tokens": max_context_tokens,
             "prompt_preview_start": final_prompt[:200],
@@ -4810,51 +4761,51 @@ class GraphMemoryClient:
             return error_result
 
     def _handle_text_input(self, user_input: str, conversation_history: list) -> tuple[str | None, str, list, tuple | None, tuple | None]:
-         """
-         Handles text-based input, including emotional analysis, memory retrieval, and LLM call.
-         Returns: (inner_thoughts, final_response, memories_retrieved, user_emotion, ai_emotion)
-         """
-         logger.info("Handling text input...") # Changed log level
-         user_emotion_result = None # (valence, arousal)
-         ai_emotion_result = None # (valence, arousal)
-         effective_mood = self.last_interaction_mood # Start with mood from last interaction
-         emotional_instructions = "" # Initialize
+        """
+        Handles text-based input, including emotional analysis, memory retrieval, and LLM call.
+        Returns: (inner_thoughts, final_response, memories_retrieved, user_emotion, ai_emotion)
+        """
+        logger.info("Handling text input...") # Changed log level
+        user_emotion_result = None # (valence, arousal)
+        ai_emotion_result = None # (valence, arousal)
+        effective_mood = self.last_interaction_mood # Start with mood from last interaction
+        emotional_instructions = "" # Initialize
 
-         # --- 1. Emotional Analysis (if enabled) ---
-         if self.emotional_core and self.emotional_core.is_enabled:
-             try:
-                 # Prepare context for analysis
-                 history_context_str = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Last 5 turns
-                 kg_context_str = self._get_kg_context_for_emotion(user_input)
-                 logger.debug(f"Emotional Analysis Context: History='{history_context_str[:100]}...', KG='{kg_context_str[:100]}...'")
+        # --- 1. Emotional Analysis (if enabled) ---
+        if self.emotional_core and self.emotional_core.is_enabled:
+            try:
+                # Prepare context for analysis
+                history_context_str = "\n".join([f"{turn.get('speaker', '?')}: {strip_emojis(turn.get('text', ''))}" for turn in conversation_history[-5:]]) # Last 5 turns
+                kg_context_str = self._get_kg_context_for_emotion(user_input)
+                logger.debug(f"Emotional Analysis Context: History='{history_context_str[:100]}...', KG='{kg_context_str[:100]}...'")
 
-                 # Run analysis
-                 self.emotional_core.analyze_input(
-                     user_input=user_input,
-                     history_context=history_context_str,
-                     kg_context=kg_context_str
-                 )
-                 # Aggregate results (tendency/mood hints stored in self.emotional_core)
-                 self.emotional_core.aggregate_and_combine()
-             except Exception as emo_e:
-                 logger.error(f"Error during emotional analysis: {emo_e}", exc_info=True)
-                 # Continue processing even if emotional analysis fails
+                # Run analysis
+                self.emotional_core.analyze_input(
+                    user_input=user_input,
+                    history_context=history_context_str,
+                    kg_context=kg_context_str
+                )
+                # Aggregate results (tendency/mood hints stored in self.emotional_core)
+                self.emotional_core.aggregate_and_combine()
+            except Exception as emo_e:
+                logger.error(f"Error during emotional analysis: {emo_e}", exc_info=True)
+                # Continue processing even if emotional analysis fails
 
-         # --- 2. Memory Retrieval ---
-         query_type = self._classify_query_type(user_input)
-         max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
-         initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
-         initial_uuids = [uid for uid, score in initial_nodes]
-         memories_retrieved = []
-         effective_mood = self.last_interaction_mood # Start with mood from last interaction
+        # --- 2. Memory Retrieval ---
+        query_type = self._classify_query_type(user_input)
+        max_initial_nodes = self.config.get('activation', {}).get('max_initial_nodes', 7)
+        initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
+        initial_uuids = [uid for uid, score in initial_nodes]
+        memories_retrieved = []
+        effective_mood = self.last_interaction_mood # Start with mood from last interaction
 
-         # --- Retrieve memory chain (this applies drive influence internally) ---
-         if initial_uuids:
-             memories_retrieved, effective_mood = self.retrieve_memory_chain(
-                 initial_node_uuids=initial_uuids,
-                 recent_concept_uuids=list(self.last_interaction_concept_uuids),
-                 current_mood=effective_mood # Pass the mood potentially influenced by drives
-             )
+        # --- Retrieve memory chain (this applies drive influence internally) ---
+        if initial_uuids:
+            memories_retrieved, effective_mood = self.retrieve_memory_chain(
+                initial_node_uuids=initial_uuids,
+                recent_concept_uuids=list(self.last_interaction_concept_uuids),
+                current_mood=effective_mood # Pass the mood potentially influenced by drives
+            )
         else:
             logger.info("No initial nodes found for retrieval.")
 
@@ -4892,6 +4843,7 @@ class GraphMemoryClient:
         # --- 7. Return Results ---
         # Return thoughts, final response, memories, and emotions
         return inner_thoughts, final_response, memories_retrieved, user_emotion_result, ai_emotion_result
+
     def _handle_multimodal_input(self, user_input: str, attachment_data: dict) -> tuple[str | None, str]:
         """Handles multimodal input processing and LLM call via Chat Completions API."""
         # >>> Placeholder - Ensure the actual implementation exists and returns:

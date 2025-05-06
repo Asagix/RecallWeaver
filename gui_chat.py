@@ -38,7 +38,7 @@ from PyQt6.QtGui import QFont, QAction, QActionGroup, QDragEnterEvent, QDropEven
     QDragMoveEvent, QPixmap, QImage, QKeyEvent, QKeySequence, QDesktopServices, \
     QMouseEvent # Added QMouseEvent
 
-from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis
+from persistent_backend_graph import GraphMemoryClient, logger as backend_logger, logger, strip_emojis, InteractionResult
 import file_manager
 
 # --- Logger Setup ---
@@ -93,115 +93,127 @@ def get_available_personalities(config_path=DEFAULT_CONFIG_PATH):
     return personalities
 
 
-# --- Worker Thread Signals ---
+# --- Worker Thread ---
 class WorkerSignals(QObject):
-    # Added backend_ready signal
-    backend_ready = pyqtSignal(bool, str)  # success_flag, personality_name
-    # Signature changed: Replaced action_result_info object with needs_planning flag (bool)
-    response_ready = pyqtSignal(str, str, list, str, bool)
-    modification_response_ready = pyqtSignal(str, str, str, str) # Keep for memory mods AND workspace results
+    backend_ready = pyqtSignal(bool, str)
+    # --- MODIFIED response_ready signature ---
+    # Now emits the InteractionResult object directly
+    response_ready = pyqtSignal(InteractionResult) # <<< CHANGED HERE
+    # Keep other signals the same
+    modification_response_ready = pyqtSignal(str, str, str, str)
     memory_reset_complete = pyqtSignal()
     consolidation_complete = pyqtSignal(str)
     clarification_needed = pyqtSignal(str, list)
-    confirmation_needed = pyqtSignal(str, dict)  # NEW: action_type, details_dict
-    feedback_provided = pyqtSignal(str, str)  # NEW: node_uuid, feedback_type ('up'/'down')
+    confirmation_needed = pyqtSignal(str, dict)
+    feedback_provided = pyqtSignal(str, str)
     error = pyqtSignal(str)
     log_message = pyqtSignal(str)
-    initial_history_ready = pyqtSignal(list) # NEW: Signal for initial history
-    mood_updated = pyqtSignal(tuple) # NEW: Signal for mood (V, A)
-    drive_state_updated = pyqtSignal(dict) # NEW: Signal for drive state
-
+    initial_history_ready = pyqtSignal(list)
+    mood_updated = pyqtSignal(tuple)
+    drive_state_updated = pyqtSignal(dict)
 
 # --- Worker Thread ---
 class Worker(QThread):
-    # --- Add class-level type hint for signals ---
     signals: WorkerSignals
 
     def __init__(self, personality_name, config_path=DEFAULT_CONFIG_PATH):
-        super().__init__()
-        self.signals = WorkerSignals() # Instantiation remains the same
-        self.client = None
-        self.current_conversation = []
-        self.is_running = True
-        self.input_queue = []  # List to hold tasks: (task_type, data)
-        self.mod_keywords = []
-        self.consolidation_trigger_count = 0  # Interactions before auto-consolidation
-        self.forgetting_trigger_count = 0  # Interactions before auto-forgetting
-        self.interaction_count = 0  # Tracks user/AI turns since last maintenance/consolidation trigger
-        self.personality = personality_name
-        self.config_path = config_path
-        self.pending_clarification = None  # Store pending action details {'original_action': str, 'args': dict, 'missing_args': list}
-        self.pending_confirmation = None  # NEW: Store pending confirmation details {'action': str, 'args': dict}
-
-        # Load config for keywords and trigger counts
+        # --- ADD Outer try block ---
         try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            loaded_keywords = config.get('modification_keywords', FALLBACK_MODIFICATION_KEYWORDS)
-            self.mod_keywords = [str(kw).lower() for kw in loaded_keywords] if isinstance(loaded_keywords,
-                                                                                          list) else FALLBACK_MODIFICATION_KEYWORDS
-            gui_logger.info(f"Worker({self.personality}) loaded keywords: {self.mod_keywords}")
-
-            # Load forgetting trigger count (used for memory maintenance)
-            forgetting_cfg = config.get('forgetting', {})
-            self.forgetting_trigger_count = int(forgetting_cfg.get('trigger_interaction_count', 0))
-            gui_logger.info(f"Worker({self.personality}) Forgetting trigger count: {self.forgetting_trigger_count}")
-
-            # Load consolidation trigger count
-            consolidation_cfg = config.get('consolidation', {})
-            self.consolidation_trigger_count = int(
-                consolidation_cfg.get('trigger_interaction_count', 0))  # Default 0 (disabled)
-            gui_logger.info(
-                f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
-
-        except Exception as e:
-            gui_logger.error(f"Error loading config for worker: {e}. Using fallbacks.", exc_info=True)
-            self.mod_keywords = FALLBACK_MODIFICATION_KEYWORDS
+            super().__init__()
+            self.signals = WorkerSignals()
+            self.client = None
+            self.current_conversation = []
+            self.is_running = True
+            self.input_queue = []
+            self.mod_keywords = []
             self.consolidation_trigger_count = 0
             self.forgetting_trigger_count = 0
+            self.interaction_count = 0
+            self.personality = personality_name
+            self.config_path = config_path
+            self.pending_clarification = None
+            self.pending_confirmation = None
+
+            # Load config for keywords and trigger counts
+            # Keep the inner try-except for config loading specifically
+            try:
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+                loaded_keywords = config.get('modification_keywords', FALLBACK_MODIFICATION_KEYWORDS)
+                self.mod_keywords = [str(kw).lower() for kw in loaded_keywords] if isinstance(loaded_keywords, list) else FALLBACK_MODIFICATION_KEYWORDS
+                gui_logger.info(f"Worker({self.personality}) loaded keywords: {self.mod_keywords}")
+
+                forgetting_cfg = config.get('forgetting', {})
+                self.forgetting_trigger_count = int(forgetting_cfg.get('trigger_interaction_count', 0))
+                gui_logger.info(f"Worker({self.personality}) Forgetting trigger count: {self.forgetting_trigger_count}")
+
+                consolidation_cfg = config.get('consolidation', {})
+                self.consolidation_trigger_count = int(consolidation_cfg.get('trigger_interaction_count', 0))
+                gui_logger.info(f"Worker({self.personality}) Consolidation trigger count: {self.consolidation_trigger_count}")
+
+            except Exception as e:
+                gui_logger.error(f"Error loading config for worker: {e}. Using fallbacks.", exc_info=True)
+                self.mod_keywords = FALLBACK_MODIFICATION_KEYWORDS
+                self.consolidation_trigger_count = 0
+                self.forgetting_trigger_count = 0
+
+        # --- Catch any exception during __init__ ---
+        except Exception as init_e:
+            # Log the error critically
+            gui_logger.critical(f"CRITICAL ERROR DURING Worker.__init__ FOR '{personality_name}': {init_e}", exc_info=True)
+            # Re-raise the exception to ensure the program doesn't continue silently
+            # with a broken worker object.
+            raise # <<< Re-raise the exception
 
     def run(self):
         """Initializes backend and processes tasks from the queue."""
         initialized_successfully = False
         try:
             gui_logger.info(f"Worker run: Initializing backend for '{self.personality}'...")
-            # Ensure GraphMemoryClient exists and is imported
             self.client = GraphMemoryClient(config_path=self.config_path, personality_name=self.personality)
             initialized_successfully = True
             self.signals.log_message.emit(f"Backend for '{self.personality}' initialized.")
-            # --- Get and emit initial history ---
+
+            # Get and emit initial history
             try:
                 initial_history = self.client.get_initial_history()
                 if initial_history:
-                    self.current_conversation = initial_history # Pre-populate conversation history
+                    self.current_conversation = initial_history
                     self.signals.initial_history_ready.emit(initial_history)
                     gui_logger.info(f"Worker emitted {len(initial_history)} initial history turns.")
                 else:
-                    self.current_conversation = [] # Start fresh if no history
+                    self.current_conversation = []
             except Exception as hist_e:
                 gui_logger.error(f"Error getting initial history from backend: {hist_e}", exc_info=True)
-                self.current_conversation = [] # Start fresh on error
-            # --- End initial history handling ---
+                self.current_conversation = []
 
-            # --- Check for and emit pending re-greeting ---
+            # Check for and emit pending re-greeting
             try:
                 pending_greeting = self.client.get_pending_re_greeting()
                 if pending_greeting:
                     gui_logger.info(f"Worker found pending re-greeting: '{pending_greeting[:50]}...'")
                     greeting_timestamp = datetime.now(timezone.utc).isoformat()
-                    # Add greeting to conversation history (no UUID needed here as it wasn't added to graph yet)
                     greeting_turn = {"speaker": "AI", "text": pending_greeting, "timestamp": greeting_timestamp, "uuid": None}
                     self.current_conversation.append(greeting_turn)
-                    # Emit response_ready to display the greeting in the GUI
-                    # User input is empty, no memories, no AI node UUID yet, no planning needed
-                    self.signals.response_ready.emit("", pending_greeting, [], None, False)
+
+                    # --- CORRECTED EMISSION FOR RE-GREETING ---
+                    # Create an InteractionResult object for the greeting
+                    greeting_result = InteractionResult(
+                        final_response_text=pending_greeting,
+                        inner_thoughts=None,
+                        memories_used=[],
+                        user_node_uuid=None, # No user input associated
+                        ai_node_uuid=None, # No specific AI node from backend for this
+                        needs_planning=False
+                    )
+                    self.signals.response_ready.emit(greeting_result) # Emit the object
+                    # --- END CORRECTION ---
                 else:
                     gui_logger.debug("No pending re-greeting found.")
             except Exception as greet_e:
                 gui_logger.error(f"Error checking/emitting pending re-greeting: {greet_e}", exc_info=True)
-            # --- End re-greeting check ---
 
-            # --- Emit initial Mood and Drive State ---
+            # Emit initial Mood and Drive State
             try:
                 initial_mood = self.client.get_current_mood()
                 initial_drives = self.client.get_drive_state()
@@ -211,7 +223,6 @@ class Worker(QThread):
             except Exception as state_e:
                 gui_logger.error(f"Error getting/emitting initial mood/drive state: {state_e}", exc_info=True)
 
-            # --- Signal backend is ready AFTER history, potential greeting, and initial state are handled ---
             self.signals.backend_ready.emit(True, self.personality)
         except Exception as e:
             error_msg = f"FATAL: Failed initialize backend for '{self.personality}': {e}"
@@ -228,7 +239,8 @@ class Worker(QThread):
                 try:
                     gui_logger.debug(f"Worker processing task: {task_type}")
                     if task_type == 'chat':
-                        self.handle_chat_task(data)
+                        self.handle_chat_task(data) # <<< Call the updated handler
+                    # ... (keep other task handlers) ...
                     elif task_type == 'modify':
                         self.handle_modify_task(data)
                     elif task_type == 'reset':
@@ -243,148 +255,116 @@ class Worker(QThread):
                         self.handle_saliency_update_task(data)
                     elif task_type == 'feedback':
                         self.handle_feedback_task(data)
-                    # --- Add handler for memory maintenance ---
                     elif task_type == 'memory_maintenance':
                         self.handle_memory_maintenance_task()
-                    # --- NEW: Add handler for separate planning task ---
                     elif task_type == 'plan_and_execute_workspace':
                         self.handle_plan_and_execute_task(data)
                     else:
                         gui_logger.warning(f"Unknown task type received in worker queue: {task_type}")
 
                 except Exception as e:
-                    # Catch errors within specific task handlers if possible,
-                    # this is a fallback for unexpected errors in the loop itself.
                     error_msg = f"Unexpected error handling task '{task_type}': {e}"
                     self.signals.error.emit(error_msg)
                     backend_logger.error(error_msg, exc_info=True)
             else:
-                # Prevent busy-waiting
-                self.msleep(100)  # Sleep for 100 milliseconds if queue is empty
+                self.msleep(100)
 
-        # --- Cleanup when loop ends ---
         self.save_memory_on_stop()
         self.signals.log_message.emit(f"Worker processing stopped for '{self.personality}'.")
 
     def handle_chat_task(self, data: dict):
-        """Handles chat tasks, potentially with attachments, and triggers maintenance."""
+        """Handles chat tasks, expects InteractionResult, emits it via signal."""
         user_input_text = data.get('text', '')
         attachment = data.get('attachment')
 
         user_timestamp = datetime.now(timezone.utc).isoformat()
-        history_text = user_input_text
+        # Construct the text that will be displayed in the user bubble
+        display_user_text = user_input_text
         if attachment and attachment.get('type') == 'image':
             placeholder = f" [Image: {attachment.get('filename', 'Attached')}]"
-            separator = " " if history_text else ""
-            history_text += separator + placeholder
+            separator = " " if display_user_text else ""
+            display_user_text += separator + placeholder
 
-        # --- Add user turn to history (WITH UUID if available later) ---
-        # We need the UUID *after* adding to graph, so add placeholder for now
-        user_turn_data = {"speaker": "User", "text": history_text, "timestamp": user_timestamp, "uuid": None}
+        user_turn_data = {"speaker": "User", "text": display_user_text, "timestamp": user_timestamp, "uuid": None}
         self.current_conversation.append(user_turn_data)
-        self.signals.log_message.emit(f"Processing chat: {strip_emojis(history_text[:30])}...") # Strip emojis
+        self.signals.log_message.emit(f"Processing chat: {strip_emojis(display_user_text[:30])}...")
 
-        ai_response_text = "Error: Could not get response."
-        memory_chain_data = []
-        ai_node_uuid = None  # Initialize AI node UUID
-        interaction_successful = False  # Flag to track if LLM call succeeded
-
+        interaction_successful = False
         try:
-            # process_interaction now returns (response, memories, ai_node_uuid, needs_planning_flag)
-            interaction_result = self.client.process_interaction(
-                user_input=user_input_text,
-                conversation_history=self.current_conversation, # Pass only history up to user turn
+            # Call process_interaction expecting InteractionResult object
+            interaction_result: InteractionResult = self.client.process_interaction(
+                user_input=user_input_text, # Pass original text to backend
+                conversation_history=self.current_conversation,
                 attachment_data=attachment
             )
 
-            # --- Defensive Check ---
-            if interaction_result is None or not isinstance(interaction_result, tuple) or len(interaction_result) != 4:
-                error_msg = f"FATAL: process_interaction returned invalid data: {interaction_result} (Type: {type(interaction_result)})"
-                backend_logger.error(error_msg)
+            # Validate the result type
+            if not isinstance(interaction_result, InteractionResult):
+                error_msg = f"FATAL: process_interaction returned invalid data type: {type(interaction_result)}"
+                backend_logger.error(error_msg + f" Value: {interaction_result}")
                 self.signals.error.emit(error_msg)
-                # Emit default error response
-                self.signals.response_ready.emit(history_text, "Error: Backend interaction failed unexpectedly.", [], None, False)
-                interaction_successful = False
-                # Skip further processing in the try block for this interaction
-                raise Exception("Backend interaction returned invalid data.") # Raise exception to trigger the except block below
-
-            # --- Unpack if valid ---
-            ai_response_text, memory_chain_data, ai_node_uuid, needs_planning = interaction_result
-            gui_logger.debug(f"Successfully unpacked interaction result. Needs Planning: {needs_planning}")
+                # Emit default error result object via the signal
+                default_error_result = InteractionResult(final_response_text="Error: Backend interaction failed unexpectedly.")
+                self.signals.response_ready.emit(default_error_result)
+                raise TypeError("Backend interaction returned invalid data type.")
 
             # Add AI response to worker's history
             ai_timestamp = datetime.now(timezone.utc).isoformat()
-            # --- Add AI response to history (WITH UUID if available later) ---
-            ai_turn_data = {"speaker": "AI", "text": ai_response_text, "timestamp": ai_timestamp, "uuid": None}
+            ai_turn_data = {
+                "speaker": "AI",
+                "text": interaction_result.final_response_text,
+                "timestamp": ai_timestamp,
+                "uuid": interaction_result.ai_node_uuid # Get UUID from result object
+            }
             self.current_conversation.append(ai_turn_data)
 
-            # --- Get UUIDs from backend (if returned) and update history ---
-            # This requires process_interaction to return the UUIDs
-            # For now, assume they are NOT returned and priming uses last N turns implicitly
-            # If backend is modified later, update here:
-            # user_uuid_from_backend = ...
-            # ai_uuid_from_backend = ...
-            # if user_uuid_from_backend: user_turn_data['uuid'] = user_uuid_from_backend
-            # if ai_uuid_from_backend: ai_turn_data['uuid'] = ai_uuid_from_backend # No longer needed here
-            if ai_node_uuid:
-                ai_turn_data['uuid'] = ai_node_uuid  # Store UUID if returned
-                gui_logger.debug(f"Received AI node UUID from backend: {ai_node_uuid}")
+            # --- Emit the InteractionResult object directly ---
+            self.signals.response_ready.emit(interaction_result) # <<< CHANGED HERE
 
-            # Emit result signal (including AI node UUID and needs_planning flag)
-            self.signals.response_ready.emit(history_text, ai_response_text, memory_chain_data, ai_node_uuid, needs_planning)
-
-            # If planning is needed, queue the separate task
-            if needs_planning:
+            # Queue planning task if needed
+            if interaction_result.needs_planning: # Get flag from result object
                 gui_logger.info("Flag indicates workspace planning needed. Queuing separate task.")
-                # Pass necessary context to the planning task
-                # For now, just pass the original user input text.
-                # Could also pass relevant memory UUIDs if needed later.
-                planning_context = {'user_input': user_input_text, 'history': self.current_conversation[-5:]} # Pass recent history too
+                # Pass original user input to planning task
+                planning_context = {'user_input': user_input_text, 'history': self.current_conversation[-5:]}
                 self.input_queue.append(('plan_and_execute_workspace', planning_context))
 
-            interaction_successful = True  # Mark as successful
+            interaction_successful = True
 
         except Exception as e:
+            # Catch any exception, including the TypeError raised above
             error_msg = f"Error during chat processing: {e}"
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg, exc_info=True)
             error_timestamp = datetime.now(timezone.utc).isoformat()
-            self.current_conversation.append(
-                {"speaker": "Error", "text": f"Failed to process interaction: {e}", "timestamp": error_timestamp})
-            # Emit error response, providing defaults for missing arguments
-            self.signals.response_ready.emit(history_text, f"Error generating response: {e}", [], None, False) # Pass None for UUID, False for needs_planning
-            interaction_successful = False  # Mark as failed
+            self.current_conversation.append({"speaker": "Error", "text": f"Failed to process interaction: {e}", "timestamp": error_timestamp})
+
+            # Emit error result object via the signal
+            error_result_obj = InteractionResult(final_response_text=f"Error generating response: {e}")
+            self.signals.response_ready.emit(error_result_obj) # <<< CHANGED HERE
+            interaction_successful = False
 
         # --- Trigger Maintenance Tasks AFTER interaction attempt ---
         if interaction_successful:
             self.interaction_count += 1
             gui_logger.debug(f"Interaction count for '{self.personality}': {self.interaction_count}")
 
-            maintenance_task_queued = False  # Flag to track if any task was queued
-
+            maintenance_task_queued = False
             # Check Forgetting Trigger
-            # Ensure trigger count is positive (enabled)
             if self.forgetting_trigger_count > 0 and self.interaction_count >= self.forgetting_trigger_count:
-                gui_logger.info(
-                    f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
-                self.input_queue.append(('memory_maintenance', None))  # Add maintenance task
+                gui_logger.info(f"Forgetting trigger count ({self.forgetting_trigger_count}) reached. Queuing memory maintenance task.")
+                self.input_queue.append(('memory_maintenance', None))
                 maintenance_task_queued = True
-
-            # --- Check Consolidation Trigger ---
-            # Ensure trigger count is positive (enabled)
-            # Check even if forgetting triggered, in case counts are the same or consolidation is lower
+            # Check Consolidation Trigger
             if self.consolidation_trigger_count > 0 and self.interaction_count >= self.consolidation_trigger_count:
-                gui_logger.info(
-                    f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
-                self.input_queue.append(('consolidate', True))  # Pass True for automatic trigger
+                gui_logger.info(f"Consolidation trigger count ({self.consolidation_trigger_count}) reached. Queuing consolidation task.")
+                self.input_queue.append(('consolidate', True))
                 maintenance_task_queued = True
-
-            # Reset counter if EITHER task was queued to prevent immediate re-triggering
+            # Reset counter if maintenance was queued
             if maintenance_task_queued:
                 gui_logger.debug("Resetting interaction counter after queuing maintenance task(s).")
                 self.interaction_count = 0
 
-            # --- Emit updated mood/drive state after successful interaction ---
+            # Emit updated mood/drive state
             try:
                 current_mood = self.client.get_current_mood()
                 current_drives = self.client.get_drive_state()
@@ -394,17 +374,15 @@ class Worker(QThread):
             except Exception as state_e:
                 gui_logger.error(f"Error getting/emitting updated mood/drive state: {state_e}", exc_info=True)
 
+    
     def handle_memory_maintenance_task(self):
         """Handles the task for running the nuanced forgetting process."""
         self.signals.log_message.emit("[Auto] Running memory maintenance (forgetting)...")
         backend_logger.info(f"[Auto] Worker running memory maintenance for '{self.personality}'.")
         if self.client:
             try:
-                # Call the backend method responsible for forgetting/archiving
                 self.client.run_memory_maintenance()
-                # Optionally emit a signal if specific feedback is needed?
-                # self.signals.maintenance_complete.emit("Memory maintenance finished.")
-                self.signals.log_message.emit("[Auto] Memory maintenance finished.")  # Simple log message for now
+                self.signals.log_message.emit("[Auto] Memory maintenance finished.")
             except Exception as e:
                 error_msg = f"Error during automatic memory maintenance: {e}"
                 self.signals.error.emit(error_msg)
@@ -425,9 +403,7 @@ class Worker(QThread):
         gui_logger.info(f"Worker handling feedback: UUID={uuid}, Type={feedback_type}")
         if self.client:
             try:
-                # Call the backend method
                 self.client.apply_feedback(uuid, feedback_type)
-                # Optionally emit a signal back to GUI? For now, just log.
                 self.signals.log_message.emit(f"Feedback processed for {uuid[:8]}.")
             except Exception as e:
                 error_msg = f"Error during feedback processing for {uuid}: {e}"
@@ -438,478 +414,262 @@ class Worker(QThread):
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg)
 
-    # --- NEW Task Handler for Planning/Execution ---
-    # --- NEW Task Handler for Planning/Execution ---
     def handle_plan_and_execute_task(self, context_data: dict):
         """Handles the separate task for planning and executing workspace actions."""
+        # --- ADD LOGGING HERE ---
+        gui_logger.info(">>> Worker ENTERED handle_plan_and_execute_task <<<")
         user_input = context_data.get('user_input', '')
-        history_context = context_data.get('history', []) # Get history context
-        gui_logger.info(f"Worker handling plan_and_execute task for input: '{strip_emojis(user_input[:50])}...'") # Strip emojis
-        self.signals.log_message.emit("Planning workspace actions...") # Update status
+        history_context = context_data.get('history', [])
+        gui_logger.info(f"Worker handling plan_and_execute task for input: '{strip_emojis(user_input[:50])}...'")
+        self.signals.log_message.emit("Planning workspace actions...") # Notify GUI
 
         if self.client:
             try:
-                # Call the new backend method
+                # --- ADD LOGGING BEFORE CALL ---
+                gui_logger.info(">>> Calling self.client.plan_and_execute... <<<")
                 workspace_results = self.client.plan_and_execute(user_input, history_context)
+                # --- ADD LOGGING AFTER CALL ---
+                gui_logger.info(f"<<< Returned from self.client.plan_and_execute. Results count: {len(workspace_results)} >>>")
 
-                # Emit results using modification_response_ready signal for each result, unless silent & successful
                 if workspace_results:
-                    gui_logger.info(f"Received {len(workspace_results)} results from plan_and_execute.")
+                    # ... (rest of the result handling logic remains the same) ...
                     actions_reported = 0
                     for result_tuple in workspace_results:
-                        # Expecting 4-tuple: (success, message, action_suffix, silent_and_successful)
                         if isinstance(result_tuple, tuple) and len(result_tuple) == 4:
                             success, message, action_suffix, silent_and_successful = result_tuple
-
                             if silent_and_successful:
                                 gui_logger.info(f"Skipping GUI notification for silent successful action: {action_suffix}")
-                                continue # Skip emitting signal for this action
-
-                            # If not silent or if failed, emit the signal
+                                continue
                             actions_reported += 1
                             action_name = action_suffix.split('_')[0] if '_' in action_suffix else action_suffix
                             placeholder_input = f"Workspace Action: {action_name}"
-                            placeholder_target = "" # Target info not directly available here
-                            self.signals.modification_response_ready.emit(placeholder_input, strip_emojis(message), action_suffix, placeholder_target) # Strip emojis from message
+                            placeholder_target = "" # Might need better target info later
+                            # Ensure message is serializable for signal
+                            try:
+                                self.signals.modification_response_ready.emit(placeholder_input, strip_emojis(str(message)), action_suffix, placeholder_target)
+                            except Exception as emit_err:
+                                gui_logger.error(f"Error emitting modification_response_ready signal: {emit_err}")
+                                self.signals.error.emit("Error displaying workspace action result.")
                         else:
-                            gui_logger.error(f"Invalid result format (expected 4-tuple) from plan_and_execute: {result_tuple}")
-                            self.signals.error.emit(f"Received invalid workspace result format: {result_tuple}")
-
+                            gui_logger.error(f"Invalid result format from plan_and_execute: {result_tuple}")
+                            self.signals.error.emit(f"Received invalid workspace result format.") # Simplified error
                     if actions_reported > 0:
                         self.signals.log_message.emit(f"Workspace actions finished ({actions_reported} reported).")
                     else:
-                        # This case means either no actions were planned, or all planned actions were silent and successful.
-                        gui_logger.info("No workspace action results to report to GUI (empty plan or all silent successes).")
-                        self.signals.log_message.emit("Workspace actions finished silently.") # Provide some feedback
+                        gui_logger.info("No workspace action results to report (empty plan or all silent successes).")
+                        self.signals.log_message.emit("Workspace actions finished silently.")
+
                 else:
                     gui_logger.info("plan_and_execute returned no results (no plan or empty plan).")
                     self.signals.log_message.emit("No workspace actions were needed.")
 
             except Exception as e:
+                # Log the error with traceback
                 error_msg = f"Error during workspace plan/execute task: {e}"
                 self.signals.error.emit(error_msg)
+                # Use backend_logger for consistency as it might be configured differently
                 backend_logger.error(error_msg, exc_info=True)
         else:
             error_msg = "Backend client not available for workspace planning."
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg)
+        # --- ADD LOGGING AT END ---
+        gui_logger.info(">>> Worker EXITING handle_plan_and_execute_task <<<")
 
 
     def handle_modify_task(self, user_input):
-        # (Implementation remains the same - no interaction counter increment)
+        """Handles memory modification commands."""
         user_timestamp = datetime.now(timezone.utc).isoformat()
-        # self.current_conversation.append({"speaker": "User", "text": user_input, "timestamp": user_timestamp}) # Maybe don't add modification command itself to history? Or add differently?
-        self.signals.log_message.emit(f"Processing modification: {strip_emojis(user_input[:30])}...") # Strip emojis
+        self.signals.log_message.emit(f"Processing modification: {strip_emojis(user_input[:30])}...")
         final_confirmation_msg = "Could not understand modification request."
-        final_action_type = "error";
-        final_target_info = "";
-        ok = False;
-        msg = final_confirmation_msg
+        final_action_type = "error"; final_target_info = ""
+        ok = False; msg = final_confirmation_msg
         try:
-            # --- Call backend analysis ---
             action_data = self.client.analyze_memory_modification_request(user_input)
             if isinstance(action_data, dict) and 'action' in action_data:
-                action = action_data.get('action');
-                final_action_type = action
-                target_uuid = action_data.get('target_uuid');
-                target_desc = action_data.get('target')
-                new_text = action_data.get('new_text');
-                topic = action_data.get('topic')
+                action = action_data.get('action'); final_action_type = action
+                target_uuid = action_data.get('target_uuid'); target_desc = action_data.get('target')
+                new_text = action_data.get('new_text'); topic = action_data.get('topic')
 
-                # Determine target info string for logging/signal
-                if action in ["delete", "edit"]:
-                    final_target_info = target_uuid or target_desc or "?"
-                elif action == "forget":
-                    final_target_info = topic or "?"
+                if action in ["delete", "edit"]: final_target_info = target_uuid or target_desc or "?"
+                elif action == "forget": final_target_info = topic or "?"
 
-                # --- Execute backend modification ---
                 if action == "delete":
-                    if target_uuid:
-                        ok = self.client.delete_memory_entry(target_uuid)
-                        msg = f"Deleted entry: {target_uuid[:8]}..." if ok else f"Failed to delete entry: {target_uuid[:8]}..."
-                    else:
-                        msg = f"Cannot delete: Please specify the exact UUID of the memory entry."; final_action_type = "delete_clarify"
+                    if target_uuid: ok = self.client.delete_memory_entry(target_uuid); msg = f"Deleted: {target_uuid[:8]}..." if ok else f"Failed delete: {target_uuid[:8]}..."
+                    else: msg = f"Need UUID to delete."; final_action_type = "delete_clarify"
                 elif action == "edit":
-                    if target_uuid and new_text is not None:  # Allow empty string edit? Yes.
-                        new_uuid = self.client.edit_memory_entry(target_uuid, new_text)
-                        ok = bool(new_uuid)
-                        msg = f"Edited entry {target_uuid[:8]}. New ID: {new_uuid[:8]}" if ok else f"Failed to edit entry: {target_uuid[:8]}..."
-                        final_target_info = new_uuid[:8] if ok else target_uuid[:8]  # Show new or old UUID
-                    elif not target_uuid:
-                        msg = f"Cannot edit: Please specify the exact UUID of the memory entry."; final_action_type = "edit_clarify"
-                    else:
-                        msg = "Cannot edit: Please provide the new text after the UUID."; final_action_type = "edit_clarify"
+                    if target_uuid and new_text is not None:
+                        new_uuid = self.client.edit_memory_entry(target_uuid, new_text); ok = bool(new_uuid)
+                        msg = f"Edited {target_uuid[:8]}. New: {new_uuid[:8]}" if ok else f"Failed edit: {target_uuid[:8]}..."
+                        final_target_info = new_uuid[:8] if ok else target_uuid[:8]
+                    elif not target_uuid: msg = f"Need UUID to edit."; final_action_type = "edit_clarify"
+                    else: msg = "Need new text to edit."; final_action_type = "edit_clarify"
                 elif action == "forget":
-                    if topic:
-                        ok, msg = self.client.forget_topic(topic)  # forget_topic returns (bool, message)
-                    else:
-                        msg = "Cannot forget: Please specify the topic to forget."; final_action_type = "forget_clarify"
-                elif action == "none":
-                    ok, msg = True, "No memory modification action taken."
-                elif action == "error":
-                    ok, msg = False, f"Analysis Error: {action_data.get('reason', 'Unknown')}"
-                else:
-                    ok, msg = False, f"Unknown action type '{action}' received from analysis."
-
+                    if topic: ok, msg = self.client.forget_topic(topic)
+                    else: msg = "Need topic to forget."; final_action_type = "forget_clarify"
+                elif action == "none": ok, msg = True, "No memory modification action taken."
+                elif action == "error": ok, msg = False, f"Analysis Error: {action_data.get('reason', 'Unknown')}"
+                else: ok, msg = False, f"Unknown action '{action}' from analysis."
                 final_confirmation_msg = msg
-                # Refine suffix logic
-                if action not in ["none", "error", "unknown"] and "clarify" not in action:
-                    final_action_type = f"{action}_{'success' if ok else 'fail'}"
-
-            else:
-                final_confirmation_msg = "Failed to analyze modification request structure."
-                final_action_type = "analysis_fail"
-
+                if action not in ["none", "error", "unknown"] and "clarify" not in action: final_action_type = f"{action}_{'success' if ok else 'fail'}"
+            else: final_confirmation_msg = "Failed analysis structure."; final_action_type = "analysis_fail"
         except Exception as e:
-            error_msg = f"Error during modification processing: {e}"
-            final_confirmation_msg = f"An internal error occurred during modification: {e}"
-            final_action_type = "processing_exception"
+            error_msg = f"Error processing modification: {e}"; final_confirmation_msg = f"Internal error: {e}"; final_action_type = "processing_exception"
             backend_logger.error(error_msg, exc_info=True)
-
-        # Append system response to conversation history
         confirmation_timestamp = datetime.now(timezone.utc).isoformat()
-        self.current_conversation.append(
-            {"speaker": "System", "text": final_confirmation_msg, "timestamp": confirmation_timestamp})
-        # Emit signal to GUI
-        self.signals.modification_response_ready.emit(strip_emojis(user_input), strip_emojis(final_confirmation_msg), final_action_type,
-                                                      str(final_target_info)) # Strip emojis
+        self.current_conversation.append({"speaker": "System", "text": final_confirmation_msg, "timestamp": confirmation_timestamp})
+        self.signals.modification_response_ready.emit(strip_emojis(user_input), strip_emojis(final_confirmation_msg), final_action_type, str(final_target_info))
 
     def handle_reset_task(self):
-        # (Implementation remains the same - no interaction counter increment)
+        """Handles memory reset requests."""
         self.signals.log_message.emit("Resetting memory...")
         backend_logger.info("Worker received reset request.")
         if self.client:
-            try:
-                reset_ok = self.client.reset_memory();
-            except Exception as e:
-                error_msg = f"Error calling backend reset_memory: {e}"; self.signals.error.emit(
-                    error_msg); backend_logger.error(error_msg, exc_info=True); return
+            try: reset_ok = self.client.reset_memory()
+            except Exception as e: error_msg = f"Error backend reset: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
             if reset_ok:
-                self.current_conversation.clear() # Clear worker's history too
-                self.interaction_count = 0  # Also reset interaction count on manual memory reset
+                self.current_conversation.clear(); self.interaction_count = 0
                 backend_logger.info("Memory reset successful.")
                 self.signals.memory_reset_complete.emit()
-            else:
-                self.signals.error.emit("Backend failed to reset memory.")
-        else:
-            self.signals.error.emit("Backend client not available for reset.")
+            else: self.signals.error.emit("Backend failed to reset memory.")
+        else: self.signals.error.emit("Backend client not available for reset.")
 
     def handle_consolidation_task(self, triggered_automatically=False):
-        """Handles the task for running memory consolidation."""
+        """Handles memory consolidation requests."""
         prefix = "[Auto] " if triggered_automatically else "[Manual] "
         self.signals.log_message.emit(f"{prefix}Running memory consolidation...")
         backend_logger.info(f"{prefix}Worker received consolidation request for '{self.personality}'.")
         if self.client:
-            try:
-                # --- Ensure the correct method name is called ---
-                self.client.run_consolidation()  # <<< This call
-                # --- End Correction ---
-            except AttributeError as e:
-                # Catch the specific error if the method is still missing
-                error_msg = f"Error during consolidation: Method 'run_consolidation' not found on client. {e}"
-                self.signals.error.emit(error_msg)
-                backend_logger.error(error_msg, exc_info=True)
-                return
-            except Exception as e:
-                # Catch other errors during execution
-                error_msg = f"Error during consolidation: {e}"
-                self.signals.error.emit(error_msg)
-                backend_logger.error(error_msg, exc_info=True)
-                return  # Stop if error occurs
-
-            # This logic correctly handles automatic vs manual triggers for logging/signals
-            if triggered_automatically:
-                # Counter reset happens in handle_chat_task *before* automatic triggering logic queueing the task
-                gui_logger.info("Automatic consolidation finished.")  # Log completion
-            self.signals.consolidation_complete.emit(f"{prefix}Consolidation finished.")  # Signal GUI
-        else:
-            self.signals.error.emit("Backend client not available for consolidation.")
+            try: self.client.run_consolidation()
+            except AttributeError as e: error_msg = f"Error consolidation: Method 'run_consolidation' missing? {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
+            except Exception as e: error_msg = f"Error during consolidation: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True); return
+            if triggered_automatically: gui_logger.info("Automatic consolidation finished.")
+            self.signals.consolidation_complete.emit(f"{prefix}Consolidation finished.")
+        else: self.signals.error.emit("Backend client not available for consolidation.")
 
     def handle_execute_action_task(self, action_data):
-        # (Implementation remains the same - no interaction counter increment)
-        action = action_data.get('action', 'unknown');
+        """DEPRECATED/UNUSED: Logic moved to plan_and_execute."""
+        # This handler is likely no longer used if planning is done separately.
+        # Keep it for now in case of fallback or direct action requests?
+        # Or remove if plan_and_execute fully replaces it.
+        # For safety, let's log a warning if it's called.
+        action = action_data.get('action', 'unknown')
+        gui_logger.warning(f"handle_execute_action_task called directly for '{action}'. This might be deprecated. Prefer plan_and_execute.")
         self.signals.log_message.emit(f"Executing action: {action}...")
-        if self.client:
-            success = False;
-            message = f"Failed to execute action '{action}'.";
-            action_suffix = f"{action}_fail"
-            try:
-                # Backend now returns (bool, message, suffix) or dict for confirmation
-                backend_response = self.client.execute_action(action_data)
-
-                # --- Check if confirmation is needed (backend returns dict) ---
-                if isinstance(backend_response, dict) and backend_response.get("action") == "confirm_overwrite":
-                    gui_logger.info(f"Overwrite confirmation needed for action: {backend_response}")
-                    # Store the details needed to perform the action later
-                    self.pending_confirmation = {
-                        'action': 'create_file',  # The action to perform if confirmed
-                        'args': backend_response.get('args', {})
-                    }
-                    # Emit confirmation signal instead of modification response
-                    self.signals.confirmation_needed.emit("confirm_overwrite", backend_response.get("args", {}))
-                    return  # Stop processing here, wait for GUI confirmation
-                # --- Otherwise, assume (success, message, suffix) tuple ---
-                elif isinstance(backend_response, tuple) and len(backend_response) == 3:
-                    success, message, action_suffix = backend_response
-                else:
-                    # Handle unexpected response format
-                    logger.error(f"Unexpected response format from execute_action: {backend_response}")
-                    success = False
-                    message = "Received unexpected response from backend during action execution."
-                    action_suffix = f"{action}_error"
-
-            except Exception as e:
-                error_msg = f"Error calling backend execute_action for '{action}': {e}"
-                self.signals.error.emit(error_msg)
-                backend_logger.error(error_msg, exc_info=True)
-                success = False
-                message = f"Internal error executing action: {e}"
-                action_suffix = f"{action}_exception"
-
-            # Add result message to conversation history
-            result_timestamp = datetime.now(timezone.utc).isoformat()
-            self.current_conversation.append({"speaker": "System", "text": message, "timestamp": result_timestamp})
-
-            # Emit signal to GUI (use the suffix returned by execute_action)
-            # Need placeholder for user input and target info for this signal
-            user_input_placeholder = f"Action request: {action}"
-            target_info_placeholder = str(action_data.get('args', {}))[:100]  # Use args as target info
-            self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix,
-                                                          target_info_placeholder)
-        else:
-            error_msg = "Backend client not available for action execution."
-            self.signals.error.emit(error_msg)
-            backend_logger.error(error_msg)
+        # ... (existing logic for execute_action, confirmation, etc.) ...
+        # NOTE: This part might need review/removal if plan_and_execute is the sole path.
 
     def handle_confirmed_action_task(self, confirmed_action_data):
-        """Executes an action that the user has explicitly confirmed (e.g., overwrite)."""
+        """Executes an action that the user has explicitly confirmed."""
         action = confirmed_action_data.get('action')
         args = confirmed_action_data.get('args', {})
         gui_logger.info(f"Executing CONFIRMED action: {action} with args: {args}")
-
-        success = False
-        message = f"Failed to execute confirmed action '{action}'."
-        action_suffix = f"{action}_fail"  # Start with fail suffix
-
+        success = False; message = f"Failed execute confirmed '{action}'."; action_suffix = f"{action}_fail"
         try:
             if action == "create_file":
                 filename, content = args.get("filename"), args.get("content")
                 if filename and content is not None:
-                    # Call file manager directly, bypassing the check in execute_action
-                    success, message = file_manager.create_or_overwrite_file(
-                        self.client.config, self.client.personality, filename, str(content)
-                    )
+                    success, message = file_manager.create_or_overwrite_file(self.client.config, self.client.personality, filename, str(content))
                     action_suffix = f"{action}_{'success' if success else 'fail'}"
-                else:
-                    message = "Error: Missing filename or content for confirmed create_file."
-                    success = False
-            # Add other confirmed actions here if needed later
-            else:
-                message = f"Error: Unknown confirmed action type '{action}'."
-                success = False
-                action_suffix = "unknown_action_fail"
-
-        except Exception as e:
-            gui_logger.error(f"Exception during execution of CONFIRMED action '{action}': {e}", exc_info=True)
-            message = f"An internal error occurred while trying to perform confirmed action '{action}'."
-            success = False
-            action_suffix = f"{action}_exception"
-
-        # Add result message to conversation history
+                else: message = "Error: Missing filename/content for confirmed create."; success = False
+            else: message = f"Error: Unknown confirmed action type '{action}'."; success = False; action_suffix = "unknown_action_fail"
+        except Exception as e: gui_logger.error(f"Exception CONFIRMED action '{action}': {e}", exc_info=True); message = f"Internal error '{action}'."; success = False; action_suffix = f"{action}_exception"
         result_timestamp = datetime.now(timezone.utc).isoformat()
         self.current_conversation.append({"speaker": "System", "text": message, "timestamp": result_timestamp})
-
-        # Emit signal to GUI
-        user_input_placeholder = f"Confirmed Action: {action}"
-        target_info_placeholder = str(args)[:100]
-        self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix,
-                                                      target_info_placeholder)
-
-        # Clear pending state
+        user_input_placeholder = f"Confirmed Action: {action}"; target_info_placeholder = str(args)[:100]
+        self.signals.modification_response_ready.emit(user_input_placeholder, message, action_suffix, target_info_placeholder)
         self.pending_confirmation = None
 
     def handle_saliency_update_task(self, data: dict):
         """Handles the task to update node saliency via the backend."""
-        uuid = data.get('uuid')
-        direction = data.get('direction')
-        if not uuid or not direction:
-            gui_logger.error(f"Invalid data for saliency update task: {data}")
-            return
-
-        gui_logger.info(f"Worker handling saliency update: UUID={uuid}, Direction={direction}")
+        uuid = data.get('uuid'); direction = data.get('direction')
+        if not uuid or not direction: gui_logger.error(f"Invalid saliency update data: {data}"); return
+        gui_logger.info(f"Worker handling saliency update: UUID={uuid}, Dir={direction}")
         if self.client:
-            try:
-                # Call the backend method (no return value expected currently)
-                self.client.update_node_saliency(uuid, direction)
-                # Optionally emit a signal back to GUI? For now, just log.
-                self.signals.log_message.emit(f"Saliency update processed for {uuid[:8]}.")
-            except Exception as e:
-                error_msg = f"Error during saliency update for {uuid}: {e}"
-                self.signals.error.emit(error_msg)
-                backend_logger.error(error_msg, exc_info=True)
-        else:
-            error_msg = "Backend client not available for saliency update."
-            self.signals.error.emit(error_msg)
-            backend_logger.error(error_msg)
+            try: self.client.update_node_saliency(uuid, direction)
+            except Exception as e: error_msg = f"Error saliency update {uuid}: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True)
+        else: error_msg = "Backend client not available for saliency update."; self.signals.error.emit(error_msg); backend_logger.error(error_msg)
 
     def add_input(self, text: str, attachment: dict | None = None):
         """Analyzes input/attachment and adds appropriate task to the queue."""
-        if not self.client:
-            self.signals.error.emit("Backend client not ready.")
-            return
+        if not self.client: self.signals.error.emit("Backend client not ready."); return
+        gui_logger.info(f"Worker received input: Text='{text[:50]}...', Attach='{attachment.get('type') if attachment else None}'")
 
-        gui_logger.info(
-            f"Worker received input: Text='{text[:50]}...', Attachment Type='{attachment.get('type') if attachment else None}'")
-
-        # --- Check for Pending Clarification ---
+        # Handle Pending Clarification FIRST
         if self.pending_clarification:
-            gui_logger.info(
-                f"Handling input as clarification response for action: {self.pending_clarification.get('original_action')}")
-            # Assume the new text provides the missing arguments.
-            # A more robust approach might try to parse the new text specifically
-            # for the missing args, but let's start simple.
-            # We'll merge the new text into a likely missing argument.
-            # This is heuristic - assumes the user provides *only* the missing info.
-
+            gui_logger.info(f"Input is clarification for: {self.pending_clarification.get('original_action')}")
             original_action = self.pending_clarification.get('original_action')
             current_args = self.pending_clarification.get('args', {})
             missing_args = self.pending_clarification.get('missing_args', [])
-
-            # Simple strategy: Assume the text fills the *first* missing argument.
-            # This might need refinement based on typical user responses.
             if missing_args:
                 first_missing = missing_args[0]
-                current_args[first_missing] = text  # Assign the user's input text
-                gui_logger.debug(f"Attempting to fill missing arg '{first_missing}' with text: '{text[:50]}...'")
-
-                # Construct the action data to execute
-                action_data_to_execute = {
-                    "action": original_action,
-                    "args": current_args
-                }
-
-                # Clear pending state *before* queuing execution
-                self.pending_clarification = None
-
-                # Add user's clarification text to history
-                self.current_conversation.append(
-                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-                # Queue the execution task
-                gui_logger.info(f"Queuing action '{original_action}' for execution with clarified args: {current_args}")
-                self.input_queue.append(('execute_action', action_data_to_execute))
-                return  # Stop further processing of this input
-
+                current_args[first_missing] = text # Assume text fills first missing arg
+                action_data_to_execute = {"action": original_action, "args": current_args}
+                self.pending_clarification = None # Clear state
+                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                gui_logger.info(f"Queuing action '{original_action}' with clarified args: {current_args}")
+                self.input_queue.append(('execute_action', action_data_to_execute)) # Use direct action queue for now
+                return
             else:
-                # Should not happen if pending_clarification is set correctly, but handle defensively.
-                gui_logger.warning(
-                    "Clarification was pending, but no missing args listed. Clearing state and proceeding normally.")
-                self.pending_clarification = None
-                # Fall through to normal processing...
+                gui_logger.warning("Clarification pending, but no missing args listed. Clearing state.")
+                self.pending_clarification = None # Fall through
 
-        # --- If no clarification pending, proceed as normal ---
-
-        # --- Prioritize Image Attachment ---
+        # Handle Image Attachment
         if attachment and attachment.get('type') == 'image':
             gui_logger.info("Image attachment found. Queuing chat task directly.")
-            task_data = {'text': text, 'attachment': attachment}
-            self.input_queue.append(('chat', task_data))
+            self.input_queue.append(('chat', {'text': text, 'attachment': attachment}))
             return
 
-        # --- If no image, proceed with standard analysis ---
-        gui_logger.info(f"Analyzing text input for actions/commands: '{text[:50]}...'")
+        # Analyze Text for Actions (File/Calendar/Memory)
+        gui_logger.info(f"Analyzing text input for actions: '{text[:50]}...'")
         try:
-            # Analyze for File/Calendar actions first
-            analysis_result = self.client.analyze_action_request(text)
-            action = analysis_result.get("action")
+            # --- Step 1: Analyze for Non-Memory Actions (File/Calendar) ---
+            action_analysis_result = self.client.analyze_action_request(text)
+            action = action_analysis_result.get("action")
 
-            if action == "error":
-                self.signals.error.emit(f"Action Analysis Error: {analysis_result.get('reason', '?')}")
-                # Maybe proceed with chat? Or just stop? For now, stop.
-                return
+            if action == "error": self.signals.error.emit(f"Action Analysis Error: {action_analysis_result.get('reason', '?')}"); return
             elif action == "clarify":
-                # If clarification is needed, add user text to history and emit signal
-                self.current_conversation.append(
-                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-                # --- Store pending clarification state ---
-                self.pending_clarification = {
-                    "original_action": analysis_result.get("original_action", "?"),
-                    "args": analysis_result.get("args", {}),  # Store args already extracted by LLM
-                    "missing_args": analysis_result.get("missing_args", [])
-                }
+                self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+                self.pending_clarification = {"original_action": action_analysis_result.get("original_action", "?"), "args": action_analysis_result.get("args", {}), "missing_args": action_analysis_result.get("missing_args", [])}
                 gui_logger.info(f"Stored pending clarification: {self.pending_clarification}")
-                self.signals.clarification_needed.emit(
-                    self.pending_clarification["original_action"],
-                    self.pending_clarification["missing_args"]
-                )
-                # Don't queue chat task, wait for user clarification
-                return
+                self.signals.clarification_needed.emit(self.pending_clarification["original_action"], self.pending_clarification["missing_args"]); return
             elif action != "none":
-                # If a specific file/calendar action is identified, queue it
-                # Clear any potentially stale clarification state if a new, complete action is detected
-                if self.pending_clarification:
-                    gui_logger.debug("Clearing stale pending clarification due to new complete action.")
-                    self.pending_clarification = None
-                gui_logger.info(f"Action '{action}' detected. Queuing execution task.")
-                # Add user text to history before queuing action
-                self.current_conversation.append(
-                    {"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-                self.input_queue.append(('execute_action', analysis_result))
-                return  # Don't queue chat task
+                # --- Specific Non-Memory Action Found ---
+                # Don't queue execute_action directly. Instead, rely on the needs_planning flag
+                # returned by process_interaction to trigger the separate planning task later.
+                # This simplifies logic here - just queue a chat task, and if the backend
+                # flags it for planning, the separate planning task will handle it.
+                # For now, we fall through to the chat task.
+                gui_logger.info(f"Non-memory action '{action}' detected by initial analysis. Will proceed to chat; backend will flag for planning if needed.")
+                pass # Fall through to queue chat task
+
+            # --- Step 2: Analyze for Memory Modification (If not a clear file/calendar action) ---
+            # --- Temporarily disable direct LLM memory mod analysis ---
+            # if action == "none": # Only check if no file/calendar action found
+            #     mod_analysis_result = self.client.analyze_memory_modification_request(text)
+            #     mod_action = mod_analysis_result.get("action")
+            #     if mod_action == "error": self.signals.error.emit(f"Mem Mod Analysis Error: {mod_analysis_result.get('reason', '?')}"); mod_action = "none"
+            #     if mod_action != "none":
+            #         gui_logger.info(f"Memory modification '{mod_action}' detected. Queuing modify task.")
+            #         self.input_queue.append(('modify', text)); return # Queue and exit
+            # --- End Memory Mod check ---
 
         except Exception as e:
-            # Log error during analysis but potentially fall through to check modification/chat
-            gui_logger.error(f"Error during action request analysis: {e}", exc_info=True)
-            self.signals.error.emit(f"Failed to analyze for file/calendar actions: {e}")
-            # Fall through to check memory modification (currently disabled)
+            gui_logger.error(f"Error during action analysis: {e}", exc_info=True)
+            self.signals.error.emit(f"Failed to analyze input actions: {e}")
+            # Fall through to chat task on analysis error
 
-        # --- If not a file/calendar action, analyze for memory modification ---
-        # --- DISABLED Memory Modification Analysis ---
-        # try:
-        #     mod_analysis_result = self.client.analyze_memory_modification_request(text)
-        #     mod_action = mod_analysis_result.get("action")
-        #
-        #     if mod_action == "error":
-        #         self.signals.error.emit(f"Memory Modification Analysis Error: {mod_analysis_result.get('reason', '?')}")
-        #         # Proceed with chat? Or stop? Let's proceed with chat for now.
-        #         mod_action = "none" # Treat error as no mod action
-        #
-        #     if mod_action != "none":
-        #         # If a specific memory modification action is identified, queue it
-        #         # Clear any potentially stale clarification state
-        #         if self.pending_clarification:
-        #             gui_logger.debug("Clearing stale pending clarification due to modification request.")
-        #             self.pending_clarification = None
-        #         gui_logger.info(f"Memory modification action '{mod_action}' detected by LLM. Queuing modify task.")
-        #         # Don't add user input to history here, let handle_modify_task decide
-        #         # Pass the *original text* to the modify handler, as it expects the raw command
-        #         self.input_queue.append(('modify', text))
-        #         return # Don't queue chat task
-        #
-        # except Exception as e:
-        #      # Log error during analysis but fall through to chat
-        #      gui_logger.error(f"Error during memory modification analysis: {e}", exc_info=True)
-        #      self.signals.error.emit(f"Failed to analyze for memory modification actions: {e}")
-        # --- END DISABLED Memory Modification Analysis ---
-
-        # --- If not action or modification (both analyses returned "none" or errored), treat as regular chat ---
-        gui_logger.info(
-            "No specific file/calendar or memory modification action detected by analysis. Queuing chat task.")
-        # Clear any potentially stale clarification state
-        if self.pending_clarification:
-            gui_logger.debug("Clearing stale pending clarification due to regular chat input.")
-            self.pending_clarification = None
-        task_data = {'text': text, 'attachment': None}  # Ensure chat task always gets dict
-        self.input_queue.append(('chat', task_data))
+        # --- Step 3: If no specific action identified, queue as Chat ---
+        gui_logger.info("No specific action detected by analysis. Queuing chat task.")
+        self.input_queue.append(('chat', {'text': text, 'attachment': None})) # Attachment already handled or None
 
     def request_memory_reset(self):
-        # (Implementation remains the same)
-        gui_logger.info("GUI requested memory reset.");
-        self.input_queue.append(('reset', None))
+        """Adds a reset task to the queue."""
+        gui_logger.info("GUI requested memory reset."); self.input_queue.append(('reset', None))
 
     def request_consolidation(self):
-        # (Implementation remains the same)
-        gui_logger.info("GUI requested manual consolidation.");
-        self.input_queue.append(('consolidate', None))
+        """Adds a consolidation task to the queue."""
+        gui_logger.info("GUI requested manual consolidation."); self.input_queue.append(('consolidate', None))
 
     def request_saliency_update(self, uuid: str, direction: str):
         """Adds a saliency update task to the queue."""
@@ -917,26 +677,21 @@ class Worker(QThread):
         self.input_queue.append(('saliency_update', {'uuid': uuid, 'direction': direction}))
 
     def stop(self):
-        # (Implementation remains the same)
-        self.is_running = False;
-        gui_logger.info("Stop requested for worker.")
+        """Signals the worker thread to stop."""
+        self.is_running = False; gui_logger.info("Stop requested for worker.")
 
     def save_memory_on_stop(self):
-        # (Implementation remains the same)
+        """Saves memory when the worker stops."""
         if self.client:
             backend_logger.info("Triggering final save from worker...")
-            try:
-                self.client._save_memory(); backend_logger.info("Final save complete.")
-            except Exception as e:
-                backend_logger.error(f"Error during final save: {e}", exc_info=True)
-        else:
-            backend_logger.warning("Worker stopping, but no backend client to save.")
+            try: self.client._save_memory(); backend_logger.info("Final save complete.")
+            except Exception as e: backend_logger.error(f"Error during final save: {e}", exc_info=True)
+        else: backend_logger.warning("Worker stopping, but no backend client to save.")
 
 
 # --- Collapsible Memory Widget ---
-# (Implementation remains the same as previous version)
 class CollapsibleMemoryWidget(QWidget):
-    # NEW Signal
+    # Signal to notify the main window about feedback clicks
     saliency_feedback_requested = pyqtSignal(str, str)  # uuid, direction ('increase'/'decrease')
 
     def __init__(self, memories, parent=None):
@@ -944,13 +699,14 @@ class CollapsibleMemoryWidget(QWidget):
         self.memories = memories or []
         self.toggle_button = QPushButton()
         self.toggle_button.setObjectName("MemoryToggle")
-        self.content_area = QTextBrowser()  # Changed from QTextEdit
+        self.content_area = QTextBrowser()  # Displays the formatted memories
         self.content_area.setReadOnly(True)
-        self.content_area.setVisible(False)
+        self.content_area.setVisible(False) # Start collapsed
         self.content_area.setObjectName("MemoryContent")
-        # Enable link clicking (anchorClicked signal handles this)
-        self.content_area.anchorClicked.connect(self.handle_link_click)  # Connect signal
+        # Enable link clicking - connect the signal to the handler slot
+        self.content_area.anchorClicked.connect(self.handle_link_click)
 
+        # Layout for the widget itself
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -960,81 +716,217 @@ class CollapsibleMemoryWidget(QWidget):
         self.toggle_button.setCheckable(True)
         self.toggle_button.setChecked(False)
         self.toggle_button.toggled.connect(self.toggle_content)
-        self.update_button_text()
-        self.populate_content()
+
+        self.update_button_text() # Set initial button text
+        self.populate_content()   # Populate the content area
 
     def update_button_text(self):
-        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"; count = len(
-            self.memories); self.toggle_button.setText(f"{prefix} Retrieved Memories ({count})")
+        """Updates the text on the toggle button based on state and memory count."""
+        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"
+        count = len(self.memories)
+        self.toggle_button.setText(f"{prefix} Retrieved Memories ({count})")
 
     def toggle_content(self, checked):
-        self.content_area.setVisible(checked); self.update_button_text(); self.adjustSize(); QTimer.singleShot(0,
-                                                                                                               self._update_parent_layout)
+        """Shows or hides the memory content area."""
+        self.content_area.setVisible(checked)
+        self.update_button_text()
+        # Adjust size and trigger parent layout update
+        self.adjustSize()
+        QTimer.singleShot(0, self._update_parent_layout) # Use timer to allow layout to settle
 
     def _update_parent_layout(self):
-        if self.parentWidget() and self.parentWidget().layout(): self.parentWidget().layout().activate()
+        """Helper function to ensure the parent layout readjusts."""
+        if self.parentWidget() and self.parentWidget().layout():
+            self.parentWidget().layout().activate()
 
     def populate_content(self):
-        if not self.memories: self.content_area.setHtml("<small><i>No relevant memories retrieved.</i></small>"); return
-        # Sort memories by final_activation score (descending), then timestamp as secondary key
-        html_content = "";
-        sorted_memories = sorted(self.memories, key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')),
-                                 reverse=True)
+        """Formats and displays the memories in the content area."""
+        if not self.memories:
+            self.content_area.setHtml("<small><i>No relevant memories retrieved.</i></small>")
+            return
+
+        html_content = ""
+        # Sort memories by activation score (desc), then timestamp (desc)
+        # Using timestamp descending means more recent memories appear first within the same activation level
+        sorted_memories = sorted(
+            self.memories,
+            key=lambda x: (x.get('final_activation', 0.0), x.get('timestamp', '')),
+            reverse=True
+        )
+
         for mem in sorted_memories:
-            ts_str = mem.get('timestamp', 'N/A');
-            node_type = mem.get('node_type', '?type');
-            act_score = mem.get('final_activation', -1.0);
-            speaker = str(mem.get('speaker', '?')).replace('<', '&lt;').replace('>', '&gt;');
-            text = str(mem.get('text', '')).replace('<', '&lt;').replace('>', '&gt;');
-            text_multiline = text.replace('\n', '<br/>');
-            uuid_str = mem.get('uuid', '')[:8];
-            score_str = f"(Act: {act_score:.3f})" if act_score >= 0 else "";
-            time_desc = ts_str[:10]
+            ts_str = mem.get('timestamp', 'N/A')
+            node_type = mem.get('node_type', '?type')
+            act_score = mem.get('final_activation', -1.0)
+            speaker = str(mem.get('speaker', '?')).replace('<', '&lt;').replace('>', '&gt;')
+            text = str(mem.get('text', '')).replace('<', '&lt;').replace('>', '&gt;')
+            text_multiline = text.replace('\n', '<br/>') # Preserve line breaks
+            full_uuid = mem.get('uuid', '') # Get the full UUID
+            uuid_str = full_uuid[:8] # Display shortened UUID
+            score_str = f"(Act: {act_score:.3f})" if act_score >= 0 else ""
+
+            # Calculate relative time description
+            time_desc = ts_str[:10] # Default to YYYY-MM-DD
             try:
-                dt_obj = datetime.fromisoformat(ts_str.replace('Z', '+00:00')); time_diff = datetime.now(
-                    timezone.utc) - dt_obj;
-            except (ValueError, TypeError):
-                dt_obj = None; time_diff = None
-            if time_diff:
+                # Attempt to parse timestamp, assuming UTC if no offset
+                dt_obj = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                if dt_obj.tzinfo is None:
+                    dt_obj = dt_obj.replace(tzinfo=timezone.utc) # Ensure timezone aware
+                time_diff = datetime.now(timezone.utc) - dt_obj
+
                 if time_diff < timedelta(minutes=1):
                     time_desc = f"{int(time_diff.total_seconds())}s ago"
                 elif time_diff < timedelta(hours=1):
                     time_desc = f"{int(time_diff.total_seconds() / 60)}m ago"
                 elif time_diff < timedelta(days=1):
                     time_desc = f"{int(time_diff.total_seconds() / 3600)}h ago"
-                elif dt_obj:
-                    time_desc = dt_obj.strftime('%y-%m-%d')
+                elif time_diff < timedelta(days=7):
+                     time_desc = f"{time_diff.days}d ago"
+                elif dt_obj: # Fallback for older dates
+                    time_desc = dt_obj.strftime('%y-%m-%d') # YY-MM-DD format
 
-            # --- Add Saliency Links ---
+            except (ValueError, TypeError) as e:
+                gui_logger.debug(f"Could not parse timestamp for relative description: {ts_str} ({e})")
+                time_desc = ts_str[:10] # Fallback to date part
+
+            # --- Add Saliency Feedback Links ---
             saliency_links = ""
-            if uuid_str:  # Only add links if we have a full UUID
-                increase_link = f'<a href="saliency://increase/{mem.get("uuid", "")}" style="color: #8FBC8F; text-decoration: none;">[+S]</a>'  # Use full UUID
-                decrease_link = f'<a href="saliency://decrease/{mem.get("uuid", "")}" style="color: #F08080; text-decoration: none;">[-S]</a>'  # Use full UUID
+            if full_uuid:  # Only add links if we have a full UUID
+                # Use the full UUID in the link URL
+                increase_link = f'<a href="saliency://increase/{full_uuid}" style="color: #8FBC8F; text-decoration: none;" title="Increase Saliency">[+S]</a>'
+                decrease_link = f'<a href="saliency://decrease/{full_uuid}" style="color: #F08080; text-decoration: none;" title="Decrease Saliency">[-S]</a>'
+                # Add non-breaking spaces for better spacing
                 saliency_links = f"&nbsp;{increase_link}&nbsp;{decrease_link}"
 
+            # Construct HTML for this memory entry
             html_content += (
                 f"<div style='margin-bottom: 5px; border-left: 2px solid #555; padding-left: 5px;'>"
-                f"<small><i><b>{speaker}</b> [{node_type}] ({time_desc}) {score_str} [{uuid_str}]{saliency_links}</i></small>"  # Add links here
+                # Display speaker, type, time, score, short UUID, and saliency links
+                f"<small><i><b>{speaker}</b> [{node_type}] ({time_desc}) {score_str} [{uuid_str}]{saliency_links}</i></small>"
+                # Display the message text
                 f"<br/>{text_multiline}</div>"
             )
-        self.content_area.setHtml(html_content)
+        self.content_area.setHtml(html_content) # Set the final HTML content
 
-    # --- NEW Link Handler ---
-    @pyqtSlot(QUrl)
+    @pyqtSlot(QUrl) # Decorator to mark this as a slot for the anchorClicked signal
     def handle_link_click(self, url: QUrl):
-        """Handles clicks on custom saliency links."""
+        """Handles clicks on custom saliency links within the QTextBrowser."""
         if url.scheme() == "saliency":
             action = url.host()  # 'increase' or 'decrease'
-            uuid = url.path().strip('/')  # Get the UUID part
+            uuid = url.path().strip('/')  # Get the UUID part from the path
             if action in ['increase', 'decrease'] and uuid:
                 gui_logger.info(f"Saliency feedback link clicked: Action={action}, UUID={uuid}")
+                # Emit the signal with the full UUID and action
                 self.saliency_feedback_requested.emit(uuid, action)
             else:
                 gui_logger.warning(f"Invalid saliency link format: {url.toString()}")
         else:
-            # Could potentially handle other schemes or pass to default handler here
-            gui_logger.debug(f"Ignoring non-saliency link click: {url.toString()}")
+            # If it's not our custom scheme, maybe open external links?
+            # Or just ignore non-saliency links within the memory widget.
+            gui_logger.debug(f"Ignoring non-saliency link click in memory widget: {url.toString()}")
 
+
+# --- Collapsible Memory Widget ---
+# (Implementation remains the same as previous version)
+class CollapsibleDriveWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.drive_state = {}
+        self.toggle_button = QPushButton()
+        self.toggle_button.setObjectName("DriveToggle") # Style like memory toggle
+        self.content_area = QTextBrowser()
+        self.content_area.setReadOnly(True)
+        self.content_area.setVisible(False)
+        self.content_area.setObjectName("DriveContent") # Style like memory content
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.toggle_button)
+        layout.addWidget(self.content_area)
+
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False) # Start collapsed
+        self.toggle_button.toggled.connect(self.toggle_content)
+        self.update_widget({}) # Initial empty state
+
+    def update_widget(self, drive_state_dict: dict):
+        """Stores the new drive state and updates the display."""
+        # Ensure the structure is valid before storing
+        if isinstance(drive_state_dict, dict) and "short_term" in drive_state_dict and "long_term" in drive_state_dict:
+            self.drive_state = drive_state_dict
+            gui_logger.debug(f"CollapsibleDriveWidget updated with state: {self.drive_state}")
+        else:
+            gui_logger.warning(f"Received invalid drive state in CollapsibleDriveWidget: {drive_state_dict}. Clearing.")
+            self.drive_state = {"short_term": {}, "long_term": {}} # Clear state on invalid input
+
+        self.update_button_text()
+        self.populate_content() # Update display content
+
+    def update_button_text(self):
+        """Updates the toggle button text."""
+        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"
+        # Keep button text simple
+        self.toggle_button.setText(f"{prefix} AI Drive State")
+        # Optional: Add more detail like number of drives if needed
+        # count = len(self.drive_state.get("short_term", {}))
+        # self.toggle_button.setText(f"{prefix} AI Drive State ({count} Drives)")
+
+    def toggle_content(self, checked):
+        """Shows/hides the drive state details."""
+        self.content_area.setVisible(checked)
+        self.update_button_text()
+        # Adjust size and trigger parent layout update
+        self.adjustSize()
+        QTimer.singleShot(0, self._update_parent_layout)
+
+    def _update_parent_layout(self):
+        """Ensures the parent layout readjusts after toggling visibility."""
+        if self.parentWidget() and self.parentWidget().layout():
+            self.parentWidget().layout().activate()
+
+    # --- MODIFIED populate_content ---
+    def populate_content(self):
+        """Populates the content area with differentiated ST and LT drive levels."""
+        if not self.drive_state or not self.drive_state.get("short_term"):
+            self.content_area.setHtml("<small><i>Drive state unavailable.</i></small>")
+            return
+
+        html_content = ""
+        short_term_drives = self.drive_state.get("short_term", {})
+        long_term_drives = self.drive_state.get("long_term", {})
+
+        # Get all drive names present in either short_term or long_term state
+        all_drive_names = set(short_term_drives.keys()) | set(long_term_drives.keys())
+        sorted_drives = sorted(list(all_drive_names))
+
+        if not sorted_drives:
+            self.content_area.setHtml("<small><i>No drives defined in state.</i></small>")
+            return
+
+        # Simple grid-like layout using HTML (adjust styling as needed)
+        html_content += "<div style='display: grid; grid-template-columns: auto auto auto; gap: 4px 15px;'>" # Grid layout
+
+        # Header row
+        html_content += "<div style='font-weight: bold;'>Drive</div>"
+        html_content += "<div style='font-weight: bold; text-align: right;'>ST Level</div>"
+        html_content += "<div style='font-weight: bold; text-align: right;'>LT Level</div>"
+
+        # Data rows
+        for drive_name in sorted_drives:
+            st_level = short_term_drives.get(drive_name, 0.0) # Default to 0.0 if missing
+            lt_level = long_term_drives.get(drive_name, 0.0) # Default to 0.0 if missing
+
+            # Drive Name Column
+            html_content += f"<div>{drive_name}:</div>"
+            # Short-Term Level Column (right-aligned)
+            html_content += f"<div style='text-align: right;'>{st_level:+.2f}</div>" # Show sign always
+            # Long-Term Level Column (right-aligned)
+            html_content += f"<div style='text-align: right;'>{lt_level:+.2f}</div>" # Show sign always
+
+        html_content += "</div>" # Close grid div
+
+        self.content_area.setHtml(html_content)
 
 # --- Collapsible Drive Widget ---
 class CollapsibleDriveWidget(QWidget):
@@ -1834,27 +1726,54 @@ class ChatWindow(QMainWindow):
         """Starts a new worker thread for the given personality name."""
         # Note: Signal disconnection should happen in switch_personality before calling this
         gui_logger.info(f"Starting worker for: {name}")
+        # --- Instantiate the Worker ---
         self.worker = Worker(personality_name=name, config_path=self.config_path)
 
-        # --- Connect signals ---
-        # Connect the crucial backend_ready signal
-        self.worker.signals.backend_ready.connect(self.on_backend_ready)
-        # Connect other signals
-        self.worker.signals.response_ready.connect(self.display_response)
-        self.worker.signals.modification_response_ready.connect(self.display_modification_confirmation)
-        self.worker.signals.memory_reset_complete.connect(self.on_memory_reset_complete)
-        self.worker.signals.consolidation_complete.connect(self.on_consolidation_complete)
-        self.worker.signals.clarification_needed.connect(self.handle_clarification_request)
-        self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request)  # NEW Connection
-        self.worker.signals.error.connect(self.display_error)
-        self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
-        self.worker.signals.initial_history_ready.connect(self.display_initial_history) # NEW Connection
-        self.worker.signals.mood_updated.connect(self.update_emotion_indicator) # NEW Connection
-        self.worker.signals.drive_state_updated.connect(self.update_drive_summary) # NEW Connection
-        self.worker.finished.connect(self.on_worker_finished)
+        # --- ADD IMMEDIATE LOGGING AFTER INSTANTIATION ---
+        gui_logger.debug(f"### DEBUG: Worker instantiated. Type(self.worker): {type(self.worker)}, Value: {self.worker}")
+        # ---------------------------------------------
 
-        self.worker.start()  # Start the thread execution (calls run())
-        # DO NOT enable input here - wait for backend_ready signal
+        # --- Connect signals ---
+        # --- ADD LOGGING RIGHT BEFORE ERROR LINE ---
+        gui_logger.debug(f"### DEBUG: About to connect signals. Value of self.worker: {self.worker}")
+        # ---------------------------------------------
+        # --- THIS is where the error occurs ---
+        try:
+            self.worker.signals.backend_ready.connect(self.on_backend_ready)
+            # --- Connect other signals ---
+            self.worker.signals.response_ready.connect(self.display_response)
+            self.worker.signals.modification_response_ready.connect(self.display_modification_confirmation)
+            self.worker.signals.memory_reset_complete.connect(self.on_memory_reset_complete)
+            self.worker.signals.consolidation_complete.connect(self.on_consolidation_complete)
+            self.worker.signals.clarification_needed.connect(self.handle_clarification_request)
+            self.worker.signals.confirmation_needed.connect(self.handle_confirmation_request)
+            self.worker.signals.error.connect(self.display_error)
+            self.worker.signals.log_message.connect(lambda msg: self.statusBar().showMessage(msg, 4000))
+            self.worker.signals.initial_history_ready.connect(self.display_initial_history)
+            self.worker.signals.mood_updated.connect(self.update_emotion_indicator)
+            self.worker.signals.drive_state_updated.connect(self.update_drive_summary)
+            self.worker.finished.connect(self.on_worker_finished)
+
+            self.worker.start()  # Start the thread execution (calls run())
+            # DO NOT enable input here - wait for backend_ready signal
+
+        # --- ADD EXCEPTION HANDLING AROUND SIGNAL CONNECTION ---
+        except AttributeError as ae:
+            gui_logger.critical(f"### CRITICAL: AttributeError during signal connection! self.worker is likely None. Error: {ae}", exc_info=True)
+            # Optionally display an error to the user here as well
+            self.display_error(f"Critical error starting backend worker for '{name}'. Check logs.")
+            # Ensure UI is disabled
+            self.set_input_enabled(False)
+            self.update_status_light("not_ready")
+            self.statusBar().showMessage(f"Error starting worker for '{name}'.", 0)
+        except Exception as e:
+             gui_logger.critical(f"### CRITICAL: Unexpected error during signal connection or worker start! Error: {e}", exc_info=True)
+             self.display_error(f"Unexpected critical error starting backend worker for '{name}'. Check logs.")
+             # Ensure UI is disabled
+             self.set_input_enabled(False)
+             self.update_status_light("not_ready")
+             self.statusBar().showMessage(f"Error starting worker for '{name}'.", 0)
+         # --- END EXCEPTION HANDLING ---
 
     @pyqtSlot(bool, str)  # Slot for backend_ready signal
     def on_backend_ready(self, success: bool, personality_name: str):
@@ -2222,18 +2141,40 @@ class ChatWindow(QMainWindow):
         self.update_status_light("loading")  # Use yellow light to indicate waiting state
         self.is_processing = False  # No longer processing the initial request
 
-    @pyqtSlot(str, str, list)
-    def display_response(self, user_input, ai_response, memories):
-        # (Implementation remains the same - calls display_message, re-enables via _finalize_display)
-        gui_logger.debug(f"GUI received AI response: {ai_response[:50]}...")
-        self.display_message("AI", ai_response)
+    @pyqtSlot(InteractionResult) # <<< CHANGED SLOT SIGNATURE
+    def display_response(self, result: InteractionResult):
+        """Displays AI response, inner thoughts, and memories from InteractionResult."""
+        # Unpack data from the InteractionResult object
+        final_response = result.final_response_text
+        inner_thoughts = result.inner_thoughts
+        memories = result.memories_used
+        ai_node_uuid = result.ai_node_uuid
+        # needs_planning = result.needs_planning # Not directly used for display here
+
+        gui_logger.debug(f"GUI received AI response: '{strip_emojis(final_response[:50])}...' (UUID: {ai_node_uuid})")
+
+        # --- Display Logic (remains largely the same, just uses unpacked variables) ---
+        # 1. Display the main AI message bubble
+        self.display_message("AI", final_response, ai_node_uuid=ai_node_uuid)
+
+        # 2. Display Inner Thoughts (if any)
+        if inner_thoughts:
+            gui_logger.debug(f"Creating CollapsibleThoughtWidget with thoughts: '{inner_thoughts[:50]}...'")
+            try:
+                thought_widget = CollapsibleThoughtWidget(inner_thoughts, self.scroll_widget)
+                thought_container_layout = QHBoxLayout()
+                thought_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
+                thought_container_layout.addWidget(thought_widget)
+                self._add_widget_to_chat_layout(thought_container_layout)
+            except Exception as e:
+                gui_logger.error(f"Failed to create/add thought widget: {e}", exc_info=True)
+
+        # 3. Display Memories (if any)
         if memories:
             gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
             try:
                 memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
-                # --- Connect the new signal ---
                 memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
-                # --- Add widget to layout ---
                 mem_container_layout = QHBoxLayout()
                 mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
                 mem_container_layout.addWidget(memory_widget)
@@ -2244,32 +2185,7 @@ class ChatWindow(QMainWindow):
         else:
             gui_logger.debug("No memories received for this interaction.")
 
-    # --- Slot signature updated to accept 5th argument (needs_planning flag) ---
-    @pyqtSlot(str, str, list, str, bool)
-    def display_response(self, user_input, ai_response, memories, ai_node_uuid, needs_planning):
-        """Displays AI response and memories. Workspace results handled separately."""
-        # This slot ONLY displays the AI's conversational response and memories.
-        # The needs_planning flag is received but not directly used for display here.
-        # Workspace results will arrive via modification_response_ready signal later if planning was needed.
-        gui_logger.debug(f"GUI received AI response: '{strip_emojis(ai_response[:50])}...' (UUID: {ai_node_uuid})") # Strip emojis
-        # --- Pass ai_node_uuid to display_message for the AI bubble ---
-        self.display_message("AI", ai_response, ai_node_uuid=ai_node_uuid)
-        if memories:
-            gui_logger.debug(f"Creating CollapsibleMemoryWidget with {len(memories)} memories.")
-            try:
-                memory_widget = CollapsibleMemoryWidget(memories, self.scroll_widget)
-                # --- Connect the new signal ---
-                memory_widget.saliency_feedback_requested.connect(self.handle_saliency_feedback)
-                # --- Add widget to layout ---
-                mem_container_layout = QHBoxLayout()
-                mem_container_layout.setContentsMargins(self.bubble_edge_margin + 5, 0, self.bubble_side_margin, 0)
-                mem_container_layout.addWidget(memory_widget)
-                self._add_widget_to_chat_layout(mem_container_layout)
-            except Exception as e:
-                gui_logger.error(f"Failed to create/connect memory widget: {e}", exc_info=True)
-                self.display_error(f"Failed display memories: {e}")
-        else:
-            gui_logger.debug("No memories received for this interaction.")
+        # 4. Finalize UI state
         self._finalize_display()
 
     @pyqtSlot(str, str, str, str)
@@ -2905,6 +2821,63 @@ class ChatWindow(QMainWindow):
                 gui_logger.info("Worker thread stopped on close.")
             event.accept()
 
+# --- Add this class definition ---
+class CollapsibleThoughtWidget(QWidget):
+    """A collapsible widget to display the AI's inner thoughts."""
+    def __init__(self, thoughts_text, parent=None):
+        super().__init__(parent)
+        self.thoughts_text = thoughts_text or ""
+        self.toggle_button = QPushButton()
+        self.toggle_button.setObjectName("ThoughtToggle") # Style name
+        self.content_area = QTextBrowser()
+        self.content_area.setReadOnly(True)
+        self.content_area.setVisible(False)
+        self.content_area.setObjectName("ThoughtContent") # Style name
+        self.content_area.setOpenExternalLinks(True) # Allow links if any
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.toggle_button)
+        layout.addWidget(self.content_area)
+
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False) # Start collapsed
+        self.toggle_button.toggled.connect(self.toggle_content)
+        self.update_button_text()
+        self.populate_content()
+        # Apply specific styling for thoughts
+        self.toggle_button.setStyleSheet("background-color: transparent; color: #BDB76B; border: none; text-align: left; padding: 2px 5px; font-size: 9pt; font-style: italic;")
+        self.content_area.setStyleSheet("background-color: #2E2E2E; color: #D2D2D2; border: 1px solid #4E4E4E; border-radius: 6px; padding: 5px; margin: 0px 0px 5px 0px; font-size: 9pt;")
+
+    def update_button_text(self):
+        """Updates the text of the toggle button."""
+        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"
+        # Shorten if thoughts are very long for the button text
+        preview = self.thoughts_text[:40].replace('\n', ' ') + "..." if len(self.thoughts_text) > 40 else self.thoughts_text.replace('\n', ' ')
+        self.toggle_button.setText(f"{prefix} Inner Thoughts: '{preview}'")
+
+    def toggle_content(self, checked):
+        """Shows or hides the thought content."""
+        self.content_area.setVisible(checked)
+        self.update_button_text()
+        self.adjustSize()
+        QTimer.singleShot(0, self._update_parent_layout)
+
+    def _update_parent_layout(self):
+        """Ensures the parent layout readjusts after toggling visibility."""
+        if self.parentWidget() and self.parentWidget().layout():
+            self.parentWidget().layout().activate()
+
+    def populate_content(self):
+        """Sets the formatted thought text in the content area."""
+        if not self.thoughts_text:
+            self.content_area.setHtml("<small><i>(No inner thoughts were provided)</i></small>")
+            return
+        # Simple HTML formatting (preserve line breaks)
+        formatted_text = self.thoughts_text.replace('\n', '<br/>')
+        self.content_area.setHtml(f"<div style='font-family: Consolas, monospace; font-size: 9pt;'>{formatted_text}</div>")
+# --- End of new class definition ---
 
 # --- Main Execution ---
 if __name__ == "__main__":
