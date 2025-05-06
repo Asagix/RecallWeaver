@@ -45,7 +45,7 @@ DEFAULT_EMOTIONAL_CORE_CONFIG = {
     "store_insights_enabled": False, # Whether to write insights back to KG
     "basic_emotion_threshold": 0.3, # Min probability to consider a basic emotion present
     "vader_sentiment_threshold": 0.05, # Threshold for VADER compound score
-    "needs_fears_prefs_definitions": { # Example definitions (can be moved to prompt)
+    "needs_fears_prefs_definitions": {
         "needs": {
             "Competence": "Desire to feel capable, effective, and skilled.",
             "Esteem": "Desire for self-respect, recognition, and appreciation from others.",
@@ -59,11 +59,11 @@ DEFAULT_EMOTIONAL_CORE_CONFIG = {
             "LossOfControl": "Fear of being powerless or unable to influence events.",
             "Threat": "Fear of harm, danger, or negative consequences."
         },
-        "preferences": {
-            "Clarity": "Preference for clear, unambiguous communication.",
-            "Politeness": "Preference for respectful and courteous interaction.",
-            "Ambiguity": "Dislike of vague or unclear communication.",
-            "Rudeness": "Dislike of disrespectful or impolite interaction."
+        "preferences": { # Updated structure
+            "Clarity": {"type": "positive", "description": "Preference for clear, unambiguous communication."},
+            "Politeness": {"type": "positive", "description": "Preference for respectful and courteous interaction."},
+            "Ambiguity": {"type": "negative", "description": "Dislike of vague or unclear communication."},
+            "Rudeness": {"type": "negative", "description": "Dislike of disrespectful or impolite interaction."}
         }
     }
 }
@@ -88,9 +88,12 @@ class EmotionalCore:
 
         self.emotion_classifier = None
         self.sentiment_analyzer = None
-        self.needs_defs = self.config.get("needs_fears_prefs_definitions", {}).get("needs", {})
-        self.fears_defs = self.config.get("needs_fears_prefs_definitions", {}).get("fears", {})
-        self.prefs_defs = self.config.get("needs_fears_prefs_definitions", {}).get("preferences", {})
+        # Load definitions from the merged config
+        needs_fears_prefs_defs = self.config.get("needs_fears_prefs_definitions", {})
+        self.needs_defs = needs_fears_prefs_defs.get("needs", {})
+        self.fears_defs = needs_fears_prefs_defs.get("fears", {})
+        self.prefs_defs = needs_fears_prefs_defs.get("preferences", {})
+
 
         # Internal state tracking (example structure - adjust as needed)
         self.current_analysis_results = {
@@ -116,7 +119,22 @@ class EmotionalCore:
         core_config = self.main_config.get('emotional_core', {})
         # Merge with defaults to ensure all keys exist
         merged_config = DEFAULT_EMOTIONAL_CORE_CONFIG.copy()
-        merged_config.update(core_config)
+        # Deep merge for needs_fears_prefs_definitions if it exists in core_config
+        if 'needs_fears_prefs_definitions' in core_config:
+            merged_config['needs_fears_prefs_definitions'] = {
+                **DEFAULT_EMOTIONAL_CORE_CONFIG.get('needs_fears_prefs_definitions', {}),
+                **core_config.get('needs_fears_prefs_definitions', {})
+            }
+            # Further deep merge for needs, fears, preferences individually
+            for key in ['needs', 'fears', 'preferences']:
+                if key in core_config.get('needs_fears_prefs_definitions', {}):
+                     merged_config['needs_fears_prefs_definitions'][key] = {
+                         **DEFAULT_EMOTIONAL_CORE_CONFIG.get('needs_fears_prefs_definitions', {}).get(key, {}),
+                         **core_config.get('needs_fears_prefs_definitions', {}).get(key, {})
+                     }
+
+        merged_config.update({k: v for k, v in core_config.items() if k != 'needs_fears_prefs_definitions'})
+
         logger.debug(f"EmotionalCore configuration loaded: {merged_config}")
         return merged_config
 
@@ -250,7 +268,17 @@ class EmotionalCore:
         # Format definitions for the prompt
         needs_str = "\n".join([f"- {name}: {desc}" for name, desc in self.needs_defs.items()])
         fears_str = "\n".join([f"- {name}: {desc}" for name, desc in self.fears_defs.items()])
-        prefs_str = "\n".join([f"- {name} ({self.prefs_defs[name].get('type','+/-')}): {self.prefs_defs[name].get('description','')}" for name in self.prefs_defs]) # Adapt if structure changes
+        # Correctly format preferences based on the updated structure
+        prefs_str_parts = []
+        for name, pref_data in self.prefs_defs.items():
+            if isinstance(pref_data, dict):
+                pref_type = pref_data.get('type', 'N/A')
+                pref_desc = pref_data.get('description', '')
+                prefs_str_parts.append(f"- {name} ({pref_type}): {pref_desc}")
+            else: # Fallback for old string format (though default is now dict)
+                prefs_str_parts.append(f"- {name}: {pref_data}")
+        prefs_str = "\n".join(prefs_str_parts)
+
 
         try:
             full_prompt = prompt_template.format(
@@ -277,7 +305,7 @@ class EmotionalCore:
 
         # Parse the expected JSON output
         try:
-            logger.debug(f"Raw emotional analysis LLM response: ```{llm_response}```")
+            logger.debug(f"Raw emotional analysis LLM response:  ```{llm_response}```")
             # Extract JSON (assuming it's enclosed in ```json ... ``` or just {})
             match = re.search(r'```json\s*(\{.*?\})\s*```|\{.*?\}', llm_response, re.DOTALL)
             if match:

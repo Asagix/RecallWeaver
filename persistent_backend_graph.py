@@ -256,11 +256,11 @@ class GraphMemoryClient:
                         logger.error(f"Please try installing it manually: `python -m spacy download {spacy_model_name}`")
                         self.nlp = False # Set to False to indicate download failure
                     except FileNotFoundError:
-                         logger.error(f"Could not run spacy download command. Is '{sys.executable}' correct and spacy installed?")
-                         self.nlp = False
+                        logger.error(f"Could not run spacy download command. Is '{sys.executable}' correct and spacy installed?")
+                        self.nlp = False
                     except Exception as download_e:
-                         logger.error(f"An unexpected error occurred during spacy model download: {download_e}", exc_info=True)
-                         self.nlp = False
+                        logger.error(f"An unexpected error occurred during spacy model download: {download_e}", exc_info=True)
+                        self.nlp = False
                 else:
                     logger.info(f"spaCy model '{spacy_model_name}' already installed.")
                     self.nlp = True # Mark as potentially loadable
@@ -276,52 +276,52 @@ class GraphMemoryClient:
                                      "Rich association features will be disabled.")
                         self.nlp = None # Ensure it's None if loading fails
                     except Exception as e: # Catch other loading errors
-                         logger.error(f"An unexpected error occurred loading the spaCy model '{spacy_model_name}': {e}", exc_info=True)
-                         self.nlp = None
+                        logger.error(f"An unexpected error occurred loading the spaCy model '{spacy_model_name}': {e}", exc_info=True)
+                        self.nlp = None
                 else:
-                     # If self.nlp is False (download failed), set it to None
-                     logger.warning("Skipping spaCy model load due to download failure.")
-                     self.nlp = None
+                    # If self.nlp is False (download failed), set it to None
+                    logger.warning("Skipping spaCy model load due to download failure.")
+                    self.nlp = None
 
             except ImportError:
-                 logger.error("spaCy library not found. Please install it (`pip install spacy`). Rich association features will be disabled.")
-                 self.nlp = None
+                logger.error("spaCy library not found. Please install it (`pip install spacy`). Rich association features will be disabled.")
+                self.nlp = None
             except Exception as e:
-                 logger.error(f"An unexpected error occurred during spaCy setup: {e}", exc_info=True)
-                 self.nlp = None
+                logger.error(f"An unexpected error occurred during spaCy setup: {e}", exc_info=True)
+                self.nlp = None
         else:
-             logger.info("Rich association extraction feature disabled. Skipping spaCy model load.")
-             self.nlp = None
+            logger.info("Rich association extraction feature disabled. Skipping spaCy model load.")
+            self.nlp = None
 
 
         # Load Embedder
         try:
-             logger.info(f"Loading embed model: {embedding_model_name}")
-             self.embedder = SentenceTransformer(embedding_model_name, trust_remote_code=True)
-             self.embedding_dim = self.embedder.get_sentence_embedding_dimension()
-             logger.info(f"Embed model loaded. Dim: {self.embedding_dim}")
-             logger.debug(f"INIT Check 1: Has embedder? {hasattr(self, 'embedder')}, Type: {type(self.embedder)}, Dim: {self.embedding_dim}")
+            logger.info(f"Loading embed model: {embedding_model_name}")
+            self.embedder = SentenceTransformer(embedding_model_name, trust_remote_code=True)
+            self.embedding_dim = self.embedder.get_sentence_embedding_dimension()
+            logger.info(f"Embed model loaded. Dim: {self.embedding_dim}")
+            logger.debug(f"INIT Check 1: Has embedder? {hasattr(self, 'embedder')}, Type: {type(self.embedder)}, Dim: {self.embedding_dim}")
         except Exception as e:
-             logger.error(f"Failed loading embed model: {e}", exc_info=True)
-             self.embedder = None
-             self.embedding_dim = 0
-             # Consider if this should be a fatal error preventing initialization
-             # raise # Or handle more gracefully
+            logger.error(f"Failed loading embed model: {e}", exc_info=True)
+            self.embedder = None
+            self.embedding_dim = 0
+            # Consider if this should be a fatal error preventing initialization
+            # raise # Or handle more gracefully
 
         # Load Tokenizer (only if tokenizer_name was successfully loaded from config)
         if tokenizer_name:
             try:
-                 logger.info(f"Loading tokenizer from: {tokenizer_name}") # Removed mention of slow implementation
-                 # Use the path loaded from config (removed use_fast=False)
-                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
-                 logger.info("Tokenizer loaded.") # Removed mention of slow implementation
+                logger.info(f"Loading tokenizer from: {tokenizer_name}") # Removed mention of slow implementation
+                # Use the path loaded from config (removed use_fast=False)
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+                logger.info("Tokenizer loaded.") # Removed mention of slow implementation
             except Exception as e:
-                 logger.error(f"Failed loading tokenizer from '{tokenizer_name}': {e}", exc_info=True) # Removed (use_fast=False) from log
-                 self.tokenizer = None # Ensure tokenizer is None if loading fails
-                 # Decide if this is fatal
+                logger.error(f"Failed loading tokenizer from '{tokenizer_name}': {e}", exc_info=True) # Removed (use_fast=False) from log
+                self.tokenizer = None # Ensure tokenizer is None if loading fails
+                # Decide if this is fatal
         else:
-             # Tokenizer name was missing from config, already logged error
-             self.tokenizer = None
+            # Tokenizer name was missing from config, already logged error
+            self.tokenizer = None
 
         self._load_memory() # Loads data from self.data_dir
 
@@ -329,42 +329,42 @@ class GraphMemoryClient:
         # Must happen after config is loaded but before memory load? No, after memory load is fine.
         try:
             if self.config.get('features', {}).get('enable_emotional_core', False):
-                 logger.info("Instantiating EmotionalCore...")
-                 self.emotional_core = EmotionalCore(self, self.config) # Pass self (client) and config
-                 if not self.emotional_core.is_enabled:
-                     logger.warning("EmotionalCore instantiated but is disabled internally.")
-                     self.emotional_core = None # Set back to None if disabled
-                 else:
-                     logger.info("EmotionalCore instantiated successfully.")
+                logger.info("Instantiating EmotionalCore...")
+                self.emotional_core = EmotionalCore(self, self.config) # Pass self (client) and config
+                if not self.emotional_core.is_enabled:
+                    logger.warning("EmotionalCore instantiated but is disabled internally.")
+                    self.emotional_core = None # Set back to None if disabled
+                else:
+                    logger.info("EmotionalCore instantiated successfully.")
             else:
-                 logger.info("EmotionalCore feature is disabled in main config.")
-                 self.emotional_core = None
+                logger.info("EmotionalCore feature is disabled in main config.")
+                self.emotional_core = None
         except Exception as e:
-             logger.error(f"Failed to instantiate EmotionalCore: {e}", exc_info=True)
-             self.emotional_core = None # Ensure it's None on error
+            logger.error(f"Failed to instantiate EmotionalCore: {e}", exc_info=True)
+            self.emotional_core = None # Ensure it's None on error
 
         self._load_initial_history() # Load initial history after main memory load
         self._check_and_generate_re_greeting() # Check and generate re-greeting after history load
 
         # Set last added node UUID
         if not self.last_added_node_uuid and self.graph.number_of_nodes() > 0:
-             try:
-                  # Find the node with the latest timestamp among active nodes
-                  latest_node = self._find_latest_node_uuid()
-                  if latest_node:
-                       self.last_added_node_uuid = latest_node
-                       logger.info(f"Set last_added_node_uuid from loaded graph to: {self.last_added_node_uuid[:8]}")
-                  else:
-                      logger.warning("Could not determine last added node from loaded graph.")
-             except Exception as e:
-                  logger.error(f"Error finding latest node during init: {e}", exc_info=True)
+            try:
+                # Find the node with the latest timestamp among active nodes
+                latest_node = self._find_latest_node_uuid()
+                if latest_node:
+                    self.last_added_node_uuid = latest_node
+                    logger.info(f"Set last_added_node_uuid from loaded graph to: {self.last_added_node_uuid[:8]}")
+                else:
+                    logger.warning("Could not determine last added node from loaded graph.")
+            except Exception as e:
+                logger.error(f"Error finding latest node during init: {e}", exc_info=True)
 
 
         logger.debug(f"INIT END: Has embedder? {hasattr(self, 'embedder')}")
         if hasattr(self, 'embedder') and self.embedder:
-             logger.debug(f"INIT END: Embedder type: {type(self.embedder)}, Dim: {getattr(self, 'embedding_dim', 'Not Set')}")
+            logger.debug(f"INIT END: Embedder type: {type(self.embedder)}, Dim: {getattr(self, 'embedding_dim', 'Not Set')}")
         else:
-             logger.error("INIT END: EMBEDDER ATTRIBUTE IS MISSING OR NONE!")
+            logger.error("INIT END: EMBEDDER ATTRIBUTE IS MISSING OR NONE!")
 
         # --- Load Last Conversation Turns ---
         self._load_last_conversation() # Load before calculating time gap
@@ -445,31 +445,31 @@ class GraphMemoryClient:
         # --- DEBUG Check at start of function ---
         logger.debug(f"GET_EMBEDDING START: Has embedder? {hasattr(self, 'embedder')}")
         if not hasattr(self, 'embedder') or self.embedder is None:
-             logger.error("GET_EMBEDDING ERROR: self.embedder is missing or None!")
-             return None # Return None explicitly if embedder missing
+            logger.error("GET_EMBEDDING ERROR: self.embedder is missing or None!")
+            return None # Return None explicitly if embedder missing
 
         if not text:
-             # Return None instead of zeros? Or zeros of correct dim if available?
-             if hasattr(self, 'embedding_dim') and self.embedding_dim > 0:
-                 logger.warning("_get_embedding called with empty text, returning zeros.")
-                 return np.zeros(self.embedding_dim, dtype='float32')
-             else:
-                 logger.error("_get_embedding called with empty text, and embedding_dim unknown!")
-                 return None # Cannot return zeros if dim is unknown
+            # Return None instead of zeros? Or zeros of correct dim if available?
+            if hasattr(self, 'embedding_dim') and self.embedding_dim > 0:
+                logger.warning("_get_embedding called with empty text, returning zeros.")
+                return np.zeros(self.embedding_dim, dtype='float32')
+            else:
+                logger.error("_get_embedding called with empty text, and embedding_dim unknown!")
+                return None # Cannot return zeros if dim is unknown
 
         try:
-             logger.debug(f"GET_EMBEDDING: Calling self.embedder.encode for text: '{text[:50]}...'")
-             embedding = self.embedder.encode(text, convert_to_numpy=True)
-             # Ensure embedding is float32 numpy array
-             if isinstance(embedding, np.ndarray):
-                 return embedding.astype('float32')
-             else:
-                 logger.error(f"Embedder returned unexpected type: {type(embedding)}")
-                 return None # Return None if not numpy array
+            logger.debug(f"GET_EMBEDDING: Calling self.embedder.encode for text: '{text[:50]}...'")
+            embedding = self.embedder.encode(text, convert_to_numpy=True)
+            # Ensure embedding is float32 numpy array
+            if isinstance(embedding, np.ndarray):
+                return embedding.astype('float32')
+            else:
+                logger.error(f"Embedder returned unexpected type: {type(embedding)}")
+                return None # Return None if not numpy array
         except Exception as e:
-             logger.error(f"Embedding encode error: {e}", exc_info=True)
-             # Don't try to access self.embedding_dim if self.embedder might be missing
-             return None # Return None on error
+            logger.error(f"Embedding encode error: {e}", exc_info=True)
+            # Don't try to access self.embedding_dim if self.embedder might be missing
+            return None # Return None on error
 
 
     def _load_memory(self):
@@ -484,13 +484,13 @@ class GraphMemoryClient:
             except Exception as e: logger.error(f"Failed loading graph: {e}", exc_info=True); self.graph = nx.DiGraph()
         else: logger.info(f"Graph file not found."); self.graph = nx.DiGraph()
         if os.path.exists(self.embeddings_file):
-             try:
-                 loaded_embeds = np.load(self.embeddings_file, allow_pickle=True).item()
-                 self.embeddings = {u: np.array(e, dtype='float32') for u, e in loaded_embeds.items() if e and np.array(e).shape == (self.embedding_dim,)}
-                 if len(loaded_embeds) != len(self.embeddings): logger.warning(f"Removed {len(loaded_embeds) - len(self.embeddings)} invalid embeds.")
-                 logger.info(f"Loaded {len(self.embeddings)} valid embeddings.")
-                 loaded_something = True
-             except Exception as e: logger.error(f"Failed loading embeddings: {e}", exc_info=True); self.embeddings = {}
+            try:
+                loaded_embeds = np.load(self.embeddings_file, allow_pickle=True).item()
+                self.embeddings = {u: np.array(e, dtype='float32') for u, e in loaded_embeds.items() if e and np.array(e).shape == (self.embedding_dim,)}
+                if len(loaded_embeds) != len(self.embeddings): logger.warning(f"Removed {len(loaded_embeds) - len(self.embeddings)} invalid embeds.")
+                logger.info(f"Loaded {len(self.embeddings)} valid embeddings.")
+                loaded_something = True
+            except Exception as e: logger.error(f"Failed loading embeddings: {e}", exc_info=True); self.embeddings = {}
         else: logger.info(f"Embeddings file not found."); self.embeddings = {}
         if os.path.exists(self.mapping_file):
             try:
@@ -545,9 +545,9 @@ class GraphMemoryClient:
         try:
             # Use the current embedding dimension
             if not hasattr(self, 'embedding_dim') or self.embedding_dim <= 0:
-                 logger.error("Cannot rebuild index: embedding_dim not set or invalid.")
-                 # Should we try to determine it again? For now, error out.
-                 raise ValueError("Embedding dimension unknown during index rebuild.")
+                logger.error("Cannot rebuild index: embedding_dim not set or invalid.")
+                # Should we try to determine it again? For now, error out.
+                raise ValueError("Embedding dimension unknown during index rebuild.")
 
             new_index = faiss.IndexIDMap(faiss.IndexFlatL2(self.embedding_dim)) # Use IndexIDMap for easier removal later? No, stick to basic for now.
             new_index = faiss.IndexFlatL2(self.embedding_dim)
@@ -578,16 +578,16 @@ class GraphMemoryClient:
                 # Rebuild the mappings ONLY for the nodes added to the index
                 current_faiss_id = 0
                 for node_uuid in uuid_list_for_index:
-                     new_map[current_faiss_id] = node_uuid
-                     new_inv_map[node_uuid] = current_faiss_id
-                     current_faiss_id += 1
+                    new_map[current_faiss_id] = node_uuid
+                    new_inv_map[node_uuid] = current_faiss_id
+                    current_faiss_id += 1
 
                 if new_index.ntotal != len(uuid_list_for_index):
-                     logger.error(f"CRITICAL MISMATCH during rebuild: Index total ({new_index.ntotal}) != Added UUID count ({len(uuid_list_for_index)})")
-                     # Fallback to empty?
-                     new_index = faiss.IndexFlatL2(self.embedding_dim)
-                     new_map = {}
-                     new_inv_map = {}
+                    logger.error(f"CRITICAL MISMATCH during rebuild: Index total ({new_index.ntotal}) != Added UUID count ({len(uuid_list_for_index)})")
+                    # Fallback to empty?
+                    new_index = faiss.IndexFlatL2(self.embedding_dim)
+                    new_map = {}
+                    new_inv_map = {}
 
             else:
                 logger.warning("No valid embeddings found for active nodes during rebuild. Index will be empty.")
@@ -607,8 +607,8 @@ class GraphMemoryClient:
             if hasattr(self, 'embedding_dim') and self.embedding_dim > 0:
                 self.index = faiss.IndexFlatL2(self.embedding_dim)
             else:
-                 self.index = None # Cannot create if dim unknown
-                 logger.error("Cannot fallback to empty index: embedding_dim unknown.")
+                self.index = None # Cannot create if dim unknown
+                logger.error("Cannot fallback to empty index: embedding_dim unknown.")
             self.faiss_id_to_uuid = {}
             self.uuid_to_faiss_id = {}
 
@@ -630,9 +630,9 @@ class GraphMemoryClient:
                 try: faiss.write_index(self.index, self.index_file)
                 except Exception as e: logger.error(f"Failed saving FAISS index: {e}")
             elif self.index is not None and self.index.ntotal == 0:
-                 if os.path.exists(self.index_file):
-                     try: os.remove(self.index_file)
-                     except OSError as e: logger.error(f"Error removing empty index file: {e}")
+                if os.path.exists(self.index_file):
+                    try: os.remove(self.index_file)
+                    except OSError as e: logger.error(f"Error removing empty index file: {e}")
             try: map_to_save = {str(k): v for k, v in self.faiss_id_to_uuid.items()};
             except Exception as e: logger.error(f"Error preparing mapping: {e}"); map_to_save = None
             if map_to_save is not None:
@@ -691,7 +691,8 @@ class GraphMemoryClient:
     # --- Memory Node Management ---
     # (Keep add_memory_node, _rollback_add, delete_memory_entry, _find_latest_node_uuid, edit_memory_entry, forget_topic)
     # ... (methods unchanged) ...
-    def add_memory_node(self, text: str, speaker: str, node_type: str = 'turn', timestamp: str = None, base_strength: float = 0.5, emotion_valence: float | None = None, emotion_arousal: float | None = None) -> str | None:
+    def add_memory_node(self, text: str, speaker: str, node_type: str = 'turn', timestamp: str = None, base_strength:
+    float = 0.5, emotion_valence: float | None = None, emotion_arousal: float | None = None) -> str | None:
         """
         Adds a new memory node with enhanced attributes to the graph and index.
         Accepts optional emotion values.
@@ -713,7 +714,7 @@ class GraphMemoryClient:
         # Use provided emotions or fall back to defaults from config
         final_valence = emotion_valence if emotion_valence is not None else emotion_cfg.get('default_valence', 0.0)
         final_arousal = emotion_arousal if emotion_arousal is not None else emotion_cfg.get('default_arousal', 0.1)
-        logger.debug(f"Node {node_uuid[:8]} Emotion: V={final_valence:.2f}, A={final_arousal:.2f} (Provided: V={emotion_valence}, A={emotion_arousal})")
+        logger.debug(f"Node {node_uuid[:8]} Emotion: V={final_valence:.2f}, A={final_arousal:.2f} (Provided:V={emotion_valence}, A={emotion_arousal})")
 
         saliency_cfg = self.config.get('saliency', {})
         initial_scores = saliency_cfg.get('initial_scores', {})
@@ -729,33 +730,40 @@ class GraphMemoryClient:
         if saliency_enabled:
             # --- Base Saliency by Node Type ---
             if node_type == 'intention':
-                 # Give intention nodes higher base saliency
-                 base_saliency = initial_scores.get('intention', 0.75) # Use specific score or default
+                # Give intention nodes higher base saliency
+                base_saliency = initial_scores.get('intention', 0.75) # Use specific score or default
             else:
-                 base_saliency = initial_scores.get(node_type, initial_scores.get('default', 0.5))
+                base_saliency = initial_scores.get(node_type, initial_scores.get('default', 0.5))
 
-            # Influence initial saliency by FINAL arousal (passed in or default)
-            initial_saliency = base_saliency + (final_arousal * emotion_influence)
+                # Influence initial saliency by FINAL arousal (passed in or default)
+                initial_saliency = base_saliency + (final_arousal * emotion_influence)
 
-            # --- Check for Importance Keywords ---
+                # --- Check for Importance Keywords ---
             if importance_keywords and importance_boost > 0:
                 text_lower = text.lower()
                 if any(keyword in text_lower for keyword in importance_keywords):
                     is_important_keyword_match = True
                     initial_saliency += importance_boost
-                    logger.info(f"Importance keyword match found in node {node_uuid[:8]}. Boosting initial saliency by {importance_boost}.")
+                    logger.info(
+                        f"Importance keyword match found in node {node_uuid[:8]}. "
+                        f"Boosting initial saliency by {importance_boost}."
+                    )
 
-            initial_saliency = max(0.0, min(1.0, initial_saliency)) # Clamp between 0 and 1
-            logger.debug(f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} (Base: {base_saliency}, ArousalInf: {final_arousal * emotion_influence:.3f}, ImportanceBoost: {importance_boost if is_important_keyword_match else 0.0})")
-        else:
-             logger.debug(f"Saliency calculation disabled. Setting score to 0.0 for {node_uuid[:8]}.")
+                    initial_saliency = max(0.0, min(1.0, initial_saliency))  # Clamp between 0 and 1
+                    logger.debug(
+                        f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} "
+                        f"(Base: {base_saliency}, ArousalInf: {final_arousal * emotion_influence:.3f}, "
+                        f"ImportanceBoost: {importance_boost if is_important_keyword_match else 0.0})"
+                    )
+                else:
+                    logger.debug(f"Saliency calculation disabled. Setting score to 0.0 for {node_uuid[:8]}.")
 
 
         # --- Get embedding ---
         embedding = self._get_embedding(text)
         if embedding is None:
-             logger.error(f"Failed to get embedding for node {node_uuid}. Node not added.")
-             return None
+            logger.error(f"Failed to get embedding for node {node_uuid}. Node not added.")
+            return None
 
         # --- Add to graph with NEW attributes ---
         try:
@@ -795,8 +803,8 @@ class GraphMemoryClient:
             logger.debug(f"Node {node_uuid[:8]} added with decay_resistance: {node_data.get('decay_resistance_factor')}, is_core: {node_data.get('is_core_memory')}")
             logger.debug(f"Node {node_uuid[:8]} added to graph with new attributes (Strength: {node_data.get('memory_strength')}, Saliency: {node_data.get('saliency_score')}).")
         except Exception as e:
-             logger.error(f"Failed adding node {node_uuid} to graph: {e}")
-             return None
+            logger.error(f"Failed adding node {node_uuid} to graph: {e}")
+            return None
 
         # --- Add embedding to dictionary ---
         self.embeddings[node_uuid] = embedding
@@ -805,12 +813,12 @@ class GraphMemoryClient:
         try:
             if self.index is None:
                 if hasattr(self, 'embedding_dim') and self.embedding_dim > 0:
-                     logger.info(f"Initializing FAISS index with dimension {self.embedding_dim}")
-                     self.index = faiss.IndexFlatL2(self.embedding_dim)
+                    logger.info(f"Initializing FAISS index with dimension {self.embedding_dim}")
+                    self.index = faiss.IndexFlatL2(self.embedding_dim)
                 else:
-                     logger.error("Cannot initialize FAISS index: embedding_dim not set.")
-                     self._rollback_add(node_uuid)
-                     return None
+                    logger.error("Cannot initialize FAISS index: embedding_dim not set.")
+                    self._rollback_add(node_uuid)
+                    return None
 
             # Add to FAISS index (no status check needed here anymore)
             self.index.add(np.array([embedding], dtype='float32'))
@@ -820,9 +828,9 @@ class GraphMemoryClient:
             logger.debug(f"Embedding {node_uuid[:8]} added to FAISS ID {new_faiss_id}.")
 
         except Exception as e:
-             logger.error(f"Failed adding embed {node_uuid} to FAISS: {e}")
-             self._rollback_add(node_uuid)
-             return None
+            logger.error(f"Failed adding embed {node_uuid} to FAISS: {e}")
+            self._rollback_add(node_uuid)
+            return None
 
         # --- Link temporally ---
         if self.last_added_node_uuid and self.last_added_node_uuid in self.graph:
@@ -834,7 +842,7 @@ class GraphMemoryClient:
                 )
                 logger.debug(f"Added T-edge {self.last_added_node_uuid[:8]}->{node_uuid[:8]}.")
             except Exception as e:
-                 logger.error(f"Failed adding T-edge: {e}")
+                logger.error(f"Failed adding T-edge: {e}")
 
         self.last_added_node_uuid = node_uuid
 
@@ -1021,7 +1029,7 @@ class GraphMemoryClient:
         except Exception as e:
             logger.error(f"FAISS search error: {e}", exc_info=True)
             return []
-    
+
     def retrieve_memory_chain(self, initial_node_uuids: list[str],
                               recent_concept_uuids: list[str] | None = None,
                               current_mood: tuple[float, float] | None = None) -> tuple[list[dict], tuple[float, float] | None]:
@@ -1201,41 +1209,41 @@ class GraphMemoryClient:
                 })
 
         else: # Drives were disabled or no state/config found
-             logger.debug("Subconscious drives disabled or no config/state found, using original mood.")
-             # --- Log that no drive adjustment was made ---
-             log_tuning_event("RETRIEVAL_MOOD_DRIVE_ADJUSTMENT", {
-                 "personality": self.personality,
-                 "mood_before": mood_before_drive_influence,
-                 "valence_adjustment": 0.0,
-                 "arousal_adjustment": 0.0,
-                 "mood_after": effective_mood, # Will be same as mood_before here
-                 "reason": "Drives disabled or state missing",
-             })
-             # --- Apply EmotionalCore Mood Hints (NEW) even if drives disabled ---
-             if self.emotional_core and self.emotional_core.is_enabled:
-                 valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
-                 arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
-                 valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
-                 arousal_factor = self.emotional_core.config.get("mood_arousal_factor", 0.2)
+            logger.debug("Subconscious drives disabled or no config/state found, using original mood.")
+            # --- Log that no drive adjustment was made ---
+            log_tuning_event("RETRIEVAL_MOOD_DRIVE_ADJUSTMENT", {
+                "personality": self.personality,
+                "mood_before": mood_before_drive_influence,
+                "valence_adjustment": 0.0,
+                "arousal_adjustment": 0.0,
+                "mood_after": effective_mood, # Will be same as mood_before here
+                "reason": "Drives disabled or state missing",
+            })
+            # --- Apply EmotionalCore Mood Hints (NEW) even if drives disabled ---
+            if self.emotional_core and self.emotional_core.is_enabled:
+                valence_hint = self.emotional_core.derived_mood_hints.get("valence", 0.0)
+                arousal_hint = self.emotional_core.derived_mood_hints.get("arousal", 0.0)
+                valence_factor = self.emotional_core.config.get("mood_valence_factor", 0.3)
+                arousal_factor = self.emotional_core.config.get("mood_arousal_factor", 0.2)
 
-                 if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
-                     logger.info(f"Applying EmotionalCore mood hints (drives disabled): V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
-                     current_v, current_a = effective_mood # Original mood
-                     # Apply hints additively, scaled by factors
-                     new_v = current_v + (valence_hint * valence_factor)
-                     new_a = current_a + (arousal_hint * arousal_factor)
-                     # Clamp final mood
-                     effective_mood = (max(-1.0, min(1.0, new_v)), max(0.0, min(1.0, new_a)))
-                     logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
-                     log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
-                         "personality": self.personality,
-                         "mood_after_drives": (current_v, current_a), # Log mood *before* hint application
-                         "valence_hint": valence_hint,
-                         "arousal_hint": arousal_hint,
-                         "valence_factor": valence_factor,
-                         "arousal_factor": arousal_factor,
-                         "mood_after_emocore": effective_mood,
-                     })
+                if abs(valence_hint) > 1e-4 or abs(arousal_hint) > 1e-4:
+                    logger.info(f"Applying EmotionalCore mood hints (drives disabled): V_hint={valence_hint:.2f} (Factor:{valence_factor:.2f}), A_hint={arousal_hint:.2f} (Factor:{arousal_factor:.2f})")
+                    current_v, current_a = effective_mood # Original mood
+                    # Apply hints additively, scaled by factors
+                    new_v = current_v + (valence_hint * valence_factor)
+                    new_a = current_a + (arousal_hint * arousal_factor)
+                    # Clamp final mood
+                    effective_mood = (max(-1.0, min(1.0, new_v)), max(0.0, min(1.0, new_a)))
+                    logger.info(f"Mood after EmotionalCore hints: ({effective_mood[0]:.2f}, {effective_mood[1]:.2f})")
+                    log_tuning_event("RETRIEVAL_MOOD_EMOCORE_ADJUSTMENT", {
+                        "personality": self.personality,
+                        "mood_after_drives": (current_v, current_a), # Log mood *before* hint application
+                        "valence_hint": valence_hint,
+                        "arousal_hint": arousal_hint,
+                        "valence_factor": valence_factor,
+                        "arousal_factor": arousal_factor,
+                        "mood_after_emocore": effective_mood,
+                    })
 
 
         # --- Emotional Context Config (Uses effective_mood) ---
@@ -1290,11 +1298,11 @@ class GraphMemoryClient:
                                         mentions_recent_concept = True
                                         break
                         except Exception as e:
-                             logger.warning(f"Error checking concept links for focus boost on {uuid[:8]}: {e}")
+                            logger.warning(f"Error checking concept links for focus boost on {uuid[:8]}: {e}")
 
                     if is_recent_concept or mentions_recent_concept:
-                         boost_applied = 1.0 + context_focus_boost
-                         logger.debug(f"Applying context focus boost ({boost_applied:.2f}) to node {uuid[:8]} (IsRecent: {is_recent_concept}, MentionsRecent: {mentions_recent_concept})")
+                        boost_applied = 1.0 + context_focus_boost
+                        logger.debug(f"Applying context focus boost ({boost_applied:.2f}) to node {uuid[:8]} (IsRecent: {is_recent_concept}, MentionsRecent: {mentions_recent_concept})")
 
                 final_initial_activation = base_initial_activation * boost_applied
 
@@ -1405,9 +1413,9 @@ class GraphMemoryClient:
                         connection_baseline = base_drives.get("Connection", 0.0) + (drive_state_snapshot["long_term"].get("Connection", 0.0) * long_term_influence)
                         connection_deviation = connection_level - connection_baseline
                         if connection_deviation < -0.1: # If Connection need is unmet
-                             if edge_type in ['ASSOCIATIVE', 'ANALOGY', 'SUPPORTS', 'MENTIONS_CONCEPT']: # Added related types
-                                 drive_weight_multiplier = 1.15 # Boost by 15%
-                                 logger.debug(f"    Drive Boost (Connection Low): Edge {edge_type} mult={drive_weight_multiplier:.2f}")
+                            if edge_type in ['ASSOCIATIVE', 'ANALOGY', 'SUPPORTS', 'MENTIONS_CONCEPT']: # Added related types
+                                drive_weight_multiplier = 1.15 # Boost by 15%
+                                logger.debug(f"    Drive Boost (Connection Low): Edge {edge_type} mult={drive_weight_multiplier:.2f}")
                         # Add more drive-based weighting rules here...
 
                     # Apply drive multiplier to the base type factor
@@ -1455,8 +1463,8 @@ class GraphMemoryClient:
                             })
 
                         except Exception as e:
-                             logger.warning(f"Error calculating emotional context bias for {neighbor_uuid[:8]}: {e}")
-                             emo_adjustment = 0.0 # Default to no adjustment on error
+                            logger.warning(f"Error calculating emotional context bias for {neighbor_uuid[:8]}: {e}")
+                            emo_adjustment = 0.0 # Default to no adjustment on error
 
                     # Apply adjustment (additive/subtractive)
                     act_pass = base_act_pass + emo_adjustment
@@ -1477,28 +1485,28 @@ class GraphMemoryClient:
             all_involved_nodes = set(nodes_to_decay) | set(newly_activated.keys())
 
             for uuid in all_involved_nodes:
-                 node_data = self.graph.nodes.get(uuid)
-                 if not node_data:
-                     continue
+                node_data = self.graph.nodes.get(uuid)
+                if not node_data:
+                    continue
 
-                 current_activation = activation_levels.get(uuid, 0.0)
-                 if current_activation > 0:
-                     decay_mult = self._calculate_node_decay(node_data, current_time)
-                     activation_levels[uuid] *= decay_mult
-                     # logger.debug(f"  Decay: {uuid[:8]} ({current_activation:.3f} * {decay_mult:.3f} -> {activation_levels[uuid]:.3f})")
+                current_activation = activation_levels.get(uuid, 0.0)
+                if current_activation > 0:
+                    decay_mult = self._calculate_node_decay(node_data, current_time)
+                    activation_levels[uuid] *= decay_mult
+                    # logger.debug(f"  Decay: {uuid[:8]} ({current_activation:.3f} * {decay_mult:.3f} -> {activation_levels[uuid]:.3f})")
 
-                 activation_levels[uuid] += newly_activated.get(uuid, 0.0)
-                 # Update access time whenever activation is touched (decayed or increased)
-                 self.graph.nodes[uuid]['last_accessed_ts'] = current_time
+                activation_levels[uuid] += newly_activated.get(uuid, 0.0)
+                # Update access time whenever activation is touched (decayed or increased)
+                self.graph.nodes[uuid]['last_accessed_ts'] = current_time
 
-                 if activation_levels[uuid] > 1e-6: # Check activation *after* decay and addition
-                     active_nodes.add(uuid)
-                 elif uuid in activation_levels: # If activation fell to zero or below during this step
-                     del activation_levels[uuid]
+                if activation_levels[uuid] > 1e-6: # Check activation *after* decay and addition
+                    active_nodes.add(uuid)
+                elif uuid in activation_levels: # If activation fell to zero or below during this step
+                    del activation_levels[uuid]
 
             logger.debug(f" Step {depth+1} finished. Active Nodes: {len(active_nodes)}. Max Activation: {max(activation_levels.values()) if activation_levels else 0:.3f}")
             if not active_nodes:
-                 break
+                break
 
         # --- Interference Simulation Step ---
         interference_cfg = act_cfg.get('interference', {})
@@ -1568,11 +1576,11 @@ class GraphMemoryClient:
                     logger.error(f"Error during interference check for node {source_uuid[:8]}: {e}", exc_info=True)
 
             if interference_applied_count > 0:
-                 logger.info(f"Interference applied to {interference_applied_count} node activations.")
+                logger.info(f"Interference applied to {interference_applied_count} node activations.")
             else:
-                 logger.info("No interference applied in this retrieval.")
+                logger.info("No interference applied in this retrieval.")
         else:
-             logger.debug("Interference simulation disabled or index unavailable.")
+            logger.debug("Interference simulation disabled or index unavailable.")
         # --- Tuning Log: Interference Result ---
         log_tuning_event("RETRIEVAL_INTERFERENCE_RESULT", {
             "personality": self.personality,
@@ -1645,7 +1653,7 @@ class GraphMemoryClient:
                                         self.graph.nodes[uuid]['emotion_arousal'] = new_a
                                         # logger.debug(f"  EmoRecon (Thresh): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
                             except Exception as e:
-                                 logger.warning(f"Error during emotional reconsolidation for {uuid[:8]}: {e}")
+                                logger.warning(f"Error during emotional reconsolidation for {uuid[:8]}: {e}")
 
         logger.info(f"Found {len(relevant_nodes_dict)} active nodes above activation threshold ({activation_threshold}).")
 
@@ -1727,7 +1735,7 @@ class GraphMemoryClient:
                                             self.graph.nodes[uuid]['emotion_arousal'] = new_a
                                             # logger.debug(f"  EmoRecon (Guar): Node {uuid[:8]} V/A ({node_v:.2f},{node_a:.2f}) nudged towards mood ({mood_v:.2f},{mood_a:.2f}) -> ({new_v:.2f},{new_a:.2f}). Dist={emo_dist:.3f}")
                                 except Exception as e:
-                                     logger.warning(f"Error during emotional reconsolidation for guaranteed node {uuid[:8]}: {e}")
+                                    logger.warning(f"Error during emotional reconsolidation for guaranteed node {uuid[:8]}: {e}")
 
 
         if core_added_count > 0:
@@ -1735,7 +1743,7 @@ class GraphMemoryClient:
         if saliency_guaranteed_added_count > 0:
             logger.info(f"Added {saliency_guaranteed_added_count} additional nodes due to high saliency guarantee.")
         if len(processed_uuids_for_access_count) > 0:
-             logger.info(f"Incremented access count for {len(processed_uuids_for_access_count)} retrieved nodes.")
+            logger.info(f"Incremented access count for {len(processed_uuids_for_access_count)} retrieved nodes.")
 
 
         # Convert dict back to list and sort
@@ -1750,9 +1758,9 @@ class GraphMemoryClient:
             for n in relevant_nodes:
                 marker = ""
                 if n.get('guaranteed_inclusion') == 'core':
-                     marker = "**" # Core marker
+                    marker = "**" # Core marker
                 elif n.get('guaranteed_inclusion') == 'saliency':
-                     marker = "*" # Saliency marker
+                    marker = "*" # Saliency marker
                 log_parts.append(f"{n['uuid'][:8]}({n['final_activation']:.3f}{marker})")
             logger.info(f"Final nodes ({len(relevant_nodes)} total): [{', '.join(log_parts)}]")
         else:
@@ -1815,7 +1823,7 @@ class GraphMemoryClient:
                     asm_summary = self.autobiographical_model.get('summary_statement', '').lower()
                     # Very basic check (e.g., presence of negations or opposite keywords) - Needs improvement!
                     if (" not " in node_text and " not " not in asm_summary) or \
-                       (" never " in node_text and " always " in asm_summary): # Example keywords
+                            (" never " in node_text and " always " in asm_summary): # Example keywords
                         logger.warning(f"Potential ASM contradiction detected! Node {node_info['uuid'][:8]} (Sal: {node_saliency:.2f}) vs ASM Summary.")
                         contradiction_found = True
                         contradicting_node_uuid = node_info['uuid']
@@ -1871,8 +1879,8 @@ class GraphMemoryClient:
                 feedback_factor = float(self.config.get('saliency', {}).get('feedback_factor', 0.15)) # Get factor from config, default 0.15
 
                 if feedback_factor <= 0:
-                     logger.warning("Saliency feedback factor must be positive. Using default 0.15.")
-                     feedback_factor = 0.15
+                    logger.warning("Saliency feedback factor must be positive. Using default 0.15.")
+                    feedback_factor = 0.15
 
                 adjustment_multiplier = 1.0 + feedback_factor # Multiplier for increase
                 if direction == 'increase':
@@ -1940,10 +1948,10 @@ class GraphMemoryClient:
                         logger.error(f"Error applying heuristic drive adjustment after saliency update: {e}", exc_info=True)
 
                 else:
-                     logger.debug(f"Saliency for {node_uuid[:8]} unchanged (already at limit or no effective change).")
+                    logger.debug(f"Saliency for {node_uuid[:8]} unchanged (already at limit or no effective change).")
 
             except Exception as e:
-                 logger.error(f"Error updating saliency for node {node_uuid[:8]}: {e}", exc_info=True)
+                logger.error(f"Error updating saliency for node {node_uuid[:8]}: {e}", exc_info=True)
         else:
             logger.warning(f"update_node_saliency called for non-existent node: {node_uuid}")
 
@@ -2142,7 +2150,7 @@ class GraphMemoryClient:
                     "decay_rate": strength_decay_rate,
                 })
             # else:
-                # logger.debug(f"  Strength for node {uuid[:8]} remains {current_strength:.3f} (Reduction: {strength_reduction:.3f})")
+            # logger.debug(f"  Strength for node {uuid[:8]} remains {current_strength:.3f} (Reduction: {strength_reduction:.3f})")
 
         # --- Apply Saliency Decay (Applied to ALL nodes, not just strength candidates) ---
         saliency_decay_rate_per_hour = self.config.get('saliency', {}).get('saliency_decay_rate', 0.0)
@@ -2179,12 +2187,115 @@ class GraphMemoryClient:
                     logger.debug(f"  Decayed saliency for node {uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f} ({hours_since_access:.1f} hrs)")
 
             if saliency_decay_details:
-                 log_tuning_event("MAINTENANCE_SALIENCY_DECAY", {
-                     "personality": self.personality,
-                     "decay_rate_per_hour": saliency_decay_rate_per_hour,
-                     "decay_details": saliency_decay_details,
-                     "decayed_node_count": saliency_decayed_count,
-                 })
+                log_tuning_event("MAINTENANCE_SALIENCY_DECAY", {
+                    "personality": self.personality,
+                    "decay_rate_per_hour": saliency_decay_rate_per_hour,
+                    "decay_details": saliency_decay_details,
+                    "decayed_node_count": saliency_decayed_count,
+                })
+            logger.info(f"Saliency decay applied to {saliency_decayed_count} nodes.")
+
+        # 5. Save memory if any changes (strength or saliency) were made
+        if nodes_changed:
+            logger.info(f"Changes detected (Strength: {strength_reduced_count}, Saliency: {saliency_decayed_count}). Saving memory...")
+            self._save_memory() # Save changes after maintenance
+        else:
+            logger.info("No node strengths or saliency scores were changed in this maintenance cycle.")
+
+        # --- Moved Logging Block ---
+        logger.info(f"--- Memory Maintenance Finished (Strength Reduced: {strength_reduced_count}, Saliency Decayed: {saliency_decayed_count}) ---")
+        # --- Tuning Log: Maintenance End ---
+        log_tuning_event("MAINTENANCE_END", { # Renamed event type
+            "personality": self.personality,
+            "strength_reduced_count": strength_reduced_count,
+            "nodes_changed": nodes_changed,
+        })
+        # --- End Moved Logging Block ---
+        return
+
+        # 3. Calculate Forgettability Score and Reduce Strength for each candidate:
+        strength_reduced_count = 0 # Initialize counter
+        nodes_changed = False # Initialize flag
+        for uuid in candidate_uuids:
+            if uuid not in self.graph: continue # Node might have been deleted since snapshot
+            node_data = self.graph.nodes[uuid]
+            forget_score = self._calculate_forgettability(uuid, node_data, current_time, weights)
+            logger.debug(f"  Node {uuid[:8]} ({node_data.get('node_type')}): Forgettability Score = {forget_score:.3f}")
+            # --- Tuning Log: Forgettability Score ---
+            log_tuning_event("MAINTENANCE_FORGETTABILITY_SCORE", {
+                "personality": self.personality,
+                "node_uuid": uuid,
+                "node_type": node_data.get('node_type'),
+                "forgettability_score": forget_score,
+                # Optionally log contributing factors if needed, but might be too verbose
+            })
+
+            # 4. Reduce memory_strength based on score and decay rate
+            current_strength = node_data.get('memory_strength', 1.0)
+            # Strength reduction is proportional to forgettability score and decay rate
+            strength_reduction = forget_score * strength_decay_rate
+            new_strength = current_strength * (1.0 - strength_reduction)
+            new_strength = max(0.0, new_strength) # Ensure strength doesn't go below 0
+
+            if new_strength < current_strength:
+                node_data['memory_strength'] = new_strength
+                strength_reduced_count += 1
+                nodes_changed = True
+                logger.info(f"  Reduced strength for node {uuid[:8]} from {current_strength:.3f} to {new_strength:.3f} (ForgetScore: {forget_score:.3f}, Rate: {strength_decay_rate})")
+                # --- Tuning Log: Strength Reduced ---
+                log_tuning_event("MAINTENANCE_STRENGTH_REDUCED", {
+                    "personality": self.personality,
+                    "node_uuid": uuid,
+                    "node_type": node_data.get('node_type'),
+                    "forgettability_score": forget_score,
+                    "old_strength": current_strength,
+                    "new_strength": new_strength,
+                    "decay_rate": strength_decay_rate,
+                })
+            # else:
+            # logger.debug(f"  Strength for node {uuid[:8]} remains {current_strength:.3f} (Reduction: {strength_reduction:.3f})")
+
+        # --- Apply Saliency Decay (Applied to ALL nodes, not just strength candidates) ---
+        saliency_decay_rate_per_hour = self.config.get('saliency', {}).get('saliency_decay_rate', 0.0)
+        saliency_decayed_count = 0
+        if saliency_decay_rate_per_hour > 0:
+            logger.info(f"Applying saliency decay (Rate: {saliency_decay_rate_per_hour * 100:.2f}% per hour)...")
+            saliency_decay_details = {}
+            # Iterate through all nodes again for saliency decay
+            for uuid, data in nodes_to_check: # Use the same snapshot
+                if uuid not in self.graph: continue # Check if node still exists
+                current_saliency = data.get('saliency_score', 0.0)
+                if current_saliency <= 0: continue # Skip nodes with no saliency
+
+                last_accessed = data.get('last_accessed_ts', current_time)
+                hours_since_access = (current_time - last_accessed) / 3600.0
+                if hours_since_access <= 0: continue # Skip if accessed very recently
+
+                # Calculate decay multiplier (simple exponential decay)
+                # decay_multiplier = (1.0 - saliency_decay_rate_per_hour) ** hours_since_access # This might decay too fast
+                # Let's try linear decay for simplicity: reduction = rate * hours
+                saliency_reduction = saliency_decay_rate_per_hour * hours_since_access
+                new_saliency = current_saliency - saliency_reduction
+                new_saliency = max(0.0, new_saliency) # Clamp at 0
+
+                if new_saliency < current_saliency:
+                    self.graph.nodes[uuid]['saliency_score'] = new_saliency
+                    nodes_changed = True # Mark that a change occurred
+                    saliency_decayed_count += 1
+                    saliency_decay_details[uuid] = {
+                        "before": current_saliency,
+                        "after": new_saliency,
+                        "hours_since_access": hours_since_access,
+                    }
+                    logger.debug(f"  Decayed saliency for node {uuid[:8]} from {current_saliency:.3f} to {new_saliency:.3f} ({hours_since_access:.1f} hrs)")
+
+            if saliency_decay_details:
+                log_tuning_event("MAINTENANCE_SALIENCY_DECAY", {
+                    "personality": self.personality,
+                    "decay_rate_per_hour": saliency_decay_rate_per_hour,
+                    "decay_details": saliency_decay_details,
+                    "decayed_node_count": saliency_decayed_count,
+                })
             logger.info(f"Saliency decay applied to {saliency_decayed_count} nodes.")
 
         # 5. Save memory if any changes (strength or saliency) were made
@@ -2502,9 +2613,11 @@ class GraphMemoryClient:
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
     def _construct_prompt(self, user_input: str, conversation_history: list, memory_chain: list, tokenizer,
-                          max_context_tokens: int, current_mood: tuple[float, float] | None = None, emotional_instructions: str = "") -> str:
+                          max_context_tokens: int, current_mood: tuple[float, float] | None = None,
+                          emotional_instructions: str = "") -> str:
         """
-        Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, ASM, and emotional instructions.
+        Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, ASM, and emotional
+    instructions.
         Applies memory strength budgeting.
         """
         logger.debug(f"_construct_prompt received user_input: '{user_input}', Mood: {current_mood}")
@@ -2883,8 +2996,8 @@ class GraphMemoryClient:
                 except Exception:
                     cur_mem_tokens = 50 # Estimate
             else:
-                 mem_ctx_str = "" # No regular memories, but core memories exist
-                 cur_mem_tokens = 0
+                mem_ctx_str = "" # No regular memories, but core memories exist
+                cur_mem_tokens = 0
 
         else: # No memory chain provided or zero memory budget
             if mem_budget <= 0: logger.debug("Memory budget is zero, skipping memory context.")
@@ -2999,16 +3112,15 @@ class GraphMemoryClient:
         for instruction in system_instructions:
             final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
 
+        # --- Add Emotional Instructions Block (if generated) ---
         if emotional_instructions_block:
             final_parts.append(emotional_instructions_block)
-        if asm_block:
-            final_parts.append(asm_block)
-        if drive_block:
-            final_parts.append(drive_block)
-        if core_mem_ctx_str:
-            final_parts.append(core_mem_ctx_str)
-        if mem_ctx_str:
-            final_parts.append(mem_ctx_str)
+
+        # --- Add Other Context Blocks ---
+        if asm_block: final_parts.append(asm_block)
+        if drive_block: final_parts.append(drive_block)
+        if core_mem_ctx_str: final_parts.append(core_mem_ctx_str) # Add Core Memories
+        if mem_ctx_str: final_parts.append(mem_ctx_str) # Add Regular Memories (or placeholder)
         final_parts.extend(hist_parts)
         final_parts.append(user_input_fmt)
         final_parts.append(final_model_tag)
@@ -3130,14 +3242,14 @@ class GraphMemoryClient:
             # Iterate carefully to avoid removing parts of valid sequences
             cleaned_txt = gen_txt
             for seq in sorted(payload['stop_sequence'], key=len, reverse=True): # Check longer sequences first
-                 if cleaned_txt.endswith(seq):
-                      cleaned_txt = cleaned_txt[:-len(seq)].rstrip()
-                      break # Stop after removing the first found sequence
+                if cleaned_txt.endswith(seq):
+                    cleaned_txt = cleaned_txt[:-len(seq)].rstrip()
+                    break # Stop after removing the first found sequence
 
             if not cleaned_txt:
-                 logger.warning("Kobold API returned empty text after stripping stop sequences.")
+                logger.warning("Kobold API returned empty text after stripping stop sequences.")
             else:
-                 logger.debug(f"Kobold API cleaned response text: '{cleaned_txt[:100]}...'")
+                logger.debug(f"Kobold API cleaned response text: '{cleaned_txt[:100]}...'")
 
             return cleaned_txt
 
@@ -3150,8 +3262,8 @@ class GraphMemoryClient:
             status_code = getattr(e.response, 'status_code', 'N/A')
             return f"Error: Could not connect or communicate with Kobold API at {api_url}. Status: {status_code}. Details: {e}"
         except json.JSONDecodeError as e:
-             logger.error(f"Failed to decode JSON response from Kobold API: {e}. Response text: '{response.text[:500]}...'")
-             return "Error: Failed to decode JSON response from Kobold API."
+            logger.error(f"Failed to decode JSON response from Kobold API: {e}. Response text: '{response.text[:500]}...'")
+            return "Error: Failed to decode JSON response from Kobold API."
         except Exception as e:
             logger.error(f"Kobold API call unexpected error: {e}", exc_info=True)
             return f"Error: Unexpected issue during Kobold API call."
@@ -3196,27 +3308,13 @@ class GraphMemoryClient:
         # --- Check for API call errors BEFORE parsing ---
         if not llm_response_str or llm_response_str.startswith("Error:"):
             error_reason = llm_response_str if llm_response_str else "LLM call failed (empty response)"
-            return {'action': 'error', 'reason': 'Action analysis prompt template missing.'}
-
-        # The prompt template now contains the descriptions directly.
-        full_prompt = prompt_template.format(
-            request_text=request_text
-        )
-
-        logger.debug(f"Sending action analysis prompt (from file):\n{full_prompt}")
-        # --- Use configured LLM call ---
-        llm_response_str = self._call_configured_llm('action_analysis', prompt=full_prompt)
-
-        # --- Check for API call errors BEFORE parsing ---
-        if not llm_response_str or llm_response_str.startswith("Error:"):
-            error_reason = llm_response_str if llm_response_str else "LLM call failed (empty response)"
             logger.error(f"Action analysis failed due to LLM API error: {error_reason}")
             return {'action': 'error', 'reason': error_reason}
 
         parsed_result = None
         json_str = "" # Initialize json_str for potential use in error logging
         try:
-            logger.debug(f"Raw action analysis response: ```{llm_response_str}```")
+            logger.debug(f"Raw action analysis response:  ```{llm_response_str}```")
             # --- Improved JSON Extraction ---
             # Attempt to find the outermost JSON object {} or list []
             # This handles cases where the LLM might add explanations before/after
@@ -4611,8 +4709,8 @@ class GraphMemoryClient:
         Handles input processing, choosing between text or multimodal, and calls the LLM.
 
         Returns:
-            Tuple: (inner_thoughts, raw_llm_response_text, memories_retrieved, user_emotion, ai_emotion)
-                   user_emotion and ai_emotion are (valence, arousal) tuples or None.
+                Tuple: (inner_thoughts, raw_llm_response_text, memories_retrieved, user_emotion, ai_emotion)
+                        user_emotion and ai_emotion are (valence, arousal) tuples or None.
         """
         inner_thoughts = None
         raw_llm_response = "Error: LLM call failed."
@@ -4636,6 +4734,7 @@ class GraphMemoryClient:
             inner_thoughts, raw_llm_response, memories_retrieved, user_emotion, ai_emotion = self._handle_text_input(user_input, conversation_history)
 
         return inner_thoughts, raw_llm_response, memories_retrieved, user_emotion, ai_emotion
+
 
     def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> InteractionResult:
         """
@@ -4683,9 +4782,9 @@ class GraphMemoryClient:
 
             # --- Step 1: Handle Input & Call LLM (returns emotions for text input) ---
             # Note: _handle_multimodal_input currently doesn't return emotions
-            inner_thoughts, raw_llm_response, memories_retrieved, user_emotion, ai_emotion = self._handle_input(
-                interaction_id, user_input, conversation_history, attachment_data
-            )
+            (inner_thoughts, raw_llm_response, memories_retrieved,
+             user_emotion, ai_emotion) = self._handle_input(
+                interaction_id, user_input, conversation_history, attachment_data)
 
             # --- Step 2: Parse LLM Response for Thoughts ---
             # (Note: _handle_input might already do this, adjust if needed)
@@ -4765,7 +4864,7 @@ class GraphMemoryClient:
         Handles text-based input, including emotional analysis, memory retrieval, and LLM call.
         Returns: (inner_thoughts, final_response, memories_retrieved, user_emotion, ai_emotion)
         """
-        logger.info("Handling text input...") # Changed log level
+        logger.info("Handling text input...")
         user_emotion_result = None # (valence, arousal)
         ai_emotion_result = None # (valence, arousal)
         effective_mood = self.last_interaction_mood # Start with mood from last interaction
@@ -4779,17 +4878,31 @@ class GraphMemoryClient:
                 kg_context_str = self._get_kg_context_for_emotion(user_input)
                 logger.debug(f"Emotional Analysis Context: History='{history_context_str[:100]}...', KG='{kg_context_str[:100]}...'")
 
-                # Run analysis
+                # Run analysis on user input
                 self.emotional_core.analyze_input(
                     user_input=user_input,
                     history_context=history_context_str,
                     kg_context=kg_context_str
                 )
+
                 # Aggregate results (tendency/mood hints stored in self.emotional_core)
+                # This updates self.emotional_core.derived_mood_hints
                 self.emotional_core.aggregate_and_combine()
+                emotional_instructions = self.emotional_core.craft_prompt_instructions()
+
+                # --- Extract User Emotion (VADER from EmotionalCore's analysis of user_input) ---
+                user_sentiment = self.emotional_core.current_analysis_results.get("sentiment", {})
+                user_valence = user_sentiment.get("compound", 0.0)
+                # Simple arousal from pos/neg VADER scores (can be refined)
+                user_arousal = (user_sentiment.get("pos", 0.0) + user_sentiment.get("neg", 0.0)) * 0.5
+                user_emotion_result = (user_valence, user_arousal)
+                logger.info(f"Derived user input emotion (VADER via EmoCore): V={user_valence:.2f}, A={user_arousal:.2f}")
+
             except Exception as emo_e:
                 logger.error(f"Error during emotional analysis: {emo_e}", exc_info=True)
-                # Continue processing even if emotional analysis fails
+                emotional_instructions = "" # Ensure it's empty on error
+                user_emotion_result = None # Ensure None on error
+
 
         # --- 2. Memory Retrieval ---
         query_type = self._classify_query_type(user_input)
@@ -4797,20 +4910,23 @@ class GraphMemoryClient:
         initial_nodes = self._search_similar_nodes(user_input, k=max_initial_nodes, query_type=query_type)
         initial_uuids = [uid for uid, score in initial_nodes]
         memories_retrieved = []
-        effective_mood = self.last_interaction_mood # Start with mood from last interaction
+        # effective_mood is already initialized with self.last_interaction_mood
+        # retrieve_memory_chain will update it based on drives and emotional_core hints
 
-        # --- Retrieve memory chain (this applies drive influence internally) ---
-        if initial_uuids:
-            memories_retrieved, effective_mood = self.retrieve_memory_chain(
-                initial_node_uuids=initial_uuids,
-                recent_concept_uuids=list(self.last_interaction_concept_uuids),
-                current_mood=effective_mood # Pass the mood potentially influenced by drives
-            )
-        else:
-            logger.info("No initial nodes found for retrieval.")
+        # --- Retrieve memory chain (this applies drive influence and EmotionalCore hints internally) ---
+        # Call retrieve_memory_chain regardless of initial_uuids to ensure effective_mood is updated
+        # by drive state and EmotionalCore hints.
+        memories_retrieved, effective_mood = self.retrieve_memory_chain(
+            initial_node_uuids=initial_uuids, # Can be empty
+            recent_concept_uuids=list(self.last_interaction_concept_uuids),
+            current_mood=effective_mood # Pass the mood (potentially influenced by drives/emocore)
+        )
+        if not initial_uuids:
+            logger.info("No initial nodes found for retrieval, but mood updated by retrieve_memory_chain.")
+
 
         # --- 3. Construct Prompt ---
-        # effective_mood is updated by retrieve_memory_chain to include drive/emocore influence
+        # effective_mood is now updated by retrieve_memory_chain to include drive/emocore influence
         # emotional_instructions were retrieved from EmotionalCore earlier
         prompt = self._construct_prompt(
             user_input=user_input,
@@ -4819,7 +4935,7 @@ class GraphMemoryClient:
             tokenizer=self.tokenizer,
             max_context_tokens=self.config.get('prompting', {}).get('max_context_tokens', 4096),
             current_mood=effective_mood, # Pass mood after drive/emocore influence
-            emotional_instructions=emotional_instructions # Pass instructions separately
+            emotional_instructions=emotional_instructions
         )
 
         # --- 4. Call LLM ---
@@ -4828,14 +4944,16 @@ class GraphMemoryClient:
         # --- 5. Parse LLM Response ---
         inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
 
-        # --- 6. Analyze AI Response Emotion (if VADER available) ---
+        # --- 6. Analyze AI Response Emotion (if VADER available in EmotionalCore) ---
         if self.emotional_core and self.emotional_core.sentiment_analyzer and final_response:
             try:
-                ai_scores = self.emotional_core.sentiment_analyzer.polarity_scores(final_response)
+                # Use EmotionalCore's VADER method directly
+                ai_scores = self.emotional_core._analyze_sentiment_vader(final_response)
                 ai_valence = ai_scores.get("compound", 0.0)
+                # Simple arousal from pos/neg VADER scores (can be refined)
                 ai_arousal = (ai_scores.get("pos", 0.0) + ai_scores.get("neg", 0.0)) * 0.5
                 ai_emotion_result = (ai_valence, ai_arousal)
-                logger.info(f"Derived AI response emotion (VADER): V={ai_valence:.2f}, A={ai_arousal:.2f}")
+                logger.info(f"Derived AI response emotion (VADER via EmoCore): V={ai_valence:.2f}, A={ai_arousal:.2f}")
             except Exception as ai_emo_e:
                 logger.error(f"Error analyzing AI response emotion: {ai_emo_e}", exc_info=True)
                 ai_emotion_result = None # Ensure None on error
@@ -4874,23 +4992,23 @@ class GraphMemoryClient:
 
         # --- 1. Add User Node (with emotion) ---
         if final_user_node_uuid is None: # Only add if not already provided
-             user_v, user_a = user_emotion if user_emotion else (None, None)
-             # Use graph_user_input which includes potential attachment placeholder
-             final_user_node_uuid = self.add_memory_node(
-                 graph_user_input, "User",
-                 emotion_valence=user_v, emotion_arousal=user_a
-             )
-             if final_user_node_uuid:
-                 logger.debug(f"Added user node {final_user_node_uuid[:8]} with emotion V={user_v}, A={user_a}")
-                 # Check for high impact
-                 self._check_and_log_high_impact(final_user_node_uuid)
+            user_v, user_a = user_emotion if user_emotion else (None, None)
+            # Use graph_user_input which includes potential attachment placeholder
+            final_user_node_uuid = self.add_memory_node(
+                graph_user_input, "User",
+                emotion_valence=user_v, emotion_arousal=user_a
+            )
+            if final_user_node_uuid:
+                logger.debug(f"Added user node {final_user_node_uuid[:8]} with emotion V={user_v}, A={user_a}")
+                # Check for high impact
+                self._check_and_log_high_impact(final_user_node_uuid)
 
         # --- 2. Store Intention (if any) ---
         intention_result = self._analyze_intention_request(user_input_for_analysis) # Use original input
         if intention_result.get("action") == "store_intention":
             intention_content = f"Remember: {intention_result['content']} (Trigger: {intention_result['trigger']})"
             # Add as a separate 'intention' node linked to the user turn?
-            intention_ts = self.graph.nodes[user_node_uuid]['timestamp'] if user_node_uuid else datetime.now(timezone.utc).isoformat()
+            intention_ts = self.graph.nodes[user_node_uuid]['timestamp'] if user_node_uuid and user_node_uuid in self.graph else datetime.now(timezone.utc).isoformat()
             intention_node_uuid = self.add_memory_node(intention_content, "System", 'intention', timestamp=intention_ts)
             if intention_node_uuid and user_node_uuid:
                 try:
@@ -4902,30 +5020,42 @@ class GraphMemoryClient:
 
         # --- 3. Add AI Node ---
         if ai_node_uuid is None and parsed_response: # Only add if not already provided and response exists
-             ai_node_uuid = self.add_memory_node(parsed_response, "AI")
-             # if ai_node_uuid: self._analyze_and_update_emotion(ai_node_uuid) # Removed old emotion call
+            ai_v, ai_a = ai_emotion if ai_emotion else (None, None) # Get AI emotion
+            final_ai_node_uuid = self.add_memory_node( # Assign to final_ai_node_uuid
+                parsed_response, "AI",
+                emotion_valence=ai_v, emotion_arousal=ai_a
+            )
+            if final_ai_node_uuid: # Use the correct variable
+                logger.debug(f"Added AI node {final_ai_node_uuid[:8]} with emotion V={ai_v}, A={ai_a}")
+                # Check for high impact
+                self._check_and_log_high_impact(final_ai_node_uuid)
+
 
         # --- 4. Update Context for Next Interaction ---
-        self._update_next_interaction_context(user_node_uuid, ai_node_uuid)
+        self._update_next_interaction_context(final_user_node_uuid, final_ai_node_uuid) # Use final UUIDs
 
         # --- 5. Apply Heuristics (Example: Repeated Corrections) ---
         # This is a simplified example - requires tracking correction patterns
         correction_keywords = ["actually,", "no,", "you're wrong", "correction:"]
         if any(keyword in user_input_for_analysis.lower() for keyword in correction_keywords):
-             self._apply_heuristic_drive_adjustment("Understanding", -0.05, "user_correction", user_node_uuid) # Small decrease
+            self._apply_heuristic_drive_adjustment("Understanding", -0.05, "user_correction", final_user_node_uuid) # Small decrease
 
         # --- 6. Trigger Drive Update on High Impact ---
         # Check the interaction-specific dictionary populated by _check_and_log_high_impact
         if self.config.get('subconscious_drives', {}).get('trigger_drive_update_on_high_impact', False) and self.high_impact_nodes_this_interaction:
-             logger.info("High emotional impact detected in current interaction, triggering immediate drive state update analysis.")
-             # Combine context from user/ai turns for analysis
-             combined_context = f"User: {graph_user_input}\nAI: {parsed_response}"
-             # Pass context to _update_drive_state, which handles LLM call and amplification
-             self._update_drive_state(context_text=combined_context)
-             # Clear the interaction-specific dict after use
-             # self.high_impact_nodes_this_interaction.clear() # Clearing moved to start of process_interaction
+            logger.info("High emotional impact detected in current interaction, triggering immediate drive state update analysis.")
+            # Combine context from user/ai turns for analysis
+            combined_context = f"User: {graph_user_input}\nAI: {parsed_response}"
+            # Pass context to _update_drive_state, which handles LLM call and amplification
+            self._update_drive_state(context_text=combined_context)
+            # Clearing of high_impact_nodes_this_interaction happens at the start of process_interaction
 
-        # --- 7. Save Memory ---
+        # --- 7. Update EmotionalCore Memory (if enabled) ---
+        if self.emotional_core and self.emotional_core.is_enabled:
+            self.emotional_core.update_memory_with_emotional_insight()
+
+
+        # --- 8. Save Memory ---
         self._save_memory()
 
         return final_user_node_uuid, final_ai_node_uuid # Return the final UUIDs
@@ -4988,16 +5118,24 @@ class GraphMemoryClient:
         logger.debug(f"Parsing LLM response: '{raw_response_text[:200]}...'")
         try:
             # Correct regex to find thoughts and capture content, ensuring it's non-greedy
-            thought_pattern = r""
-            inner_thoughts = None
-            final_response_text = raw_response_text # Use the full response if no thoughts
+            # Looks for <thought>...</thought> and captures content inside and text after.
+            thought_match = re.search(r"<thought>(.*?)</thought>(.*)", raw_response_text, re.DOTALL | re.IGNORECASE) # Added IGNORECASE
+            if thought_match:
+                inner_thoughts = thought_match.group(1).strip()
+                final_response_text = thought_match.group(2).strip()
+                logger.debug(f"Extracted thoughts: '{inner_thoughts[:100]}...'")
+                logger.debug(f"Remaining response: '{final_response_text[:100]}...'")
+            else:
+                # No thoughts found, use the full response as the final response
+                logger.debug("No <thought> tags found in LLM response.")
+                final_response_text = raw_response_text.strip() # Ensure it's stripped
 
         except TypeError as te:
-             # This error indicates re.search failed likely due to input type, though we try to prevent this.
-             logger.error(f"TypeError during thought parsing (re.search likely failed): {te}. Raw text type: {type(raw_response_text)}", exc_info=True)
-             logger.error(f"Problematic raw_response_text for parsing: ```{raw_response_text}```")
-             inner_thoughts = None
-             final_response_text = raw_response_text # Fallback to original text
+            # This error indicates re.search failed likely due to input type, though we try to prevent this.
+            logger.error(f"TypeError during thought parsing (re.search likely failed): {te}. Raw text type: {type(raw_response_text)}", exc_info=True)
+            logger.error(f"Problematic raw_response_text for parsing: ```{raw_response_text}```")
+            inner_thoughts = None
+            final_response_text = raw_response_text # Fallback to original text
         except Exception as parse_err:
             logger.error(f"Unexpected error parsing thoughts from LLM response: {parse_err}", exc_info=True)
             inner_thoughts = None
@@ -5063,12 +5201,13 @@ class GraphMemoryClient:
                 logger.info(f"Potential workspace action detected via keywords in user input. Setting needs_planning=True.")
 
         return cleaned_response_text, needs_planning
-    
+
     def _calculate_forgettability(self, node_uuid: str, node_data: dict, current_time: float,
                                   weights: dict) -> float:
         """
-        Placeholder: Calculates a score indicating how likely a node is to be forgotten.
-        Score range should ideally be normalized (e.g., 0-1).
+        Calculates a score indicating how likely a node is to be forgotten (0-1).
+        Higher score means more likely to be forgotten.
+        Uses normalized factors based on node attributes and configured weights.
         """
         # --- Get Raw Factors ---
         # Recency: Time since last access (higher = more forgettable)
@@ -5076,11 +5215,10 @@ class GraphMemoryClient:
         recency_sec = max(0, current_time - last_accessed)
 
         # Activation: Current activation level (lower = more forgettable)
-        activation = node_data.get('activation_level', 0.0)  # Graph activation level
+        activation = node_data.get('activation_level', 0.0) # Graph node's stored activation
 
         # Node Type: Some types intrinsically more forgettable
         node_type = node_data.get('node_type', 'default')
-        # (Assign numeric value based on type - e.g., turn=1.0, summary=0.5, concept=0.2?)
 
         # Saliency: Higher saliency resists forgetting
         saliency = node_data.get('saliency_score', 0.0)
@@ -5088,51 +5226,151 @@ class GraphMemoryClient:
         # Emotion: Higher arousal/valence magnitude resists forgetting
         valence = node_data.get('emotion_valence', 0.0)
         arousal = node_data.get('emotion_arousal', 0.1)
-        emotion_magnitude = math.sqrt(valence ** 2 + arousal ** 2)  # Simple magnitude
+        # Use absolute values for magnitude calculation
+        emotion_magnitude = math.sqrt(abs(valence) ** 2 + abs(arousal) ** 2)
 
         # Connectivity: Higher degree resists forgetting
         degree = self.graph.degree(node_uuid) if node_uuid in self.graph else 0
+        # Consider in/out degree separately? For now, total degree.
 
-        # --- Normalize Factors (Example - needs tuning) ---
-        # Normalize recency (e.g., using exponential decay or mapping to 0-1 over a time range)
-        # Example: Normalize over a week (604800 seconds)
-        norm_recency = min(1.0, recency_sec / 604800.0)
+        # Access Count: Higher count resists forgetting
+        access_count = node_data.get('access_count', 0)
+
+        # --- Normalize Factors (Example - needs tuning via config weights) ---
+        # Normalize recency using exponential decay (Ebbinghaus-like curve)
+        # Higher decay constant = faster forgetting
+        decay_constant = weights.get('recency_decay_constant', 0.000005) # Default decay over seconds
+        norm_recency_raw = 1.0 - math.exp(-decay_constant * recency_sec) # Score approaches 1 as time increases
+        # --- Cap Recency Contribution ---
+        # Limit the maximum impact of recency, even after very long breaks.
+        # Example: Cap normalized recency at 0.9 to prevent it from reaching 1.0.
+        max_norm_recency = weights.get('max_norm_recency_cap', 0.95) # Add this to config if needed, default 0.95
+        norm_recency = min(norm_recency_raw, max_norm_recency)
+        if norm_recency_raw > max_norm_recency:
+            logger.debug(f"    Recency capped for node {node_uuid[:8]}: Raw={norm_recency_raw:.3f} -> Capped={norm_recency:.3f}")
 
         # Normalize activation (already 0-1 theoretically, but use inverse)
-        norm_inv_activation = 1.0 - min(1.0, max(0.0, activation))  # Low activation -> high score component
+        # Low activation -> high score component
+        norm_inv_activation = 1.0 - min(1.0, max(0.0, activation))
 
-        # Normalize node type factor (example mapping)
+        # Normalize node type factor (example mapping - higher value = more forgettable)
         type_map = {'turn': 1.0, 'summary': 0.4, 'concept': 0.1, 'default': 0.6}
-        norm_type = type_map.get(node_type, 0.6)
+        norm_type_forgettability = type_map.get(node_type, 0.6)
 
         # Normalize saliency (use inverse: low saliency -> high score component)
         norm_inv_saliency = 1.0 - min(1.0, max(0.0, saliency))
 
         # Normalize emotion (use inverse: low magnitude -> high score component)
-        norm_inv_emotion = 1.0 - min(1.0, max(0.0, emotion_magnitude))
+        # Normalize magnitude based on potential range (e.g., 0 to sqrt(1^2+1^2) approx 1.414)
+        norm_inv_emotion = 1.0 - min(1.0, max(0.0, emotion_magnitude / 1.414))
 
         # Normalize connectivity (use inverse, map degree to 0-1 range, e.g., log scale or capped)
-        # Example: cap at 10 neighbors for normalization
-        norm_inv_connectivity = 1.0 - min(1.0, degree / 10.0)
+        # Example: cap at 10 neighbors for normalization, inverse log scale might be better
+        norm_inv_connectivity = 1.0 - min(1.0, math.log1p(degree) / math.log1p(10)) # Log scale, capped effect
+
+        # Normalize access count (use inverse, map count to 0-1 range)
+        # Example: cap at 20 accesses for normalization, inverse log scale
+        norm_inv_access_count = 1.0 - min(1.0, math.log1p(access_count) / math.log1p(20))
 
         # --- Calculate Weighted Score ---
+        # Factors increasing forgettability score (higher value = more forgettable)
         score = 0.0
         score += norm_recency * weights.get('recency_factor', 0.0)
         score += norm_inv_activation * weights.get('activation_factor', 0.0)
-        score += norm_type * weights.get('node_type_factor', 0.0)
-        # Resistance factors (higher values decrease forgettability)
-        # We used inverse normalization above, so apply positive weights here.
-        score += norm_inv_saliency * abs(
-            weights.get('saliency_factor', 0.0))  # Use abs() in case config uses negative
-        score += norm_inv_emotion * abs(weights.get('emotion_factor', 0.0))
-        score += norm_inv_connectivity * abs(weights.get('connectivity_factor', 0.0))
+        score += norm_type_forgettability * weights.get('node_type_factor', 0.0)
 
-        # Clamp final score 0-1
-        final_score = max(0.0, min(1.0, score))
+        # Factors decreasing forgettability score (resistance factors)
+        # These use inverse normalization, so apply positive weights from config
+        # (Config weights represent importance of the factor)
+        score += norm_inv_saliency * weights.get('saliency_factor', 0.0)
+        score += norm_inv_emotion * weights.get('emotion_factor', 0.0)
+        score += norm_inv_connectivity * weights.get('connectivity_factor', 0.0)
+        score += norm_inv_access_count * weights.get('access_count_factor', 0.0) # Added access count factor
 
-        # logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}) -> Score: {final_score:.3f}")
+        # --- Log Raw and Normalized Factors ---
+        log_tuning_event("FORGETTABILITY_FACTORS", {
+            "personality": self.personality,
+            "node_uuid": node_uuid,
+            "node_type": node_type,
+            "raw_factors": {
+                "recency_sec": recency_sec,
+                "activation": activation,
+                "saliency": saliency,
+                "emotion_magnitude": emotion_magnitude,
+                "degree": degree,
+                "access_count": access_count,
+            },
+            "normalized_factors": {
+                "norm_recency": norm_recency,
+                "norm_inv_activation": norm_inv_activation,
+                "norm_type_forgettability": norm_type_forgettability,
+                "norm_inv_saliency": norm_inv_saliency,
+                "norm_inv_emotion": norm_inv_emotion,
+                "norm_inv_connectivity": norm_inv_connectivity,
+                "norm_inv_access_count": norm_inv_access_count,
+            },
+            "weights": weights, # Log the weights used for this calculation
+        })
 
-        # Removed duplicate return statement that was here
+        # Clamp intermediate score 0-1 before applying resistance factors
+        intermediate_score = max(0.0, min(1.0, score))
+        logger.debug(f"    Forget Score Factors for {node_uuid[:8]}: Rec({norm_recency:.2f}), Act({norm_inv_activation:.2f}), Typ({norm_type_forgettability:.2f}), Sal({norm_inv_saliency:.2f}), Emo({norm_inv_emotion:.2f}), Con({norm_inv_connectivity:.2f}), Acc({norm_inv_access_count:.2f}) -> Intermediate Score: {intermediate_score:.3f}")
+
+        # --- Apply Decay Resistance (Type-Based) ---
+        type_resistance_factor = node_data.get('decay_resistance_factor', 1.0)
+        score_after_type_resistance = intermediate_score * type_resistance_factor
+        logger.debug(f"    Node {node_uuid[:8]} Type Resistance Factor: {type_resistance_factor:.3f}. Score after type resist: {score_after_type_resistance:.4f}")
+
+        # Initialize final_adjusted_score
+        final_adjusted_score = score_after_type_resistance
+
+        # --- Apply Emotion Magnitude Resistance ---
+        emotion_magnitude_resistance_factor = weights.get('emotion_magnitude_resistance_factor', 0.0)
+        if emotion_magnitude_resistance_factor > 0:
+            # Calculate emotion magnitude (already done above)
+            # Reduce forgettability score based on magnitude (higher magnitude = lower score)
+            # Ensure factor is clamped 0-1 to avoid negative scores
+            clamped_emo_mag = min(1.0, max(0.0, emotion_magnitude / 1.414)) # Normalize approx 0-1
+            emotion_resistance_multiplier = (1.0 - clamped_emo_mag * emotion_magnitude_resistance_factor)
+            # Update final_adjusted_score
+            final_adjusted_score *= emotion_resistance_multiplier
+            logger.debug(f"    Node {node_uuid[:8]} Emotion Mag: {emotion_magnitude:.3f} (Norm: {clamped_emo_mag:.3f}), Emo Resist Factor: {emotion_resistance_multiplier:.3f}. Score updated to: {final_adjusted_score:.4f}")
+
+        # --- Apply Core Memory Resistance/Immunity ---
+        is_core = node_data.get('is_core_memory', False)
+        core_mem_enabled = self.config.get('features', {}).get('enable_core_memory', False)
+        core_mem_cfg = self.config.get('core_memory', {})
+        core_immunity_enabled = core_mem_cfg.get('forget_immunity', True) # Default immunity to True now
+
+        if core_mem_enabled and is_core:
+            if core_immunity_enabled:
+                logger.debug(f"    Node {node_uuid[:8]} is Core Memory and immunity is enabled. Setting forgettability to 0.0.")
+                final_adjusted_score = 0.0 # Immune to forgetting
+            else:
+                # Apply a strong resistance factor if immunity is off but it's still core
+                core_resistance_factor = weights.get('core_memory_resistance_factor', 0.05) # Use updated default
+                final_adjusted_score *= core_resistance_factor
+                logger.debug(f"    Node {node_uuid[:8]} is Core Memory (Immunity OFF). Applying resistance factor {core_resistance_factor:.2f}. Score updated to: {final_adjusted_score:.4f}")
+
+        # Final clamp and log before returning
+        final_adjusted_score = max(0.0, min(1.0, final_adjusted_score))
+        logger.debug(f"    Final calculated forgettability score for {node_uuid[:8]}: {final_adjusted_score:.4f}")
+
+        # --- Log Final Score ---
+        log_tuning_event("FORGETTABILITY_FINAL_SCORE", {
+            "personality": self.personality,
+            "node_uuid": node_uuid,
+            "node_type": node_type,
+            "intermediate_score": intermediate_score,
+            "score_after_type_resistance": score_after_type_resistance,
+            "score_after_emotion_resistance": final_adjusted_score if 'emotion_magnitude_resistance_factor' in weights else score_after_type_resistance, # Log score before core check
+            "is_core_memory": is_core,
+            "core_immunity_enabled": core_immunity_enabled,
+            "final_forgettability_score": final_adjusted_score,
+            "current_memory_strength": node_data.get('memory_strength', 1.0), # Log current strength for context
+        })
+
+        return final_adjusted_score
 
     def purge_weak_nodes(self):
         """
