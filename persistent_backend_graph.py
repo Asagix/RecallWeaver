@@ -691,8 +691,11 @@ class GraphMemoryClient:
     # --- Memory Node Management ---
     # (Keep add_memory_node, _rollback_add, delete_memory_entry, _find_latest_node_uuid, edit_memory_entry, forget_topic)
     # ... (methods unchanged) ...
-    def add_memory_node(self, text: str, speaker: str, node_type: str = 'turn', timestamp: str = None, base_strength: float = 0.5) -> str | None:
-        """Adds a new memory node with enhanced attributes to the graph and index."""
+    def add_memory_node(self, text: str, speaker: str, node_type: str = 'turn', timestamp: str = None, base_strength: float = 0.5, emotion_valence: float | None = None, emotion_arousal: float | None = None) -> str | None:
+        """
+        Adds a new memory node with enhanced attributes to the graph and index.
+        Accepts optional emotion values.
+        """
         logger.debug(f"ADD_MEMORY_NODE START: Has embedder? {hasattr(self, 'embedder')}")
 
         if not text: logger.warning("Skip adding empty node."); return None
@@ -707,8 +710,11 @@ class GraphMemoryClient:
         features_cfg = self.config.get('features', {})
         saliency_enabled = features_cfg.get('enable_saliency', False)
         emotion_cfg = self.config.get('emotion_analysis', {})
-        default_valence = emotion_cfg.get('default_valence', 0.0)
-        default_arousal = emotion_cfg.get('default_arousal', 0.1)
+        # Use provided emotions or fall back to defaults from config
+        final_valence = emotion_valence if emotion_valence is not None else emotion_cfg.get('default_valence', 0.0)
+        final_arousal = emotion_arousal if emotion_arousal is not None else emotion_cfg.get('default_arousal', 0.1)
+        logger.debug(f"Node {node_uuid[:8]} Emotion: V={final_valence:.2f}, A={final_arousal:.2f} (Provided: V={emotion_valence}, A={emotion_arousal})")
+
         saliency_cfg = self.config.get('saliency', {})
         initial_scores = saliency_cfg.get('initial_scores', {})
         emotion_influence = saliency_cfg.get('emotion_influence_factor', 0.0)
@@ -728,8 +734,8 @@ class GraphMemoryClient:
             else:
                  base_saliency = initial_scores.get(node_type, initial_scores.get('default', 0.5))
 
-            # Influence initial saliency by default arousal
-            initial_saliency = base_saliency + (default_arousal * emotion_influence)
+            # Influence initial saliency by FINAL arousal (passed in or default)
+            initial_saliency = base_saliency + (final_arousal * emotion_influence)
 
             # --- Check for Importance Keywords ---
             if importance_keywords and importance_boost > 0:
@@ -740,7 +746,7 @@ class GraphMemoryClient:
                     logger.info(f"Importance keyword match found in node {node_uuid[:8]}. Boosting initial saliency by {importance_boost}.")
 
             initial_saliency = max(0.0, min(1.0, initial_saliency)) # Clamp between 0 and 1
-            logger.debug(f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} (Base: {base_saliency}, ArousalInf: {default_arousal * emotion_influence:.3f}, ImportanceBoost: {importance_boost if is_important_keyword_match else 0.0})")
+            logger.debug(f"Calculated initial saliency for {node_uuid[:8]} ({node_type}): {initial_saliency:.3f} (Base: {base_saliency}, ArousalInf: {final_arousal * emotion_influence:.3f}, ImportanceBoost: {importance_boost if is_important_keyword_match else 0.0})")
         else:
              logger.debug(f"Saliency calculation disabled. Setting score to 0.0 for {node_uuid[:8]}.")
 
@@ -763,8 +769,8 @@ class GraphMemoryClient:
                 # status='active', # REMOVED: Replaced by memory_strength
                 memory_strength=self.config.get('memory_strength', {}).get('initial_value', 1.0), # NEW: Initial strength
                 access_count=0, # Initial access count
-                emotion_valence=default_valence, # Default emotion
-                emotion_arousal=default_arousal, # Default emotion
+                emotion_valence=final_valence, # Use final (potentially provided) emotion
+                emotion_arousal=final_arousal, # Use final (potentially provided) emotion
                 saliency_score=initial_saliency, # NEW: Calculated initial saliency
                 # --- Existing attributes ---
                 base_strength=float(base_strength),
@@ -2448,9 +2454,9 @@ class GraphMemoryClient:
     # --- Prompting and LLM Interaction ---
     # (Keep _construct_prompt and _call_kobold_api from previous version)
     def _construct_prompt(self, user_input: str, conversation_history: list, memory_chain: list, tokenizer,
-                          max_context_tokens: int, current_mood: tuple[float, float] | None = None) -> str:
+                          max_context_tokens: int, current_mood: tuple[float, float] | None = None, emotional_instructions: str = "") -> str:
         """
-        Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, and ASM.
+        Constructs the prompt for the LLM, incorporating time, memory, history, mood, drives, ASM, and emotional instructions.
         Applies memory strength budgeting.
         """
         # Use the correct logger name: 'logger'
@@ -2552,16 +2558,11 @@ class GraphMemoryClient:
                 logger.error(f"Error formatting drive state for prompt: {e}", exc_info=True)
                 drive_block = ""
 
-       # --- Get Emotional Instructions (NEW) ---
+       # --- Use provided emotional instructions ---
        emotional_instructions_block = ""
-       if self.emotional_core and self.emotional_core.is_enabled:
-           try:
-               emo_instructions = self.emotional_core.craft_prompt_instructions()
-               if emo_instructions:
-                   emotional_instructions_block = f"{model_tag}{emo_instructions}{end_turn}\n"
-                   logger.debug("Adding emotional instructions block to prompt.")
-           except Exception as emo_instr_e:
-               logger.error(f"Error crafting emotional instructions: {emo_instr_e}", exc_info=True)
+       if emotional_instructions:
+            emotional_instructions_block = f"{model_tag}{emotional_instructions}{end_turn}\n"
+            logger.debug("Adding emotional instructions block (provided) to prompt.")
 
        try:
             fixed_tokens = (len(tokenizer.encode(time_info_block)) +
@@ -3040,6 +3041,10 @@ class GraphMemoryClient:
         ]
         for instruction in system_instructions:
             final_parts.append(f"{model_tag}{instruction}{end_turn}\n")
+
+        # --- Add Emotional Instructions Block (if generated) ---
+        if emotional_instructions_block:
+            final_parts.append(emotional_instructions_block)
 
         # --- Add Emotional Instructions Block (if generated) ---
         if emotional_instructions_block:
@@ -4655,10 +4660,13 @@ class GraphMemoryClient:
         Handles input processing, choosing between text or multimodal, and calls the LLM.
 
         Returns:
-            Tuple: (inner_thoughts, raw_llm_response_text, memories_retrieved)
+            Tuple: (inner_thoughts, raw_llm_response_text, memories_retrieved, user_emotion, ai_emotion)
+                   user_emotion and ai_emotion are (valence, arousal) tuples or None.
         """
         inner_thoughts = None
         raw_llm_response = "Error: LLM call failed."
+        user_emotion = None # Initialize emotion tuples
+        ai_emotion = None
         memories_retrieved = []
 
         if attachment_data and attachment_data.get('type') == 'image' and attachment_data.get('data_url'):
@@ -4673,11 +4681,11 @@ class GraphMemoryClient:
             logger.info(f"Interaction {interaction_id[:8]}: Handling text input.")
             # Call text handler (which includes retrieval and LLM call)
             # Assuming _handle_text_input internally calls retrieve, construct prompt, call LLM
-            # and returns thoughts, response_text, memories_used
-            inner_thoughts, raw_llm_response, memories_retrieved = self._handle_text_input(user_input, conversation_history)
+            # and returns thoughts, response_text, memories_used, user_emotion, ai_emotion
+            inner_thoughts, raw_llm_response, memories_retrieved, user_emotion, ai_emotion = self._handle_text_input(user_input, conversation_history)
 
-        return inner_thoughts, raw_llm_response, memories_retrieved
-    
+        return inner_thoughts, raw_llm_response, memories_retrieved, user_emotion, ai_emotion
+
     def process_interaction(self, user_input: str, conversation_history: list, attachment_data: dict | None = None) -> InteractionResult:
         """
         Processes user input, calls LLM, updates memory, checks for actions.
@@ -4722,7 +4730,9 @@ class GraphMemoryClient:
                 separator = " " if graph_user_input else ""
                 graph_user_input += separator + placeholder
 
-            inner_thoughts, raw_llm_response, memories_retrieved = self._handle_input(
+            # --- Step 1: Handle Input & Call LLM (returns emotions for text input) ---
+            # Note: _handle_multimodal_input currently doesn't return emotions
+            inner_thoughts, raw_llm_response, memories_retrieved, user_emotion, ai_emotion = self._handle_input(
                 interaction_id, user_input, conversation_history, attachment_data
             )
 
@@ -4749,15 +4759,17 @@ class GraphMemoryClient:
             )
             logger.debug(f"Interaction {interaction_id[:8]}: Needs Planning Flag = {needs_planning}. Cleaned Response: '{final_response_text_cleaned[:60]}...'")
 
-            # --- Step 4: Update Graph & Context ---
+            # --- Step 4: Update Graph & Context (Pass emotions) ---
             # Pass the text intended for the graph nodes
             user_node_uuid, ai_node_uuid = self._update_graph_and_context(
                 graph_user_input=graph_user_input, # Text for user node
-                user_node_uuid=None,
+                user_node_uuid=None, # Let the function handle adding
                 parsed_response=final_response_text_cleaned, # Cleaned text for AI node
-                ai_node_uuid=None,
+                ai_node_uuid=None, # Let the function handle adding
                 conversation_history=conversation_history,
-                user_input_for_analysis=user_input # Original input for analysis triggers
+                user_input_for_analysis=user_input, # Original input for analysis triggers
+                user_emotion=user_emotion, # Pass calculated user emotion
+                ai_emotion=ai_emotion # Pass calculated AI emotion
             )
             logger.debug(f"Interaction {interaction_id[:8]}: Graph updated. User Node: {user_node_uuid}, AI Node: {ai_node_uuid}")
 
@@ -4797,9 +4809,16 @@ class GraphMemoryClient:
             error_result.final_response_text = error_message_for_user
             return error_result
 
-    def _handle_text_input(self, user_input: str, conversation_history: list) -> tuple[str | None, str, list]:
-         """Handles text-based input, including emotional analysis, memory retrieval, and LLM call."""
+    def _handle_text_input(self, user_input: str, conversation_history: list) -> tuple[str | None, str, list, tuple | None, tuple | None]:
+         """
+         Handles text-based input, including emotional analysis, memory retrieval, and LLM call.
+         Returns: (inner_thoughts, final_response, memories_retrieved, user_emotion, ai_emotion)
+         """
          logger.info("Handling text input...") # Changed log level
+         user_emotion_result = None # (valence, arousal)
+         ai_emotion_result = None # (valence, arousal)
+         effective_mood = self.last_interaction_mood # Start with mood from last interaction
+         emotional_instructions = "" # Initialize
 
          # --- 1. Emotional Analysis (if enabled) ---
          if self.emotional_core and self.emotional_core.is_enabled:
@@ -4839,15 +4858,17 @@ class GraphMemoryClient:
         else:
             logger.info("No initial nodes found for retrieval.")
 
-        # --- 3. Construct Prompt (incorporates emotional instructions) ---
-        # effective_mood from retrieve_memory_chain already includes drive influence
+        # --- 3. Construct Prompt ---
+        # effective_mood is updated by retrieve_memory_chain to include drive/emocore influence
+        # emotional_instructions were retrieved from EmotionalCore earlier
         prompt = self._construct_prompt(
             user_input=user_input,
             conversation_history=conversation_history,
             memory_chain=memories_retrieved,
             tokenizer=self.tokenizer,
             max_context_tokens=self.config.get('prompting', {}).get('max_context_tokens', 4096),
-            current_mood=effective_mood # Pass mood after drive influence
+            current_mood=effective_mood, # Pass mood after drive/emocore influence
+            emotional_instructions=emotional_instructions # Pass instructions separately
         )
 
         # --- 4. Call LLM ---
@@ -4856,16 +4877,28 @@ class GraphMemoryClient:
         # --- 5. Parse LLM Response ---
         inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
 
-        # --- 6. Return Results ---
-        # Return thoughts, final response, and memories
-        return inner_thoughts, final_response, memories_retrieved
-     
-    
+        # --- 6. Analyze AI Response Emotion (if VADER available) ---
+        if self.emotional_core and self.emotional_core.sentiment_analyzer and final_response:
+            try:
+                ai_scores = self.emotional_core.sentiment_analyzer.polarity_scores(final_response)
+                ai_valence = ai_scores.get("compound", 0.0)
+                ai_arousal = (ai_scores.get("pos", 0.0) + ai_scores.get("neg", 0.0)) * 0.5
+                ai_emotion_result = (ai_valence, ai_arousal)
+                logger.info(f"Derived AI response emotion (VADER): V={ai_valence:.2f}, A={ai_arousal:.2f}")
+            except Exception as ai_emo_e:
+                logger.error(f"Error analyzing AI response emotion: {ai_emo_e}", exc_info=True)
+                ai_emotion_result = None # Ensure None on error
+
+        # --- 7. Return Results ---
+        # Return thoughts, final response, memories, and emotions
+        return inner_thoughts, final_response, memories_retrieved, user_emotion_result, ai_emotion_result
     def _handle_multimodal_input(self, user_input: str, attachment_data: dict) -> tuple[str | None, str]:
         """Handles multimodal input processing and LLM call via Chat Completions API."""
         # >>> Placeholder - Ensure the actual implementation exists and returns:
         # >>> (inner_thoughts: str|None, raw_llm_response: str)
-        logger.warning("_handle_multimodal_input called - Ensure full implementation exists.")
+        # NOTE: This currently doesn't calculate/return user/ai emotions.
+        #       Multimodal emotional analysis would require a different approach.
+        logger.warning("_handle_multimodal_input called - Ensure full implementation exists. Emotion analysis skipped.")
         # Example placeholder logic (replace with actual logic):
         messages = []
         user_content = []
@@ -4878,16 +4911,27 @@ class GraphMemoryClient:
         inner_thoughts, final_response = self._parse_llm_response(raw_llm_response)
         return inner_thoughts, final_response # Return thoughts and final response
 
-    def _update_graph_and_context(self, graph_user_input: str, user_node_uuid: str | None, parsed_response: str, ai_node_uuid: str | None, conversation_history: list, user_input_for_analysis: str) -> tuple[str | None, str | None]:
-        """Adds user/AI nodes, updates context, runs heuristics."""
-        # >>> Placeholder - Ensure the actual implementation exists and returns:
-        # >>> (final_user_node_uuid: str|None, final_ai_node_uuid: str|None)
-        logger.warning("_update_graph_and_context called - Ensure full implementation exists.")
-        # --- 1. Add User Node ---
-        if user_node_uuid is None: # Only add if not already provided (e.g., from previous step)
+    def _update_graph_and_context(self, graph_user_input: str, user_node_uuid: str | None, parsed_response: str, ai_node_uuid: str | None, conversation_history: list, user_input_for_analysis: str, user_emotion: tuple | None, ai_emotion: tuple | None) -> tuple[str | None, str | None]:
+        """
+        Adds user/AI nodes with emotions, updates context, runs heuristics, checks for high impact.
+        Returns: (final_user_node_uuid: str|None, final_ai_node_uuid: str|None)
+        """
+        logger.warning("_update_graph_and_context called - Ensure full implementation exists.") # Keep warning for now
+        final_user_node_uuid = user_node_uuid
+        final_ai_node_uuid = ai_node_uuid
+
+        # --- 1. Add User Node (with emotion) ---
+        if final_user_node_uuid is None: # Only add if not already provided
+             user_v, user_a = user_emotion if user_emotion else (None, None)
              # Use graph_user_input which includes potential attachment placeholder
-             user_node_uuid = self.add_memory_node(graph_user_input, "User")
-             # if user_node_uuid: self._analyze_and_update_emotion(user_node_uuid) # Removed old emotion call
+             final_user_node_uuid = self.add_memory_node(
+                 graph_user_input, "User",
+                 emotion_valence=user_v, emotion_arousal=user_a
+             )
+             if final_user_node_uuid:
+                 logger.debug(f"Added user node {final_user_node_uuid[:8]} with emotion V={user_v}, A={user_a}")
+                 # Check for high impact
+                 self._check_and_log_high_impact(final_user_node_uuid)
 
         # --- 2. Store Intention (if any) ---
         intention_result = self._analyze_intention_request(user_input_for_analysis) # Use original input
@@ -4919,16 +4963,53 @@ class GraphMemoryClient:
              self._apply_heuristic_drive_adjustment("Understanding", -0.05, "user_correction", user_node_uuid) # Small decrease
 
         # --- 6. Trigger Drive Update on High Impact ---
+        # Check the interaction-specific dictionary populated by _check_and_log_high_impact
         if self.config.get('subconscious_drives', {}).get('trigger_drive_update_on_high_impact', False) and self.high_impact_nodes_this_interaction:
-             logger.info("High emotional impact detected, triggering immediate drive state update analysis.")
+             logger.info("High emotional impact detected in current interaction, triggering immediate drive state update analysis.")
              # Combine context from user/ai turns for analysis
              combined_context = f"User: {graph_user_input}\nAI: {parsed_response}"
-             self._update_drive_state(context_text=combined_context) # Call short-term update with context
+             # Pass context to _update_drive_state, which handles LLM call and amplification
+             self._update_drive_state(context_text=combined_context)
+             # Clear the interaction-specific dict after use
+             # self.high_impact_nodes_this_interaction.clear() # Clearing moved to start of process_interaction
 
         # --- 7. Save Memory ---
         self._save_memory()
 
-        return user_node_uuid, ai_node_uuid # Return the final UUIDs 
+        return final_user_node_uuid, final_ai_node_uuid # Return the final UUIDs
+
+    def _check_and_log_high_impact(self, node_uuid: str):
+        """Checks if a node's emotion magnitude exceeds the threshold and logs it for drive updates."""
+        if not node_uuid or node_uuid not in self.graph: return
+
+        drive_cfg = self.config.get('subconscious_drives', {})
+        if not drive_cfg.get('enabled', False) or not drive_cfg.get('trigger_drive_update_on_high_impact', False):
+            return # Skip if drives or trigger disabled
+
+        impact_threshold = drive_cfg.get('emotional_impact_threshold', 1.0)
+        if impact_threshold <= 0: return # Skip if threshold invalid
+
+        try:
+            node_data = self.graph.nodes[node_uuid]
+            valence = node_data.get('emotion_valence', 0.0)
+            arousal = node_data.get('emotion_arousal', 0.1)
+            # Calculate magnitude (ensure non-negative components if needed, though V can be negative)
+            magnitude = math.sqrt(valence**2 + arousal**2)
+
+            if magnitude >= impact_threshold:
+                logger.info(f"High emotional impact node detected: {node_uuid[:8]} (Magnitude: {magnitude:.3f} >= {impact_threshold:.3f})")
+                self.high_impact_nodes_this_interaction[node_uuid] = magnitude # Store magnitude for amplification
+                log_tuning_event("HIGH_IMPACT_NODE_DETECTED", {
+                    "personality": self.personality,
+                    "node_uuid": node_uuid,
+                    "node_type": node_data.get('node_type'),
+                    "valence": valence,
+                    "arousal": arousal,
+                    "magnitude": magnitude,
+                    "threshold": impact_threshold,
+                })
+        except Exception as e:
+            logger.error(f"Error checking high impact for node {node_uuid[:8]}: {e}", exc_info=True)
 
     def _parse_llm_response(self, raw_response_text: str) -> tuple[str | None, str]:
         """
@@ -4970,8 +5051,12 @@ class GraphMemoryClient:
             inner_thoughts = None
             final_response_text = raw_response_text # Fallback to original text
 
+        # --- Ensure final_response_text is never None ---
+        if final_response_text is None:
+            final_response_text = ""
+
         return inner_thoughts, final_response_text
-    
+
     def _check_for_action_request(self, response_text: str, user_input: str) -> tuple[str, bool]:
         """
         Checks the AI's response text for an [ACTION:] tag or the user input for keywords
