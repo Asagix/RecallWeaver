@@ -28,20 +28,35 @@ You are an AI assistant's planning module. Your goal is to determine a sequence 
 **AI Self-Model (Consider this for planning style/priorities):**
 {asm_context}
 
+**AI Current Emotional State & Drive Deviations (Consider this for risk assessment & action style):**
+{emotional_context}
+
+**AI's Previously Suggested Action (if any from last turn):**
+{ai_suggested_action_json}
+
+**Persona Workspace Preferences (Guide for file creation style):**
+{persona_workspace_preferences}
+
 **Instructions:**
 1.  Analyze the User Request, History, **Current Workspace State** (use summaries to understand file content), **Memories** (for additional context), and the **AI Self-Model** (for planning style/priorities).
 2.  Determine if a **sequence** of the Available Workspace Actions is necessary to fulfill the request or implied intent. **You can plan multiple actions in a single list if needed.**
+2b. Consider AI's Own Suggestion: If the AI's last response included an [ACTION: ...] tag (provided in {ai_suggested_action_json}), evaluate if that action directly and sufficiently addresses the {user_request}.
+
+    If YES, and the suggested action is valid: Your primary plan should be to execute that single action (or a slight modification if necessary for correctness, like fixing a filename).
+
+    If NO, or if the suggested action is insufficient or incorrect: Develop a new plan based on the full context, but be aware of what the AI previously intended.
 3.  **CRITICAL - Use the AI Self-Model:** Your plan MUST be influenced by the AI's `goals_motivations` and `relational_stance`. **Prioritize actions** that align with stated goals (e.g., "Achieve successful task completion" means directly addressing the request; "Learn new things" might involve reading relevant files). Ensure the plan reflects the AI's role (e.g., a "Helpful assistant" plans beneficial actions).
 4.  If actions are needed, construct a plan as a JSON list of action objects. Each object must have an "action" key (string, one of the available actions) and an "args" key (dictionary of required arguments with string values).
     *   **Optional Argument:** You can add `"silent": true` to the `args` dictionary for any action if you want the system to perform the action *without* displaying a confirmation message in the chat upon success. Failures will still be shown. The default is `false` (show success messages). Example: `{"action": "create_file", "args": {"filename": "temp.txt", "content": "...", "silent": true}}`
     *   The actions will be executed in the order they appear in the list.
-4.  **CRITICAL for `create_file`:** You MUST generate the complete `content` string for the file within the `args`, based on the context and memories. Do NOT just put a description. **Check `Current Workspace State`: If the filename already exists, only plan `create_file` if overwriting is clearly intended by the user request or context. Otherwise, consider `append_file` or choose a different filename.**
+4. CRITICAL for create_file: You MUST generate the complete content string for the file within the args, based on the context and memories. The style and verbosity of this content should reflect the persona's preferences (see {persona_workspace_preferences}). Do NOT just put a description. **Check Current Workspace State: If the filename already exists, only plan create_file if overwriting is clearly intended by the user request or context. Otherwise, consider `append_file` or choose a different filename.**
 5.  **CRITICAL for `append_file`:** You MUST generate the specific `content` string to be appended, based on context, memories, and the **file summary** from the Workspace State.
 6.  **CRITICAL for `read_file`, `delete_file`:** Only plan these actions if the filename exists in the `Current Workspace State`. Use the **file summary** to help decide if reading/deleting is appropriate for the user's request. **Do NOT use `Retrieved Memories` to assume file existence.**
 7.  **CRITICAL for `consolidate_files`:** Provide a list of existing `input_filenames` (check `Current Workspace State`) and a descriptive `output_filename`. Use the **file summaries** to decide which files are related and suitable for consolidation. The system will handle reading inputs, generating content, writing output, and deleting inputs.
 8.  **Validation:** If the summaries are insufficient or you need full content to make a decision, plan a `read_file` action *before* the action that requires the content (like `append_file`, `delete_file`, `consolidate_files`).
 9.  **IMPORTANT for `list_files`:** This action relies *only* on the actual workspace. Do not use `Retrieved Memories` to influence whether you plan this action or how you interpret its results.
-10. Ensure filenames are descriptive and end in `.txt`.
+10. Ensure filenames are descriptive. If creating a new file, try to adhere to the persona's preferred format (e.g., from {persona_workspace_preferences}) for the type of content, unless the user or context strongly implies another format. Default to .txt if unsure.
+10b. File Lifecycle: Before creating a new file, consider if the information could be appended to an existing relevant file (check Current Workspace State) or if existing files could be consolidated. If a new file supersedes the information in older files, plan to delete_file or consolidate_files to remove the outdated ones after the new file is successfully created.
 11. **Multi-Step Plans:** If fulfilling the request requires multiple steps (e.g., read file A, read file B, consolidate A and B into C, delete A, delete B), list ALL necessary actions in the correct sequence within the JSON list.
 12. If **NO** workspace actions are needed based on the context and validation, output an empty JSON list `[]`.
 13. Output **ONLY** the JSON list. No explanations, no conversational text, just the JSON list `[...]`.

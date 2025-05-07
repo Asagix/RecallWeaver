@@ -1,30 +1,38 @@
 <start_of_turn>user
-You are an AI assistant fulfilling a request to create a file. Your task is to **GENERATE** the filename and the **ACTUAL CONTENT** based on the user's request and the AI's description below.
+You are an AI assistant tasked with generating the **full textual content** for a specific file. Adhere strictly to the requested format and consider your persona and current internal state when crafting the content.
 
-**Instructions:**
-1.  **Filename:** Create a suitable filename ending with `.txt`. Make it descriptive but concise (e.g., `favorite_figurines.txt`, `meeting_notes_project_alpha.txt`).
-2.  **Content:** **GENERATE the actual content** for the file based on the **AI's Description**, the **User Request Context**, and the **Relevant Memories**. If the request was for a list, create the list. If it was for a summary, write the summary. **DO NOT simply copy the user's request or the AI description into the content field.** Use the memories to inform the content accurately.
+**Context for Content Generation:**
 
-**User Request Context:**
-{user_request_context}
+**1. Your Persona (AI Self-Model Snippet):**
+{asm_context_snippet}
 
-**AI's Intended Content Description (What the AI wants to save):**
-{ai_description}
+**2. Your Current Emotional State:**
+{emotional_context_string}
 
-**Relevant Memories (Context from the conversation leading to this request):**
---- START MEMORIES ---
-{relevant_memories}
---- END MEMORIES ---
+**3. Your Persona's General Workspace Preferences (e.g., preferred note styles, verbosity):**
+{persona_workspace_preferences_string}
 
-**Output Format:** Respond ONLY with a single, valid JSON object containing the keys "filename" and "content". **The "content" value MUST be the generated text/list/summary, NOT the description above.**
+**File Details:**
+-   **Target Filename:** "{filename}"
+-   **Intended Content Description (What the file should contain or be about):** "{content_description}"
+-   **Requested File Format:** "{requested_format}"
+    *(Examples: "json_list_of_objects", "markdown_document_with_sections", "csv_data_with_header", "plain_text_narrative", "python_script_with_comments")*
 
-**Example Output:**
-```json
-{{
-  "filename": "favorite_figurines.txt",
-  "content": "My Top 3 Favorite Figurines:\n1. Pearl the Dragon: She's so sparkly and reminds me of inner strength.\n2. The Little Prince: Represents imagination and connection.\n3. Keroppi: Just pure nostalgic joy!"
-}}
-```
+**Content Generation Instructions:**
 
-**JSON Output:**<end_of_turn>
+1.  **Understand the Goal:** Based on the "Target Filename," "Intended Content Description," and "Requested File Format," generate the complete and appropriate text content.
+2.  **Adhere to Format STRICTLY:**
+    *   If "json_list_of_objects" or similar JSON format is requested, ensure your entire output is a **valid JSON list `[...]` or object `{...}`** as appropriate. Structure the JSON based on the "Intended Content Description."
+    *   If "markdown_document_with_sections" or similar markdown format is requested, use appropriate markdown syntax (e.g., `# Heading`, `## Sub-heading`, `- Bullet point`, `*italic*`, `**bold**`).
+    *   If "csv_data_with_header" is requested, generate comma-separated values. The first line should be a header row derived from the "Intended Content Description." Ensure consistent columns.
+    *   If "python_script_with_comments" is requested, generate valid Python code that fulfills the description, including helpful comments.
+    *   For "plain_text_narrative," write coherent paragraph(s).
+3.  **Integrate Persona & State (Subtly):**
+    *   Let your "Persona" (ASM snippet) guide the overall tone, style, and potential focus of the content, where appropriate for the file's purpose.
+    *   If your "Current Emotional State" is significant (e.g., highly positive, anxious), and it's fitting for the file type and content, you may subtly reflect this in word choice or emphasis. For technical files like JSON or CSV, this influence should be minimal or non-existent.
+    *   Consider your "Persona Workspace Preferences" for aspects like verbosity or structuring if the "Requested File Format" allows for variation.
+4.  **CRITICAL: Output ONLY the generated file content.** No explanations, no apologies, no conversational text, no "Here is the content:" phrases. Just the raw content for the file, correctly formatted.
+
+**Now, generate the file content based on all the provided details.**
+File Content Output:<end_of_turn>
 <start_of_turn>model

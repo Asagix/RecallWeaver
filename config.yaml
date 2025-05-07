@@ -1,146 +1,205 @@
+# ======================================================================
 # Configuration for Persistent Graph Memory System
+# ======================================================================
 
-# --- File Paths ---
-base_memory_path: "memory_sets"
-data_dir: "memory_data"
-workspace_dir: "Workspace" # Subdirectory within data_dir
-calendar_file: "calendar.jsonl" # Filename for calendar within workspace
+# ----------------------------------------------------------------------
+# I. SYSTEM PATHS & CORE IDENTIFIERS
+# ----------------------------------------------------------------------
+base_memory_path: "memory_sets"     # Root directory for all personality data
+default_personality: "default"      # Personality folder used if none is specified
+tokenizer_name: "Tokenizer_config"  # Path to local Hugging Face tokenizer directory
 
-# Default personality folder name (used if none selected)
-default_personality: "default"
+# ----------------------------------------------------------------------
+# II. WORKSPACE CONFIGURATION (Per-Personality)
+# These files/dirs are located within each personality's data directory.
+# ----------------------------------------------------------------------
+workspace_dir: "Workspace"                    # Name of the subdirectory for general workspace files
+calendar_file: "calendar.jsonl"               # Filename for calendar events (within workspace_dir)
+workspace_index_file: "_workspace_index.jsonl"    # Metadata index for workspace files (within workspace_dir)
+workspace_archive_dir: "_archive"               # Subdirectory for archived workspace files (within workspace_dir)
 
-# --- Models & API ---
-embedding_model: "all-MiniLM-L6-v2"
-tokenizer_name: "Tokenizer_config" # <<< Use local directory path
-kobold_api_url: "http://localhost:5001/api/v1/generate" # Base URL for generate API
-kobold_chat_api_url: "http://localhost:5001/v1/chat/completions" # Base URL for OpenAI-compatible chat API
+protected_workspace_files:                # Specific files resistant to easy deletion/overwrite
+  - "calendar.jsonl"
+  - "_workspace_index.jsonl"
+  # - "core_self_model.txt" # Example: If you ever have a manually curated core model file
+protected_workspace_prefixes:             # Files starting with these prefixes are also protected
+  - "_sys_"                               # For system-managed internal files
+  # - "_archive/" # Note: Protecting prefixes of directories is usually handled by directory permissions
 
-# --- LLM Model Configuration ---
-# Define settings for different LLM tasks.
-# 'api_type' can be 'generate' (uses kobold_api_url) or 'chat_completions' (uses kobold_chat_api_url).
-# 'model_name' is often ignored by KoboldCpp but good practice.
-# Other parameters are standard generation settings.
+# --- Persona-Specific Workspace Preferences ---
+# These settings guide how the AI interacts with its workspace, e.g., default file formats.
+workspace_persona_settings:
+  default_preferences: # Default preferences if a specific personality doesn't override
+    default_note_format: "markdown_bullet_list" # Options: "plain_text_narrative", "markdown_bullet_list", "json_object_or_list", etc.
+    preferred_summary_style: "concise_bullets"  # For LLM-generated summaries. Options: "narrative_paragraph", "executive_summary", etc.
+    code_generation_language: "python"          # Default language if AI generates code.
+    csv_delimiter: ","                          # Default delimiter for CSV files.
+
+# ----------------------------------------------------------------------
+# III. EXTERNAL API CONFIGURATION
+# ----------------------------------------------------------------------
+kobold_api_url: "http://localhost:5001/api/v1/generate"        # For KoboldCpp's 'generate' endpoint
+kobold_chat_api_url: "http://localhost:5001/v1/chat/completions" # For KoboldCpp's OpenAI-compatible 'chat/completions' endpoint
+
+# ----------------------------------------------------------------------
+# IV. LLM MODEL TASK CONFIGURATIONS
+# Defines parameters for different LLM calls.
+# 'api_type': 'generate' (uses kobold_api_url) or 'chat_completions' (uses kobold_chat_api_url).
+# 'model_name': Often informational for local KoboldCpp, but good practice.
+# ----------------------------------------------------------------------
 llm_models:
-  # --- Main Chat ---
+  # --- Core Chat Generation ---
   main_chat_text:
     api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 512
+    model_name: "koboldcpp-default" # Primary model for text-only chat
+    max_length: 512                 # Max new tokens to generate
     temperature: 0.7
     top_p: 0.95
     top_k: 64
     min_p: 0.0
   main_chat_multimodal:
     api_type: "chat_completions"
-    model_name: "koboldcpp-multimodal" # Or specific multimodal model name
-    max_tokens: 512 # Note: Parameter name is max_tokens for chat API
+    model_name: "koboldcpp-multimodal" # Specific model for multimodal chat (if different)
+    max_tokens: 512                  # Note: 'max_tokens' for chat_completions API
     temperature: 0.7
     top_p: 0.9
-  # --- Analysis Tasks (Generally need low temperature, specific max lengths) ---
-  # --- DEPRECATED: Use workspace_planning instead ---
-  action_analysis: # Keep entry but maybe mark as unused or lower resources
+
+  # --- Analysis & Classification Tasks (typically low temperature for consistency) ---
+  action_analysis: # <<< THIS IS THE RE-ADDED BLOCK
+    # NOTE: This task is called by Worker.add_input for an initial action check.
+    # Consider if this is still needed or if workspace_planning and NLU interaction typing suffice.
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 256 # Increased length significantly to allow for full JSON output
+    max_length: 256             # For JSON like {"action": "...", "args": {...}}
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 10                   # Lower K for more deterministic output
+    min_p: 0.0
+  interaction_type_analysis:    # NLU: Classifies user's general interaction intent
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 200             # Enough for JSON output like {"interaction_type": "...", "details": {...}}
+    temperature: 0.1
+    top_p: 0.9
+    top_k: 20
+    min_p: 0.0
+  memory_modification_analysis: # NLU: Analyzes memory modification commands (edit, delete, forget)
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 512             # Allows for potentially complex arguments or extracted text
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  query_type_classification:    # NLU: Classifies memory retrieval queries (episodic, semantic)
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 10              # Short, specific output expected (e.g., "episodic")
     temperature: 0.1
     top_p: 0.95
     top_k: 10
     min_p: 0.0
-  memory_modification_analysis:
+  intention_analysis:           # NLU: Detects "remember to..." type requests
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 512 # Allow longer for complex args
-    temperature: 0.1
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.0
-  # Removed duplicate memory_modification_analysis entry
-  query_type_classification:
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 10
-    temperature: 0.1
-    top_p: 0.95
-    top_k: 10 # Small K for classification
-    min_p: 0.0
-  intention_analysis:
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 200
+    max_length: 200             # For JSON like {"action": "store_intention", "content": "...", "trigger": "..."}
     temperature: 0.15
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  # --- Workspace File Summarization Task (for context) ---
-  workspace_file_summary:
+  emotional_analysis:           # For EmotionalCore's LLM-based needs/fears/prefs interpretation
     api_type: "generate"
-    model_name: "koboldcpp-default" # Use a fast model if possible
-    max_length: 60 # Keep summaries very short (1-2 sentences)
-    temperature: 0.3 # Low temp for factual summary
+    model_name: "koboldcpp-default"
+    max_length: 512             # For structured JSON output with rationales
+    temperature: 0.2
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  # --- Workspace File Consolidation Task ---
-  workspace_file_consolidation:
+
+  # --- Workspace Related LLM Tasks ---
+  workspace_planning:             # Generates a multi-step plan for workspace actions
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 2048 # Needs potentially large context/output
-    temperature: 0.5 # Balance creativity and coherence
-    top_p: 0.95
-    top_k: 50
-    min_p: 0.0
-  # --- Workspace Planning Task ---
-  workspace_planning:
-    api_type: "generate" # Or chat_completions if model works better
-    model_name: "koboldcpp-default"
-    max_length: 768 # Allow more tokens for potentially complex plans/content
-    temperature: 0.2 # Low temp for structured output
+    max_length: 768             # For potentially complex JSON plans
+    temperature: 0.2
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  # Removed duplicate workspace_planning entry
-  # --- Consolidation Tasks ---
+  file_content_generation:      # Generates actual content for new files in the workspace
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 1536            # Allow significant length for file content (was generate_structured_file_content)
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 60
+    min_p: 0.0
+  generate_file_metadata:       # Generates summary/keywords for workspace_index.jsonl
+    api_type: "generate"
+    model_name: "koboldcpp-default" # A faster model could be good here
+    max_length: 128             # Short summary and a few keywords
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 30
+    min_p: 0.0
+  workspace_file_summary:       # Summarizes existing file content for prompt context (short)
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 60              # Very concise summary for context
+    temperature: 0.3
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  assess_file_current_utility:  # For utility-based pruning decisions
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 100             # Brief assessment string or simple score
+    temperature: 0.5
+    top_p: 0.9
+    top_k: 40
+    min_p: 0.0
+
+  # --- Memory Consolidation LLM Tasks ---
   consolidation_summary:
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 150
-    temperature: 0.6 # Slightly higher for more natural summary flow
+    max_length: 150             # Summary of multiple turns
+    temperature: 0.6
     top_p: 0.95
     top_k: 60
     min_p: 0.0
   consolidation_concept:
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 150 # Increased slightly to ensure list fits
-    temperature: 0.2 # Keep low for factual extraction
-    top_p: 0.95
-    top_k: 50
-    min_p: 0.0
-  consolidation_relation: # Rich relations
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 400
-    temperature: 0.15
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.0
-  consolidation_causal:
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 300
-    temperature: 0.15
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.0
-  consolidation_analogy:
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 200
+    max_length: 150             # List of concepts
     temperature: 0.2
     top_p: 0.95
     top_k: 50
     min_p: 0.0
-  consolidation_associative_v1: # Old V1 prompt
+  consolidation_relation:       # Rich, typed relations between concepts
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 400             # For JSON list of relation dicts
+    temperature: 0.15
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  consolidation_causal:         # Causal chains between concepts
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 300             # For list of lists (chains)
+    temperature: 0.15
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  consolidation_analogy:        # Analogies between concepts
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 200             # For list of [concept_a, concept_b] pairs
+    temperature: 0.2
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+  consolidation_associative_v1: # Legacy: Simpler associative links
     api_type: "generate"
     model_name: "koboldcpp-default"
     max_length: 100
@@ -148,7 +207,7 @@ llm_models:
     top_p: 0.95
     top_k: 50
     min_p: 0.0
-  consolidation_hierarchy_v1: # Old V1 prompt
+  consolidation_hierarchy_v1:   # Legacy: Simpler hierarchical links
     api_type: "generate"
     model_name: "koboldcpp-default"
     max_length: 100
@@ -156,101 +215,103 @@ llm_models:
     top_p: 0.95
     top_k: 50
     min_p: 0.0
+  propose_consolidation_strategy: # For semantic file consolidation
+    api_type: "generate"
+    model_name: "koboldcpp-default" # Needs good reasoning
+    max_length: 512             # For detailed strategy output
+    temperature: 0.4
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+  workspace_file_consolidation:   # Generates content for a consolidated file
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 2048            # Can be large
+    temperature: 0.5
+    top_p: 0.95
+    top_k: 50
+    min_p: 0.0
+
   # --- Other Generation Tasks ---
-  asm_generation:
+  asm_generation:               # Autobiographical Self-Model generation
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 400
+    max_length: 400             # For structured JSON ASM output
     temperature: 0.6
     top_p: 0.95
     top_k: 60
     min_p: 0.0
-  file_content_generation:
+  asm_iterative_update:         # For refining ASM based on new events/reflections
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 1024 # Allow more for file content
-    temperature: 0.7
-    top_p: 0.95
-    top_k: 60
-    min_p: 0.0
-  drive_analysis_short_term:
-    api_type: "generate"
-    model_name: "koboldcpp-default"
-    max_length: 150
+    max_length: 512
     temperature: 0.3
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  drive_analysis_long_term:
+  drive_analysis_short_term:    # LLM analysis of ST drive satisfaction/frustration
     api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 200
+    max_length: 200             # For JSON output of drive scores
+    temperature: 0.3
+    top_p: 0.95
+    top_k: 40
+    min_p: 0.0
+  drive_analysis_long_term:     # LLM analysis of ASM for LT drive tendencies
+    api_type: "generate"
+    model_name: "koboldcpp-default"
+    max_length: 250             # For JSON output of target LT levels/adjustments
     temperature: 0.2
     top_p: 0.95
     top_k: 40
     min_p: 0.0
-  # --- Re-Greeting Generation ---
-  re_greeting_generation:
-    api_type: "generate" # Or chat_completions if preferred
+  re_greeting_generation:       # Generates a re-greeting message after a time gap
+    api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 100 # Greeting should be relatively short
-    temperature: 0.75 # Slightly higher temp for more natural greeting
+    max_length: 100
+    temperature: 0.75
     top_p: 0.95
     top_k: 60
     min_p: 0.0
-  # --- Reflection Generation (NEW) ---
-  reflection_generation:
-    api_type: "generate" # Or chat_completions if preferred
+  reflection_generation:        # Generates a reflective response/summary
+    api_type: "generate"
     model_name: "koboldcpp-default"
-    max_length: 512 # Allow reasonable length for reflective response
-    temperature: 0.7 # Balance coherence and creativity
+    max_length: 512
+    temperature: 0.7
     top_p: 0.95
     top_k: 60
     min_p: 0.0
-  # --- Emotional Analysis Task (NEW) ---
-  emotional_analysis:
-    api_type: "generate" # Or chat_completions if preferred
-    model_name: "koboldcpp-default" # Use a capable model
-    max_length: 512 # Allow enough space for JSON output + rationale
-    temperature: 0.2 # Low temp for structured output
-    top_p: 0.95
-    top_k: 40
-    min_p: 0.0
-  # Removed duplicate file_content_generation entry
-    # Removed duplicate temperature, top_p, top_k, min_p lines that belonged to the duplicate entry
-    min_p: 0.0
 
-
-# --- Feature Flags ---
+# ----------------------------------------------------------------------
+# V. FEATURE FLAGS
+# Master switches for enabling/disabling major system components.
+# ----------------------------------------------------------------------
 features:
-  enable_saliency: true # Enable/disable saliency calculations
-  enable_emotion_analysis: false # DEPRECATED: Replaced by EmotionalCore
-  enable_forgetting: true # Enable/disable nuanced forgetting
-  enable_rich_associations: true # Enable/disable LLM-based rich association extraction (Phase 1.1+)
-  enable_core_memory: true # NEW: Master switch for core memory system
-  enable_emotional_core: true # NEW: Master switch for the new EmotionalCore system
+  enable_saliency: true                   # Saliency calculations and influence
+  enable_forgetting: true                 # Nuanced forgetting (strength reduction & purging)
+  enable_rich_associations: true          # LLM-based relation extraction in consolidation
+  enable_core_memory: true                # Core memory flagging, retrieval, and immunity
+  enable_emotional_core: true             # The new EmotionalCore module for detailed emotion analysis
+  enable_nlu_interaction_typing: true     # LLM-based classification of user interaction type
 
-# --- Core Memory System ---
-core_memory:
-  saliency_threshold: 0.95 # Saliency score above which a node becomes 'core'
-  # emotional_impact_threshold is already under subconscious_drives
-  guaranteed_retrieval_activation_factor: 0.5 # Multiplier for activation_threshold (e.g., 0.5 means include if activation > threshold*0.5)
-  # --- NEW: Access Count Threshold ---
-  access_count_threshold: 20 # Nodes accessed this many times (or more) can be flagged as core
-  # ---------------------------------
-  forget_immunity: true # If true, core memories ignore forgetting score and strength decay
+# ----------------------------------------------------------------------
+# VI. CORE AI SYSTEMS CONFIGURATION
+# ----------------------------------------------------------------------
 
+# --- Embedding & NLP Models ---
+embedding_model: "all-MiniLM-L6-v2"       # SentenceTransformer model for embeddings
+spacy_model_name: "en_core_web_sm"        # spaCy model for NLP tasks (if rich_associations enabled)
 
-# --- Activation Spreading Parameters ---
+# --- Memory Activation & Retrieval ---
 activation:
-  initial: 0.7 # Reduced from 1.0
-  threshold: 0.18 # Increased from 0.1
-  node_decay_rate: 0.02
-  edge_decay_rate: 0.01
-  spreading_depth: 3
-  max_initial_nodes: 7
-  propagation_factor_base: 0.65 # Reduced from 0.7
-  propagation_factors:
+  initial: 0.7                            # Initial activation multiplier for seed nodes
+  threshold: 0.18                         # Min activation for a node to be included in results (unless guaranteed)
+  node_decay_rate: 0.02                   # How much node activation decays per unit of time (notional)
+  edge_decay_rate: 0.01                   # How much dynamic edge strength decays
+  spreading_depth: 3                      # Max steps for activation spreading
+  max_initial_nodes: 7                    # Max seed nodes from similarity search
+  propagation_factor_base: 0.65           # Base factor for activation passing over edges
+  propagation_factors:                    # Multipliers for specific edge types during spreading
     TEMPORAL_fwd: 1.0
     TEMPORAL_bwd: 0.8
     SUMMARY_OF_fwd: 1.2
@@ -260,172 +321,309 @@ activation:
     ASSOCIATIVE: 0.8
     HIERARCHICAL_fwd: 1.1
     HIERARCHICAL_bwd: 0.5
-    # --- NEW Relation Types (Add factors for types used in consolidation) ---
-    CAUSES: 1.1             # Cause->Effect might be strong forward
-    PART_OF: 1.0            # Part->Whole might be standard
-    HAS_PROPERTY: 0.9       # Entity->Property might be slightly weaker
+    CAUSES: 1.1
+    PART_OF: 1.0
+    HAS_PROPERTY: 0.9
     ENABLES: 1.0
-    PREVENTS: 1.0           # Contradiction/Prevention might warrant specific handling later
+    PREVENTS: 1.0
     CONTRADICTS: 1.0
     SUPPORTS: 1.0
     EXAMPLE_OF: 0.9
     MEASURES: 0.9
     LOCATION_OF: 0.9
-    ANALOGY: 0.8            # Analogy might be similar to associative
-    INFERRED_RELATED_TO: 0.6 # Inferred links should likely be weaker
-    SPACY_REL: 0.7          # Generic factor for spaCy-derived relations
-    UNKNOWN: 0.5            # Fallback for truly unknown types
-  # --- Context Focus ---
-  context_focus_boost: 0.15 # Multiplicative boost to initial activation for recently mentioned concepts/turns
-  # --- Interference Simulation ---
-  interference:
+    ANALOGY: 0.8
+    INFERRED_RELATED_TO: 0.6
+    SPACY_REL: 0.7
+    UNKNOWN: 0.5
+  context_focus_boost: 0.15                 # Multiplicative boost for initial nodes matching recent concepts
+  conversational_priming_boost_factor: 1.8  # Multiplicative boost for nodes in current conversational segment
+  conversational_segment_size: 5            # How many recent turns define the current segment for priming
+  guaranteed_saliency_threshold: 0.85     # Saliency score above which nodes are guaranteed in retrieval
+  always_retrieve_core: true              # If true, all 'is_core_memory' nodes are retrieved
+  intention_boost_factor: 1.2             # Boost for 'intention' type nodes in initial activation
+  interference:                             # Simulates memory interference
     enable: true
-    check_threshold: 0.15 # Activation level above which nodes trigger interference checks
-    similarity_threshold: 0.25 # Max FAISS L2 distance for neighbors to interfere (Lower = more similar)
-    penalty_factor: 0.90 # Multiplicative factor applied to activation of interfered nodes (e.g., 0.9 reduces activation by 10%)
-    max_neighbors_check: 5 # How many nearest neighbors to check for interference
-
-    # --- Saliency Guarantee Threshold (Activation Spreading) ---
-    # Nodes with saliency >= this value are included in retrieval regardless of activation level.
-    guaranteed_saliency_threshold: 0.85 # Lowered slightly more again
-
-  # --- Core Memory Retrieval Strategy ---
-  # If true, all nodes flagged as 'is_core_memory' will be added to the retrieval results,
-  # regardless of activation score or saliency guarantee threshold.
-  always_retrieve_core: true
-  # --- Core Memory Forgetting Immunity ---
-  # If true, core memories ignore forgettability score and strength decay entirely.
-  # If false, they use core_memory_resistance_factor from forgetting.weights.
-  forget_immunity: true # Changed default to true for better long-term retention
-
-  # --- Emotional Context Bias ---
-  emotional_context:
+    check_threshold: 0.15                 # Min activation for a node to cause interference
+    similarity_threshold: 0.25            # Max L2 distance for neighbors to interfere (lower=more similar)
+    penalty_factor: 0.90                  # Reduces activation of interfered nodes (e.g., 0.9 = 10% reduction)
+    max_neighbors_check: 5
+  emotional_context:                        # Biases retrieval based on current mood vs. node emotion
     enable: true
-    max_distance: 1.414 # Approx max Euclidean distance in V/A space (-1..1, 0..1 -> sqrt(2^2+1^2) is too high, use sqrt(1^2+1^2))
-    boost_factor: 0.1 # Max *additive* boost for emotionally close nodes (applied to act_pass)
-    penalty_factor: 0.05 # Max *subtractive* penalty for emotionally distant nodes (applied to act_pass)
-    # --- Emotional Reconsolidation on Recall ---
-    reconsolidation_enable: true
-    reconsolidation_threshold: 0.5 # Min V/A distance to trigger reconsolidation adjustment
-    reconsolidation_factor: 0.05 # How much to nudge node emotion towards current mood (0 to 1)
-  # --- Short-Term Priming ---
-  priming_boost_factor: 1.8 # Increased Multiplicative boost for immediate previous turn(s)
+    max_distance: 1.414                   # Max V/A distance for normalization (sqrt(1^2+1^2))
+    boost_factor: 0.1                     # Additive boost for emotionally similar nodes
+    penalty_factor: 0.05                  # Additive penalty for emotionally dissimilar nodes
+    reconsolidation_enable: true          # Adjust node emotion towards current mood upon recall
+    reconsolidation_threshold: 0.5        # Min V/A distance to trigger reconsolidation
+    reconsolidation_factor: 0.05          # How much to nudge (0-1)
 
-# --- Prompting & Context Configuration ---
+# --- LLM Prompting Context ---
 prompting:
-  max_context_tokens: 8192 # Corrected the float value to integer
-  context_headroom: 250
-  memory_budget_ratio: 0.45
-  history_budget_ratio: 0.55
-  re_greeting_threshold_hours: 3 # Hours since last interaction to trigger re-greeting
-  max_files_to_summarize_in_context: 5 # Max files to read & summarize for prompt context
+  max_context_tokens: 8192                # Overall token limit for the LLM
+  context_headroom: 250                   # Safety margin subtracted from max_context_tokens
+  memory_budget_ratio: 0.40               # Proportion of available tokens for memories
+  history_budget_ratio: 0.45              # Proportion of available tokens for conversation history
+  # Workspace context gets (1.0 - memory_budget_ratio - history_budget_ratio)
+  re_greeting_threshold_hours: 3          # Time gap after which AI generates a re-greeting
+  max_files_to_summarize_in_context: 3    # Max workspace file summaries in planning/chat prompts
+  inject_workspace_file_snippets_in_chat_prompt: true # Whether to add relevant file snippets to chat prompt
+  max_file_snippets_in_chat: 2            # Max number of file snippets in chat prompt
+  file_snippet_relevance_threshold: 0.6   # Min relevance for a file snippet to be included
 
-# --- Consolidation Parameters ---
-consolidation:
-  trigger_interaction_count: 15 # How often to run consolidation automatically (e.g., every 15 interactions). Set > 0 to enable.
-  turn_count: 15 # How many turns to process when consolidation runs (Increased from 10)
-  min_nodes: 5 # Minimum suitable nodes required to proceed
-  concept_similarity_threshold: 0.28 # Slightly lowered from 0.3 to potentially merge closer concepts
-  prune_summarized_turns: false # Changed default to false - safer to keep original turns
-  # --- Relation Extraction ---
-  target_relation_types: # Focused list of relation types for LLM extraction
-    - "CAUSES"        # Cause and effect
-    - "PART_OF"       # Component relationship
-    # - "HAS_PROPERTY"  # Removed - Often implicit or less critical for structure
-    # - "RELATED_TO"    # Removed - Too generic, prefer specific types
-    - "IS_A"          # Type/instance hierarchy
-    - "ENABLES"       # Enabling condition
-    - "PREVENTS"      # Preventing condition
-    - "CONTRADICTS"   # Contradictory concepts
-    - "SUPPORTS"      # Supporting concepts/arguments
-    - "EXAMPLE_OF"    # Example relationship
-    # - "MEASURES"      # Removed - Less common/critical
-    # - "LOCATION_OF"   # Removed - Less common/critical
-  enable_causal_chains: true # Enable/disable causal chain extraction during consolidation
-  enable_analogies: true # Enable/disable analogy extraction during consolidation
-  # --- Second-Order Inference ---
-  inference:
-    enable: true
-    max_depth: 2 # Fixed at 2 for V1 generic relatedness
-    strength_factor: 0.3 # Multiplier for inferred edge strength (based on path strengths)
+# --- Saliency System ---
+saliency:
+  initial_scores:                         # Base saliency by node type
+    turn: 0.4
+    summary: 0.7
+    concept: 0.8
+    intention: 0.75
+    default: 0.5
+  emotion_core_arousal_saliency_influence: 0.2 # How much EmoCore arousal (0-1) boosts initial node saliency
+  default_arousal_saliency_influence: 0.05 # How much node's own default arousal (0-1) boosts initial saliency
+  activation_influence: 0.1               # How much saliency influences activation spreading
+  feedback_factor: 0.15                   # Multiplicative factor for user saliency feedback (+S/-S links)
+  saliency_decay_rate: 0.0005             # Per hour, linear reduction (e.g., 0.0005 = 0.05% decay per hour)
+  recall_boost_factor: 0.08               # Additive boost to saliency upon successful recall
+  importance_keywords: ["important", "remember this", "critical", "don't forget", "holiday", "vacation", "trip", "sick", "ill", "hospital", "surgery", "appointment", "deadline", "anniversary", "birthday"]
+  importance_saliency_boost: 0.4          # Additive boost if importance_keywords found at node creation
+  flag_important_as_core: true            # Auto-flag nodes with importance_keywords as core memory
 
-# --- Emotion Analysis ---
-emotion_analysis:
-  default_valence: 0.0 # Neutral
-  default_arousal: 0.1 # Slightly above baseline minimum arousal
+# --- Core Memory System ---
+core_memory:
+  saliency_threshold: 0.95                # Saliency score above which a node can be flagged as core
+  access_count_threshold: 20              # Access count above which a node can be flagged as core
+  forget_immunity: true                   # If true, core memories resist forgetting/strength decay completely
 
-# --- Forget Topic ---
-forget_topic:
-  similarity_k: 15
-
-# --- Nuanced Forgetting ---
+# --- Memory Forgetting & Strength ---
 forgetting:
-  trigger_interaction_count: 20 # Reverted from 5 back to a higher value for normal operation
-  score_threshold: 0.7 # Score above which nodes get archived
-  candidate_min_age_hours: 24 # Only consider nodes older than this for strength reduction check
-  candidate_min_activation: 0.05 # Only consider nodes with low activation for strength reduction check
-  # --- Forgettability Score Weights (used to calculate strength reduction) ---
-  weights:
-    # Factors increasing forgettability score (leading to more strength reduction):
-    recency_factor: 0.05     # Reduced SIGNIFICANTLY - Recency alone should NOT cause forgetting important things
-    activation_factor: 0.02  # Reduced SIGNIFICANTLY - Low activation alone should NOT cause forgetting important things
-    node_type_factor: 0.1    # Keep moderate weight for type
-    # Factors decreasing forgettability (Resistance):
-    # These use inverse normalization, so apply positive weights from config
-    # (Config weights represent importance of the factor)
-    saliency_factor: 0.6     # Increased SIGNIFICANTLY - High saliency strongly resists forgetting
-    emotion_factor: 0.3      # Increased SIGNIFICANTLY - Emotional memories resist forgetting
-    connectivity_factor: 0.05 # Keep low - Connectivity is less important than saliency/emotion
-    access_count_factor: 0.1 # Increased moderately - Access count provides some resistance
-    emotion_magnitude_resistance_factor: 0.25 # Increased - Stronger emotions resist forgetting more
-    core_memory_resistance_factor: 0.05 # NEW: Multiplier for core memory if immunity is OFF (0.05 = 95% reduction in forgettability)
-    # --- Recency Decay Constant (Higher value = faster initial forgetting score component) ---
-    recency_decay_constant: 0.000005 # Keep this for the recency component calculation
-    # --- NEW: Cap for Recency Contribution ---
-    max_norm_recency_cap: 0.95 # Limit max impact of recency (0.0 to 1.0)
-  # --- Decay Resistance (Lower factor = Slower decay) ---
-  # Multiplies the final forgettability score. Core memories should have very low factors.
-  decay_resistance:
-    turn: 1.0      # Standard decay rate for conversational turns
-    summary: 0.1   # Summaries decay 10x slower
-    concept: 0.05  # Concepts decay 20x slower
-    intention: 0.4 # Intentions decay slightly slower than before (was 0.5)
-    default: 1.0   # Default for unknown types
+  trigger_interaction_count: 20           # Interactions before running memory maintenance (strength reduction, saliency decay)
+  candidate_min_age_hours: 24             # Nodes must be older than this for strength reduction check
+  candidate_min_activation: 0.05        # Nodes must have activation below this for strength reduction
+  weights: # For _calculate_forgettability score (0-1, higher = more likely to have strength reduced)
+    recency_factor: 0.05                  # How much "time since last access" contributes
+    activation_factor: 0.02               # How much "low activation" contributes
+    node_type_factor: 0.1                 # How much "node type" contributes (e.g., 'turn' more forgettable)
+    saliency_factor: 0.6                  # How much "low saliency" contributes
+    emotion_factor: 0.3                   # How much "low emotional magnitude" contributes
+    connectivity_factor: 0.05             # How much "low graph connectivity" contributes
+    access_count_factor: 0.1              # How much "low access count" contributes
+    recency_decay_constant: 0.000005      # For normalizing recency factor
+    max_norm_recency_cap: 0.95            # Max contribution of recency factor
+    saliency_resistance_factor: 0.3       # Multiplier based on saliency (1 - saliency*factor)
+    emotion_magnitude_resistance_factor: 0.25 # Multiplier based on emotion
+    connectivity_resistance_factor: 0.15  # Multiplier based on connectivity
+    access_count_resistance_factor: 0.1   # Multiplier based on access count
+    core_memory_resistance_factor: 0.05   # Strong resistance if core_memory.forget_immunity is false
+    global_stress_threshold_arousal: 0.7  # EmoCore arousal level considered "stressed"
+    global_stress_threshold_valence: -0.3 # EmoCore valence level considered "stressed"
+    global_stress_forget_factor: 1.2      # Multiplies forgettability if AI is stressed and node unprotected
+    saliency_for_stress_protection: 0.5   # Saliency above this protects node from stress-induced forgetting
+    flashbulb_emotion_magnitude_threshold: 1.2 # Node emotion magnitude to be considered "flashbulb" (highly resistant)
+  decay_resistance: # Final multiplier on forgettability score by node type (lower = more resistant)
+    turn: 1.0
+    summary: 0.1
+    concept: 0.05
+    intention: 0.4
+    boundary: 0.05
+    default: 1.0
 
-# --- Memory Strength Parameters ---
-memory_strength:
-  initial_value: 1.0 # Starting strength for new nodes
-  decay_rate: 0.15 # Factor applied to forgettability score for strength reduction
-  purge_threshold: 0.01 # Strength below which nodes are eligible for permanent deletion by purge_weak_nodes
-  # --- NEW: Purge Criteria ---
-  purge_min_age_days: 30 # Minimum age in DAYS before a node can be considered for purging (even if strength is low)
-  purge_max_saliency: 0.2 # Node saliency must be BELOW this to be purged
-  purge_max_access_count: 3 # Node access count must be BELOW this to be purged
+memory_strength: # Node's 'memory_strength' attribute itself
+  initial_value: 1.0                      # Starting strength for new nodes
+  decay_rate: 0.15                        # How much forgettability_score reduces strength (strength_new = strength_old * (1 - forget_score*decay_rate))
+  purge_threshold: 0.01                   # Strength below which nodes are eligible for permanent deletion
+  purge_min_age_days: 30                  # Additional criteria for purging
+  purge_max_saliency: 0.2
+  purge_max_access_count: 3
 
-# --- GUI Style Configuration ---
-# (Keep existing style config)
-gui_style:
+# --- Memory Consolidation ---
+consolidation:
+  trigger_interaction_count: 15           # Interactions before basic consolidation
+  turn_count: 15                          # Max recent turns processed per cycle
+  min_nodes: 5                            # Min turns needed to trigger
+  concept_similarity_threshold: 0.28      # For deduplicating extracted concepts
+  prune_summarized_turns: false             # Whether to delete original turns after summarization
+  target_relation_types: ["CAUSES", "PART_OF", "IS_A", "ENABLES", "PREVENTS", "CONTRADICTS", "SUPPORTS", "EXAMPLE_OF"] # For LLM-based rich relation extraction
+  enable_causal_chains: true
+  enable_analogies: true
+  inference:                                # Second-order relation inference
+    enable: true
+    strength_factor: 0.3                  # For LLM-inferred typed relations based on paths
+    min_strength_threshold: 0.2           # Min strength to add LLM-inferred typed relation
+  enable_semantic_consolidation: true       # EXPERIMENTAL: Consolidate files by semantic similarity
+  semantic_consolidation_trigger_count: 3 # Run semantic consolidation every N basic consolidations
+  enable_utility_pruning: true            # EXPERIMENTAL: Prune/archive files based on LLM utility assessment
+  utility_pruning_trigger_count: 5      # Run utility pruning every N basic consolidations
+
+# --- Emotional Core System ---
+emotional_core:
+  enabled: true
+  emotion_model_name: "SamLowe/roberta-base-go_emotions" # Transformer for basic emotion classification
+  analysis_prompt_file: "emotional_analysis_prompt.txt"    # Prompt for LLM needs/fears/prefs analysis
+  llm_task_name: "emotional_analysis"                      # Key in llm_models for the analysis call
+  device_preference: "auto"                                # "auto", "cuda", "cpu" for emotion model
+  min_vram_gb_for_emotion_model: 1.0
+  mood_valence_factor: 0.3                # How much EmoCore V-hint influences final mood bias for retrieval
+  mood_arousal_factor: 0.2                # How much EmoCore A-hint influences final mood bias for retrieval
+  store_insights_enabled": false           # TODO: Store significant emotional findings back to KG
+  basic_emotion_threshold": 0.3            # Min probability for transformer model's emotion label
+  vader_sentiment_threshold": 0.05         # VADER compound score significance threshold
+  needs_fears_prefs_definitions:          # Default definitions are in emotional_core.py; can be overridden/extended here.
+    needs:
+      # Example override or addition:
+      # Achievement: "The drive to overcome challenges and attain a high standard."
+    preferences:
+      # Example override:
+      # Clarity: {type: "positive", description: "Strong preference for extremely clear and direct communication."}
+
+# --- Subconscious Drive System ---
+subconscious_drives:
+  enabled: true
+  short_term_decay_rate: 0.03                   # How quickly ST drive levels (deviations) return towards 0.0
+  long_term_adjustment_factor: 0.01             # How much ST levels influence LT level changes (0-1)
+  llm_score_adjustment_factor: 0.1              # Base factor for LLM-derived ST drive adjustments
+  long_term_update_interval_consolidations: 5   # LT drives updated every N consolidations
+  emotional_impact_amplification_factor: 1.5    # Multiplies llm_score_adjustment_factor if interaction was high-impact
+  emotional_impact_threshold: 0.8               # Node emotion magnitude (sqrt(V^2+A^2)) to be "high-impact"
+  high_impact_memory_baseline_shift_factor: 0.3 # How much a single high-impact memory nudges LT drive state
+
+  definitions: # Defines each drive, its characteristics, and initial state
+    Connection:
+      description: "The need for belonging, affection, and positive relationships."
+      influenced_by_emotions: ["love", "joy", "sadness", "loneliness", "rejection"] # Basic emotions (from transformer) that primarily affect this
+      related_needs_fears: ["Belonging", "Rejection"] # EmoCore structured concepts that affect this
+      long_term_stability_factor: 0.95        # Resistance of LT level to change (0-1, higher=more stable)
+      initial_short_term_level: 0.0           # Initial ST deviation (0 = at baseline)
+      initial_long_term_level: 0.0            # Initial LT personality trait level (-1 to 1)
+    Autonomy:
+      description: "The need for control, self-direction, and making one's own choices."
+      influenced_by_emotions: ["control", "frustration", "anger", "relief"]
+      related_needs_fears: ["Autonomy", "LossOfControl"]
+      long_term_stability_factor: 0.90
+      initial_short_term_level: 0.0
+      initial_long_term_level: 0.0
+    Competence:
+      description: "The need to feel effective, skilled, and capable of meeting challenges."
+      influenced_by_emotions: ["pride", "excitement", "shame", "failure"]
+      related_needs_fears: ["Competence", "Esteem", "Failure"]
+      long_term_stability_factor: 0.90
+      initial_short_term_level: 0.0
+      initial_long_term_level: 0.0
+    Safety:
+      description: "The need for security, predictability, and freedom from threat."
+      influenced_by_emotions: ["fear", "anxiety", "relief", "calmness"]
+      related_needs_fears: ["Safety", "Threat"]
+      long_term_stability_factor: 0.85
+      initial_short_term_level: 0.0
+      initial_long_term_level: 0.0
+    Novelty:
+      description: "The need for new experiences, learning, and stimulation."
+      influenced_by_emotions: ["curiosity", "surprise", "boredom", "excitement"]
+      related_needs_fears: [] # Less directly tied to EmoCore named needs/fears
+      long_term_stability_factor: 0.92
+      initial_short_term_level: 0.0
+      initial_long_term_level: 0.0
+    # Understanding: # Example if you want to add more drives
+      # description: "The drive to comprehend, make sense of information, and reduce uncertainty."
+      # influenced_by_emotions: ["confusion", "realization", "curiosity"]
+      # related_needs_fears: ["Clarity"] # If Clarity is defined as a need in EmoCore
+      # long_term_stability_factor: 0.9
+      # initial_short_term_level: 0.0
+      # initial_long_term_level: 0.05 # AI might have a slight base drive to understand
+
+  mood_influence: # How ST drive levels (which are deviations from 0) affect V/A for retrieval bias
+    valence_factors: # Multiplied by ST level: Positive ST * positive factor = increased Valence
+      Connection: 0.1
+      Autonomy: 0.08
+      Competence: 0.12
+      Safety: 0.15
+      Novelty: 0.05
+    arousal_factors: # Multiplied by ST level: Positive ST * positive factor = increased Arousal
+      Connection: 0.05
+      Autonomy: 0.1
+      Competence: 0.1
+      Safety: -0.2
+      Novelty: 0.15 # High safety ST (satisfied) -> lower arousal
+    max_mood_adjustment: 0.3 # Max total V or A change from drives
+
+  heuristic_adjustment_factors: # Direct ST drive adjustments from EmoCore analysis results
+    sentiment_trigger_threshold: 0.1
+    sentiment_connection_adjustment: 0.05   # Positive VADER compound * this factor -> added to Connection ST
+    sentiment_safety_adjustment: 0.03       # Positive VADER compound * this factor -> added to Safety ST
+
+    need_confidence_threshold: 0.5
+    # If EmoCore "Need: Belonging" is triggered, adjust "Connection" ST by this factor.
+    # Positive factor means a triggered EmoCore need *satisfies* the system drive.
+    # Negative factor means a triggered EmoCore need *frustrates* the system drive (increases unmet urgency).
+    # This depends on how EmoCore defines "triggered need" - as unmet (then factor should be negative to ST) or met (then factor positive).
+    # Assuming EmoCore "triggered_need" means it's currently salient/unmet, so adjust ST negatively.
+    need_Belonging_connection_adjustment: -0.1  # EmoCore "Belonging" triggered -> Connection ST decreases (more frustrated)
+    need_Autonomy_autonomy_adjustment: -0.1
+    need_Competence_competence_adjustment: -0.1
+    need_Safety_safety_adjustment: -0.15
+
+    fear_confidence_threshold: 0.5
+    # If EmoCore "Fear: Rejection" is triggered, adjust "Connection" ST.
+    # A triggered fear usually means a drive is frustrated.
+    fear_Rejection_connection_adjustment: -0.15 # EmoCore "Rejection" -> Connection ST decreases
+    fear_LossOfControl_autonomy_adjustment: -0.1
+    fear_Failure_competence_adjustment: -0.1
+    fear_Threat_safety_adjustment: -0.2
+
+    preference_confidence_threshold: 0.6 # NEW
+    # Example: If "Clarity" preference is violated, adjust "Autonomy" or "Understanding" ST
+    preference_violation_Clarity_autonomy_adjustment: -0.05
+    preference_fulfillment_Politeness_connection_adjustment: 0.03
+
+  inter_drive_interactions: # How one ST drive's *level* influences another ST drive's *level*
+    # If InfluencingDrive_ST_Level > threshold, then TargetDrive_ST_Level += factor * (InfluencingDrive_ST_Level - threshold)
+    Safety:
+      Novelty:  { threshold: 0.5, factor: -0.1 }  # High Safety satisfaction slightly reduces Novelty urgency
+      Autonomy: { threshold: 0.4, factor: -0.05 }
+    Connection:
+      Novelty:  { threshold: 0.5, factor: 0.05 }  # High Connection satisfaction slightly increases Novelty urgency
+    # Low values can also trigger:
+    # Safety:
+      # Control: {threshold: -0.5, factor: 0.1} # If Safety is very low/frustrated, increase Control urgency
+
+# --- Autobiographical Self-Model (ASM) ---
+autobiographical_model:
+  num_salient_nodes: 10                   # For ASM generation context
+  num_emotional_nodes: 10                 # For ASM generation context
+  max_context_nodes: 15                   # Max total nodes for ASM prompt
+  dynamic_check:                          # Check ASM against salient retrieved memories
+    enable: true
+    contradiction_saliency_threshold: 0.8 # Min saliency of a node to check against ASM
+  # Iterative update task is in llm_models (asm_iterative_update)
+
+# --- User Feedback System ---
+feedback_system:
+  enable: true
+  saliency_upvote_boost: 0.1              # Additive boost to saliency for thumbs up
+  saliency_downvote_penalty: 0.15         # Additive penalty (subtracted) for thumbs down
+
+# ----------------------------------------------------------------------
+# VII. GUI CONFIGURATION
+# ----------------------------------------------------------------------
+gui_style: # Controls the visual appearance of the chat interface
   bubbles:
-    max_width_percent: 75
-    side_margin_px: 50
-    edge_margin_px: 5
-    min_width_px: 400
-    border_radius_px: 18
-    internal_padding_top_bottom_px: 6
-    internal_padding_left_right_px: 10
-    timestamp_color_user: "#E0E0E0"
-    timestamp_color_ai: "#B0B0B0"
-    thumbnail_max_width_px: 200
+    max_width_percent: 75                 # Max width of a chat bubble as % of chat area width
+    side_margin_px: 50                    # Margin on the side the bubble is NOT aligned to
+    edge_margin_px: 5                     # Margin on the side the bubble IS aligned to
+    min_width_px: 400                     # Minimum width of a bubble
+    border_radius_px: 18                  # Roundness of bubble corners
+    internal_padding_top_bottom_px: 6     # Vertical padding inside bubble
+    internal_padding_left_right_px: 10    # Horizontal padding inside bubble
+    timestamp_color_user: "#E0E0E0"       # Color of timestamp text for user messages
+    timestamp_color_ai: "#B0B0B0"         # Color of timestamp text for AI/System messages
+    thumbnail_max_width_px: 200           # Max width for attached image thumbnails
   input_field:
-    border_radius_px: 15
-    padding_px: 8
+    border_radius_px: 15                  # Corner roundness for the text input field
+    padding_px: 8                         # Internal padding for the text input field
   buttons:
-    border_radius_px: 15
-    padding_vertical_px: 8
-    padding_horizontal_px: 16
+    border_radius_px: 15                  # Corner roundness for general buttons
+    padding_vertical_px: 8                # Vertical padding for buttons
+    padding_horizontal_px: 16             # Horizontal padding for buttons
 
-# --- GUI Keywords --- # Moved to top level
-modification_keywords:
+modification_keywords: # Keywords GUI uses for simple command detection (e.g., /reset)
   - "forget"
   - "delete"
   - "remove"
@@ -433,179 +631,3 @@ modification_keywords:
   - "change"
   - "correct"
   - "update"
-
-# --- Subconscious Drives ---
-subconscious_drives:
-  enabled: true # Master switch for the drive system
-
-  # --- Core Drive Definitions & Baselines ---
-  # Define the core drives and their default baseline levels (0.0 = neutral).
-  # These represent the AI's inherent tendencies before long-term learning.
-  base_drives:
-    Connection: 0.1 # Base desire for positive social interaction.
-    Safety: 0.2     # Base desire for security, stability, predictability.
-    Understanding: 0.1 # Base drive to learn, reduce uncertainty.
-    Novelty: 0.05   # Base drive for new experiences, stimulation.
-    Control: 0.1    # Base drive for agency, competence, influence.
-
-  # --- Short-Term Drive Dynamics ---
-  # Short-term state fluctuates based on recent events and decays towards a dynamic baseline.
-  short_term_update_interval_interactions: 10 # How often (in user/AI turns) to run LLM analysis for short-term updates (0=disable LLM analysis).
-  short_term_decay_rate: 0.05 # How quickly short-term activation returns towards dynamic baseline per update cycle (0=no decay). Higher = faster return to baseline.
-
-  # --- Heuristic Short-Term Adjustments ---
-  # Direct adjustments applied immediately based on specific events. Values are added/subtracted from the short-term drive level.
-  heuristic_adjustment_factors:
-    action_success_control: 0.05   # Increase Control on successful action execution.
-    action_fail_control: -0.08     # Decrease Control on failed action execution.
-    saliency_increase_connection: 0.03 # Increase Connection slightly on [+S] feedback.
-    saliency_decrease_connection: -0.02 # Decrease Connection slightly on [-S] feedback.
-    # Add more heuristics here (e.g., keyword triggers) if desired later.
-
-  # --- LLM-Based Short-Term Adjustments ---
-  # --- LLM-Based Short-Term Adjustments ---
-  # LLM now returns a score (-1.0 to 1.0). This factor scales the score's impact on drive level.
-  # Positive score (satisfied) * factor = negative adjustment (moves towards baseline).
-  # Negative score (frustrated) * factor = positive adjustment (moves away from baseline).
-  llm_score_adjustment_factor: 0.15 # Scales the LLM score (-1 to 1) to determine the adjustment amount.
-
-  # --- Emotional Impact on Short-Term Adjustments ---
-  trigger_drive_update_on_high_impact: true # NEW: Whether to trigger drive update immediately after a high-impact interaction.
-  emotional_impact_threshold: 1.0 # Magnitude (sqrt(V^2+A^2)) above which an interaction node is considered high-impact.
-  emotional_impact_amplification_factor: 1.5 # Multiplier applied to LLM score adjustment factor when high-impact nodes are present (e.g., 1.5 increases the effect by 50%).
-
-  # --- Long-Term Drive Dynamics ---
-  # Long-term state reflects persistent tendencies, updated less frequently based on ASM analysis.
-  long_term_update_interval_consolidations: 5 # How many consolidations before running LLM analysis for long-term updates (0=disable).
-  long_term_adjustment_factor: 0.05 # How much LLM analysis nudges long-term drives per update (0-1 scale).
-  long_term_influence_on_baseline: 1.0 # Multiplier for how much long-term drives shift the short-term baseline (0=none, 1=direct addition).
-
-  # --- Mood Influence (How drive deviations affect V/A used for retrieval bias) ---
-  mood_influence:
-    # Factors multiplied by the drive's current *deviation* (short_term_activation - dynamic_baseline)
-    # to calculate adjustments to the base Valence/Arousal mood state.
-    # Positive deviation = drive level is *higher* than baseline (need potentially met/overshot).
-    # Negative deviation = drive level is *lower* than baseline (need potentially unmet).
-    valence_factors: # How deviation affects Pleasantness (-1 to +1)
-      Connection: 0.20  # Increased: Positive deviation (met) -> more pleasant. Negative (unmet) -> less pleasant.
-      Safety: 0.15     # Changed Sign: Positive deviation (safe) -> more pleasant. Negative (unsafe) -> less pleasant.
-      Understanding: 0.1 # Positive deviation (understanding) -> more pleasant. Negative (confused) -> less pleasant.
-      Novelty: 0.1     # Positive deviation (stimulated) -> more pleasant. Negative (bored) -> less pleasant.
-      Control: 0.25    # Positive deviation (in control) -> more pleasant. Negative (loss of control) -> less pleasant.
-    arousal_factors: # How deviation affects Activation/Energy (0 to 1)
-      Connection: 0.1  # Both high satisfaction and high frustration might increase arousal slightly.
-      Safety: -0.3     # Positive deviation (safe) -> decreases arousal (calm). Negative (unsafe) -> increases arousal (anxiety).
-      Understanding: 0.1 # Positive deviation (engaged) -> increases arousal. Negative (confused) -> increases arousal (frustration).
-      Novelty: 0.25    # Positive deviation (excited) -> increases arousal. Negative (bored) -> decreases arousal.
-      Control: 0.15    # Adjusted: Positive deviation (competent/focused) -> slightly increases arousal. Negative (loss of control) -> increases arousal (agitation).
-    max_mood_adjustment: 0.3 # Maximum absolute change to V or A from the sum of all drive influences in one step.
-
-  # --- Inter-Drive Dynamics (NEW) ---
-  # Define how drives influence each other. Format: { "influencing_drive": {"target_drive": factor} }
-  # Factor > 0: Influencing drive *increases* target drive (e.g., high Control might increase Safety).
-  # Factor < 0: Influencing drive *decreases* target drive (e.g., high Safety might decrease Novelty).
-  # Influence is applied based on the *deviation* of the influencing drive from its baseline.
-  inter_drive_influence:
-    # Example: High Safety need (negative deviation) slightly inhibits Novelty seeking.
-    # Safety: # Influencing Drive
-    #   Novelty: -0.05 # Target Drive: Factor (Negative deviation * negative factor = positive adjustment to Novelty? No, let's make factor apply to *level*)
-    # Let's try: Influence = influencing_drive_deviation * factor. Applied to target drive.
-    Safety: # Influencing Drive
-      Novelty: -0.1 # High Safety deviation (feeling safe) slightly reduces Novelty drive. Low Safety deviation (unsafe) slightly increases Novelty? No, let's make it simpler: High Safety *level* inhibits Novelty.
-    # --- Revised Inter-Drive Logic Idea ---
-    # Apply based on the *level* of the influencing drive, not deviation.
-    # Format: { "influencing_drive": {"target_drive": {"threshold": level, "factor": influence_factor}} }
-    # If influencing_drive level > threshold, apply factor * (level - threshold) to target drive.
-    inter_drive_interactions: # Renamed for clarity
-      Safety: # Influencing Drive
-        Novelty: # Target Drive
-          threshold: 0.6 # If Safety level is above 0.6...
-          factor: -0.1 # ...decrease Novelty drive activation slightly.
-      Control: # Influencing Drive
-        Safety: # Target Drive
-          threshold: 0.5 # If Control level is above 0.5...
-          factor: 0.05 # ...increase Safety drive activation slightly (feeling in control increases feeling safe).
-      Connection: # Influencing Drive
-        Safety: # Target Drive
-          threshold: 0.5 # If Connection level is above 0.5...
-          factor: 0.05 # ...increase Safety drive activation slightly.
-      # Add more interactions as needed
-
-  # --- Heuristic Refinement (NEW) ---
-  # Adjustments based on conversational events detected in process_interaction
-  conversation_heuristics:
-    enable: true
-    repeated_correction_threshold: 2 # How many corrections trigger adjustment
-    repeated_correction_drive: "Understanding" # Drive affected by corrections
-    repeated_correction_factor: -0.1 # Negative adjustment for corrections
-    collaboration_keywords: ["agree", "yes", "good point", "exactly", "makes sense"] # Keywords indicating collaboration
-    collaboration_drive: "Connection" # Drive affected by collaboration
-    collaboration_factor: 0.05 # Positive adjustment for collaboration
-
-  # --- Baseline Dynamics (NEW) ---
-  # Influence of high-impact events on long-term state
-  high_impact_memory_baseline_shift_factor: 0.30 # Increased from 0.25: How much a single high-impact memory nudges the long-term drive state (0-1).
-
-
-# --- Autobiographical Self-Model (ASM) Generation ---
-autobiographical_model:
-  num_salient_nodes: 10   # Number of top salient nodes to consider
-  num_emotional_nodes: 10 # Number of top emotional nodes to consider
-  max_context_nodes: 15   # Max total nodes to feed into ASM generation prompt
-
-# --- Feedback System ---
-feedback_system:
-  enable: true # Enable/disable user feedback processing
-  # --- Saliency Influence ---
-  # Additive adjustments to saliency score based on feedback
-  saliency_upvote_boost: 0.1
-  saliency_downvote_penalty: 0.15 # Penalty is subtracted
-
-# --- Saliency Calculation ---
-saliency:
-  initial_scores: # Base scores by node type
-    turn: 0.4
-    summary: 0.7
-    concept: 0.8
-    intention: 0.75 # NEW: Saliency for intention nodes
-    default: 0.5
-  emotion_influence_factor: 0.2 # How much default arousal boosts initial saliency
-  activation_influence: 0.1 # How much saliency boosts activation spreading
-  # guaranteed_saliency_threshold moved to activation section for clarity
-  feedback_factor: 0.15 # Multiplicative factor for user feedback adjustment (e.g., 1.15 to increase, 1/1.15 to decrease)
-  saliency_decay_rate: 0.00005 # NEW: How much saliency decays per hour (e.g., 0.00005 = 0.005% decay per hour) - Reduced EVEN MORE
-  recall_boost_factor: 0.08 # Additive boost to saliency score upon successful recall (clamped 0-1) - Increased more
-  # --- Importance Keywords & Boosts ---
-  importance_keywords: # Keywords that trigger importance boost during node creation
-    - "important"
-    - "remember this"
-    - "critical"
-    - "don't forget"
-    - "holiday"
-    - "vacation"
-    - "trip"
-    - "sick"
-    - "ill"
-    - "hospital"
-    - "surgery"
-    - "appointment"
-    - "deadline"
-    - "anniversary"
-    - "birthday"
-  importance_saliency_boost: 0.4 # Additive boost to initial saliency if keywords found
-  flag_important_as_core: true # Automatically flag nodes with importance keywords as core memory
-
-
-# --- Emotional Core Configuration (NEW) ---
-emotional_core:
-  enabled: true # Master switch, redundant with features.enable_emotional_core but good practice
-  emotion_model_name: "SamLowe/roberta-base-go_emotions" # Model for basic emotion classification
-  analysis_prompt_file: "emotional_analysis_prompt.txt" # Prompt for LLM interpretation
-  llm_task_name: "emotional_analysis" # Task name in llm_models section for analysis LLM call
-  mood_valence_factor: 0.3 # How much EmotionalCore valence influences final mood (0-1)
-  mood_arousal_factor: 0.2 # How much EmotionalCore arousal influences final mood (0-1)
-  store_insights_enabled": false # Store significant emotional findings back to KG?
-  basic_emotion_threshold": 0.3 # Min probability to consider a basic emotion present
-  vader_sentiment_threshold": 0.05 # VADER compound score threshold for positive/negative
-  # Definitions for needs/fears/preferences can be kept here or moved entirely into the prompt file
-  # needs_fears_prefs_definitions: { ... } # Example structure in emotional_core.py defaults

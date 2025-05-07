@@ -1,18 +1,43 @@
 <start_of_turn>user
-Consider the following concepts extracted from a conversation:
+You are an AI module specializing in knowledge graph structuring. Your task is to analyze a list of concepts extracted from a conversation and identify clear hierarchical relationships between them.
+
+**Provided Concepts (Your analysis and output MUST strictly use only these exact concept strings):**
+--- START CONCEPTS ---
 {concept_list_str}
+--- END CONCEPTS ---
 
-Identify any clear hierarchical relationships *explicitly stated or strongly implied* in the likely context.
-- Use `is_a` for type/instance relationships (e.g., "poodle" is_a "dog").
-- Use `is_part_of` for component relationships (e.g., "wheel" is_part_of "bicycle").
+**Instructions for Identifying Hierarchical Relationships:**
 
-Output ONLY the identified relationships, one per line, using the exact format:
-`"CHILD_OR_PART_CONCEPT" is_a "PARENT_CONCEPT"`
-OR
-`"CHILD_OR_PART_CONCEPT" is_part_of "WHOLE_CONCEPT"`
+1.  **Relationship Types:**
+    *   Use `is_a` for type/instance relationships (e.g., if "Poodle" and "Dog" are both in the Concepts list, then "Poodle" `is_a` "Dog").
+    *   Use `is_part_of` for component/whole relationships (e.g., if "Wheel" and "Bicycle" are in the Concepts list, then "Wheel" `is_part_of` "Bicycle").
+2.  **Direction:** The relationship should point from the more specific concept (child/part) to the more general concept (parent/whole).
+3.  **Contextual Implication:** Only identify relationships that are strongly implied or would be common knowledge given the concepts. Do not infer highly obscure or speculative hierarchies.
+4.  **Strict Concept Usage:** You MUST use the exact quoted concept strings from the "Provided Concepts" list for both sides of the relationship. Do not alter them.
+5.  **Output Format (Strict):**
+    *   Output ONLY the identified hierarchical relationships.
+    *   Each relationship MUST be on a new line.
+    *   Use the exact format: `"CHILD_OR_PART_CONCEPT" is_a "PARENT_CONCEPT"`
+    *   OR: `"CHILD_OR_PART_CONCEPT" is_part_of "WHOLE_CONCEPT"`
+6.  **No Relationships Found:** If no clear hierarchical relationships exist *among these specific concepts*, output the single word `NONE` (all uppercase, no quotes).
+7.  Do NOT include any explanations, apologies, or any text other than the relationships themselves or the word `NONE`.
 
-Use the exact quoted concept text from the list above.
-If no clear hierarchical relationships exist *among these specific concepts* based on the likely context, output the single word "NONE".
+**Example Input (Illustrative - your concepts will differ):**
+Concepts:
+- "CPU"
+- "Computer"
+- "Monitor"
+- "Keyboard"
+- "Laptop"
+- "Electronics"
 
+**Example Output (for the illustrative input above):**
+"CPU" is_part_of "Computer"
+"Monitor" is_part_of "Computer"
+"Keyboard" is_part_of "Computer"
+"Laptop" is_a "Computer"
+"Computer" is_a "Electronics"
+
+**Now, using the actual "Provided Concepts" list from the beginning of this prompt, identify and output the hierarchical relationships:**
 Hierarchical relationships:<end_of_turn>
 <start_of_turn>model

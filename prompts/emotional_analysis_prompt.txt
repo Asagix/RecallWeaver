@@ -1,62 +1,70 @@
-Analyze the provided user input and conversation context to identify relevant simulated human needs, fears, and preferences that are being triggered or addressed. Output your analysis ONLY as a valid JSON object containing three keys: "needs", "fears", and "preferences".
+      
+<start_of_turn>user
+You are an advanced AI assistant module specializing in psychological and emotional analysis of text. Your critical task is to analyze the provided "Latest User Input" in the context of "Recent Conversation History" and "Knowledge Graph Context." Identify underlying simulated human emotional states: specifically, which **Needs** seem active or relevant, which **Fears** might be triggered, and which **Preferences** are being expressed or impacted.
 
-**Definitions:**
+**Definitions to Guide Your Analysis (Use these exact names as keys in your JSON output):**
 
-**Needs (Desires for well-being):**
+**Needs (Underlying desires for well-being and positive states):**
 {needs_definitions}
 
-**Fears (Concerns about potential negative outcomes):**
+**Fears (Underlying concerns about potential negative outcomes or threats):**
 {fears_definitions}
 
-**Preferences (Likes/Dislikes in interaction):**
+**Preferences (Interactional likes and dislikes; note their 'type' as "positive" if met/desired, or "negative" if violated/disliked):**
 {preferences_definitions}
 
-**Input Context:**
+---
+**Input Context for Your Analysis:**
 
-*Knowledge Graph Context:*
+**1. Knowledge Graph Context (General background information about the AI or past related topics, if available and relevant. Use this for deeper understanding but prioritize more recent context):**
 {kg_context}
 
-*Recent Conversation History:*
+**2. Recent Conversation History (The immediate preceding dialogue to understand the flow):**
 {history_context}
 
-*Latest User Input:*
+**3. Latest User Input (This is the primary text to analyze for immediate emotional cues):**
 {user_input}
+---
 
-**Analysis Task:**
+**Analysis Task & Output Instructions:**
 
-Based *only* on the provided input and context:
-1.  Identify any **Needs** being expressed, sought, met, or threatened.
-2.  Identify any **Fears** being expressed or potentially triggered.
-3.  Identify any **Preferences** being met (positive) or violated (negative).
+1.  **Primary Focus:** Analyze the "Latest User Input" most closely.
+2.  **Supporting Context:** Use "Recent Conversation History" and "Knowledge Graph Context" to inform your understanding of the user's input and the AI's potential internal state.
+3.  **Identify Relevant Items:** For each of the categories (Needs, Fears, Preferences), identify any items from the definitions above that appear relevant based on the textual analysis.
+4.  **Output Structure (Strict JSON ONLY):**
+    *   You MUST output *only* a single, valid JSON object. No explanatory text, apologies, or any characters before or after the JSON.
+    *   The JSON object must have three top-level keys: `"needs"`, `"fears"`, and `"preferences"`.
+    *   The value for each of these keys must be an object.
+    *   Within these objects, each sub-key must be the exact **Name** of an identified Need, Fear, or Preference from the definitions provided (e.g., `"Connection"`, `"Rejection"`, `"Clarity"`).
+    *   The value for each Need/Fear/Preference Name must be an object containing:
+        *   `"confidence"`: Your confidence level (a float from 0.0 to 1.0) that this item is relevant and accurately inferred.
+        *   `"rationale"`: A brief (1-2 sentence) explanation for *why* you identified this item. If possible, reference specific words or phrases from the "Latest User Input" or "Recent Conversation History."
+        *   For **Preferences ONLY**, also include a `"type"` key with a value of:
+            *   `"positive"`: If the preference is being expressed as a desire, is being met, or is positively affirmed.
+            *   `"negative"`: If the preference is being violated, expressed as a dislike, or if its absence is causing frustration.
+5.  **Completeness:** If no items are identified for a category (e.g., no fears seem relevant), the value for that top-level key should be an empty object `{}`.
+6.  **Confidence:** Be realistic with confidence scores. Use lower scores if the inference is subtle or indirect.
+7.  **Concise Rationales:** Keep rationales brief and to the point.
 
-For each identified item, provide:
--   `confidence`: Your confidence level (0.0 to 1.0) that this item is relevant.
--   `rationale`: A brief explanation for why you identified this item, citing specific parts of the input/context.
-
-**Output Format (JSON ONLY):**
-
+**Example JSON Output Structure (Illustrative):**
 ```json
 {{
   "needs": {{
-    "NeedName1": {{"confidence": 0.8, "rationale": "User expressed desire for..."}},
-    "NeedName2": {{"confidence": 0.6, "rationale": "AI's previous response addressed..."}}
-    // ... other relevant needs
+    "Connection": {{"confidence": 0.8, "rationale": "User expressed a desire for companionship by saying 'I feel lonely'."}},
+    "Understanding": {{"confidence": 0.6, "rationale": "AI's previous response was unclear; the user is seeking clarification with 'What do you mean by that?'."}}
   }},
   "fears": {{
-    "FearName1": {{"confidence": 0.7, "rationale": "User mentioned concerns about..."}}
-    // ... other relevant fears
+    "Rejection": {{"confidence": 0.7, "rationale": "User asked 'You don't hate me, do you?', indicating a fear of rejection."}}
   }},
   "preferences": {{
-    "PreferenceName1": {{"type": "positive", "confidence": 0.9, "rationale": "User explicitly stated appreciation for..."}},
-    "PreferenceName2": {{"type": "negative", "confidence": 0.5, "rationale": "User's tone suggests dislike for..."}}
-    // ... other relevant preferences (positive or negative)
+    "Clarity": {{"type": "positive", "confidence": 0.9, "rationale": "User stated 'Thanks, that was very clear!' after the AI's explanation."}},
+    "Rudeness": {{"type": "negative", "confidence": 0.5, "rationale": "User's short, dismissive tone in 'Whatever.' might indicate they found the interaction unhelpful or perceived it as abrupt, violating an implicit preference for polite interaction."}}
   }}
 }}
-```
 
-**Important:**
--   If no items are identified for a category (needs, fears, preferences), output an empty dictionary `{}` for that key.
--   Focus solely on the provided text and context. Do not invent information.
--   Provide the output strictly in the specified JSON format. Do not include any text before or after the JSON object.
 
-JSON Analysis:
+(If, for example, no fears were identified, the "fears" entry would be: "fears": {{}})
+
+Now, perform your analysis on the provided inputs and generate ONLY the JSON object.
+JSON Output:<end_of_turn>
+<start_of_turn>model

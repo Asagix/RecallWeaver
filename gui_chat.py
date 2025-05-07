@@ -157,7 +157,7 @@ class Worker(QThread):
                 self.consolidation_trigger_count = 0
                 self.forgetting_trigger_count = 0
 
-        # --- Catch any exception during __init__ ---
+            # --- Catch any exception during __init__ ---
         except Exception as init_e:
             # Log the error critically
             gui_logger.critical(f"CRITICAL ERROR DURING Worker.__init__ FOR '{personality_name}': {init_e}", exc_info=True)
@@ -277,55 +277,96 @@ class Worker(QThread):
         user_input_text = data.get('text', '')
         attachment = data.get('attachment')
 
-        user_timestamp = datetime.now(timezone.utc).isoformat()
-        # Construct the text that will be displayed in the user bubble
-        display_user_text = user_input_text
-        if attachment and attachment.get('type') == 'image':
-            placeholder = f" [Image: {attachment.get('filename', 'Attached')}]"
-            separator = " " if display_user_text else ""
-            display_user_text += separator + placeholder
+        # --- MOVED: User turn data construction and appending to self.current_conversation ---
+        # --- We will now append user_turn AFTER process_interaction, using UUID from result ---
 
-        user_turn_data = {"speaker": "User", "text": display_user_text, "timestamp": user_timestamp, "uuid": None}
-        self.current_conversation.append(user_turn_data)
-        self.signals.log_message.emit(f"Processing chat: {strip_emojis(display_user_text[:30])}...")
+        self.signals.log_message.emit(f"Processing chat: {strip_emojis(user_input_text[:30])}...") # Log original text
 
         interaction_successful = False
+        # --- FIX: Define display_user_text_for_history early for the except block ---
+        display_user_text_for_history = user_input_text
+        if attachment and attachment.get('type') == 'image':
+            placeholder = f" [Image: {attachment.get('filename', 'Attached')}]"
+            separator = " " if display_user_text_for_history else ""
+            display_user_text_for_history += separator + placeholder
+        # --- END FIX ---
+
+        # Initialize user_timestamp here so it's available in the except block if needed early
+        user_timestamp = datetime.now(timezone.utc).isoformat()
+
+        is_retry = data.get('is_retry', False)
+        ai_node_to_replace = data.get('ai_node_to_replace')
+
+        if is_retry and ai_node_to_replace:
+            logger.info(f"Worker: Retry for user input, replacing AI node {ai_node_to_replace}")
+            # The backend will handle the actual deletion.
+            # We need to remove it from the worker's history *before* passing to process_interaction
+            # so the LLM doesn't see it.
+            self.current_conversation = [
+                turn for turn in self.current_conversation if turn.get("uuid") != ai_node_to_replace
+            ]
+        
         try:
             # Call process_interaction expecting InteractionResult object
-            interaction_result: InteractionResult = self.client.process_interaction(
-                user_input=user_input_text, # Pass original text to backend
-                conversation_history=self.current_conversation,
-                attachment_data=attachment
-            )
+            # Pass the current conversation *without* the latest user turn yet
+            # process_interaction will handle adding the user turn to the graph internally
+            # and will return its UUID.
 
-            # Validate the result type
+            # Create a snapshot of history to pass, ensuring it doesn't include the current input yet
+            history_for_backend = self.current_conversation.copy()
+
+            interaction_result: InteractionResult = self.client.process_interaction(
+                user_input=user_input_text,
+                conversation_history=history_for_backend, # Pass history *before* adding current user input
+                attachment_data=attachment,
+                is_retry=is_retry,
+                ai_node_to_replace=ai_node_to_replace
+                )
+
             if not isinstance(interaction_result, InteractionResult):
+                # ... (error handling as before) ...
                 error_msg = f"FATAL: process_interaction returned invalid data type: {type(interaction_result)}"
                 backend_logger.error(error_msg + f" Value: {interaction_result}")
                 self.signals.error.emit(error_msg)
-                # Emit default error result object via the signal
                 default_error_result = InteractionResult(final_response_text="Error: Backend interaction failed unexpectedly.")
                 self.signals.response_ready.emit(default_error_result)
                 raise TypeError("Backend interaction returned invalid data type.")
 
-            # Add AI response to worker's history
+            # --- NOW add user turn to worker's history, using the UUID from the backend ---
+            # user_timestamp is already defined above
+            # display_user_text_for_history is already defined above
+
+            user_turn_data = {
+                "speaker": "User",
+                "text": display_user_text_for_history, # Use potentially modified text for display
+                "timestamp": user_timestamp, # Consider if backend should provide this timestamp
+                "uuid": interaction_result.user_node_uuid # Get UUID from result object
+            }
+            self.current_conversation.append(user_turn_data)
+
+            # Add AI response to worker's history (as before)
             ai_timestamp = datetime.now(timezone.utc).isoformat()
             ai_turn_data = {
                 "speaker": "AI",
                 "text": interaction_result.final_response_text,
                 "timestamp": ai_timestamp,
-                "uuid": interaction_result.ai_node_uuid # Get UUID from result object
+                "uuid": interaction_result.ai_node_uuid
             }
             self.current_conversation.append(ai_turn_data)
 
-            # --- Emit the InteractionResult object directly ---
-            self.signals.response_ready.emit(interaction_result) # <<< CHANGED HERE
+            self.signals.response_ready.emit(interaction_result)
 
-            # Queue planning task if needed
-            if interaction_result.needs_planning: # Get flag from result object
+            if interaction_result.needs_planning:
                 gui_logger.info("Flag indicates workspace planning needed. Queuing separate task.")
-                # Pass original user input to planning task
-                planning_context = {'user_input': user_input_text, 'history': self.current_conversation[-5:]}
+                planning_context = {
+                    'user_input': user_input_text,
+                    'history': self.current_conversation[-5:]
+                }
+                # --- MODIFIED: Pass AI's own extracted action if present ---
+                if interaction_result.extracted_ai_action_tag_json: # Access the new field
+                    planning_context['predefined_plan_json'] = interaction_result.extracted_ai_action_tag_json
+                    logger.info(f"Passing AI's own action to planning task: {interaction_result.extracted_ai_action_tag_json}")
+                # --- END MODIFIED ---
                 self.input_queue.append(('plan_and_execute_workspace', planning_context))
 
             interaction_successful = True
@@ -335,6 +376,27 @@ class Worker(QThread):
             error_msg = f"Error during chat processing: {e}"
             self.signals.error.emit(error_msg)
             backend_logger.error(error_msg, exc_info=True)
+
+            # If interaction failed before user turn was added, add it now with a placeholder UUID
+            # (or decide if it should be added at all on failure)
+            # For consistency in history, let's add it.
+            user_turn_added_on_error = False
+            for turn in self.current_conversation:
+                if turn.get("timestamp") == user_timestamp and turn.get("speaker") == "User":
+                    user_turn_added_on_error = True
+                    break
+
+            if not user_turn_added_on_error:
+                user_turn_data_on_error = {
+                    "speaker": "User",
+                    "text": display_user_text_for_history, # Use the variable defined at the start
+                    "timestamp": user_timestamp,
+                    "uuid": None # No UUID if interaction failed early
+                }
+                self.current_conversation.append(user_turn_data_on_error)
+                gui_logger.debug(f"Added user turn to history during exception handling: {user_turn_data_on_error}")
+
+
             error_timestamp = datetime.now(timezone.utc).isoformat()
             self.current_conversation.append({"speaker": "Error", "text": f"Failed to process interaction: {e}", "timestamp": error_timestamp})
 
@@ -342,6 +404,7 @@ class Worker(QThread):
             error_result_obj = InteractionResult(final_response_text=f"Error generating response: {e}")
             self.signals.response_ready.emit(error_result_obj) # <<< CHANGED HERE
             interaction_successful = False
+
 
         # --- Trigger Maintenance Tasks AFTER interaction attempt ---
         if interaction_successful:
@@ -590,10 +653,13 @@ class Worker(QThread):
             except Exception as e: error_msg = f"Error saliency update {uuid}: {e}"; self.signals.error.emit(error_msg); backend_logger.error(error_msg, exc_info=True)
         else: error_msg = "Backend client not available for saliency update."; self.signals.error.emit(error_msg); backend_logger.error(error_msg)
 
-    def add_input(self, text: str, attachment: dict | None = None):
+    def add_input(self, text: str, attachment: dict | None = None,
+                  is_retry: bool = False,
+                  ai_node_to_replace: str | None = None,
+                  user_node_uuid_for_retry: str | None = None):
         """Analyzes input/attachment and adds appropriate task to the queue."""
         if not self.client: self.signals.error.emit("Backend client not ready."); return
-        gui_logger.info(f"Worker received input: Text='{text[:50]}...', Attach='{attachment.get('type') if attachment else None}'")
+        gui_logger.info(f"Worker received input: Text='{strip_emojis(text[:50])}...', Attach='{attachment.get('type') if attachment else None}', Retry={is_retry}") # Added Retry log
 
         # Handle Pending Clarification FIRST
         if self.pending_clarification:
@@ -614,54 +680,73 @@ class Worker(QThread):
                 gui_logger.warning("Clarification pending, but no missing args listed. Clearing state.")
                 self.pending_clarification = None # Fall through
 
-        # Handle Image Attachment
+        # Handle Image Attachment (Queue directly)
         if attachment and attachment.get('type') == 'image':
             gui_logger.info("Image attachment found. Queuing chat task directly.")
-            self.input_queue.append(('chat', {'text': text, 'attachment': attachment}))
+            chat_task_data = {
+                'text': text,
+                'attachment': attachment,
+                'is_retry': is_retry,
+                'ai_node_to_replace': ai_node_to_replace,
+                'user_node_uuid_for_retry': user_node_uuid_for_retry
+            }
+            self.input_queue.append(('chat', chat_task_data))
             return
 
         # Analyze Text for Actions (File/Calendar/Memory)
-        gui_logger.info(f"Analyzing text input for actions: '{text[:50]}...'")
+        gui_logger.info(f"Analyzing text input for actions: '{strip_emojis(text[:50])}...'")
         try:
             # --- Step 1: Analyze for Non-Memory Actions (File/Calendar) ---
+            gui_logger.info(">>> Calling analyze_action_request...") # Log before call
             action_analysis_result = self.client.analyze_action_request(text)
+            gui_logger.info(f"<<< Returned from analyze_action_request. Result: {action_analysis_result}") # Log after call
             action = action_analysis_result.get("action")
+            gui_logger.debug(f"Action extracted from result: '{action}'") # Log extracted action
 
-            if action == "error": self.signals.error.emit(f"Action Analysis Error: {action_analysis_result.get('reason', '?')}"); return
+            if action == "error":
+                gui_logger.error("Action analysis returned an error.")
+                self.signals.error.emit(f"Action Analysis Error: {action_analysis_result.get('reason', '?')}")
+                return # Exit on error
             elif action == "clarify":
+                gui_logger.info("Action analysis requested clarification.")
+                # Handle clarification and return
                 self.current_conversation.append({"speaker": "User", "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
                 self.pending_clarification = {"original_action": action_analysis_result.get("original_action", "?"), "args": action_analysis_result.get("args", {}), "missing_args": action_analysis_result.get("missing_args", [])}
                 gui_logger.info(f"Stored pending clarification: {self.pending_clarification}")
-                self.signals.clarification_needed.emit(self.pending_clarification["original_action"], self.pending_clarification["missing_args"]); return
+                self.signals.clarification_needed.emit(self.pending_clarification["original_action"], self.pending_clarification["missing_args"]);
+                return # Exit after handling clarification
             elif action != "none":
                 # --- Specific Non-Memory Action Found ---
-                # Don't queue execute_action directly. Instead, rely on the needs_planning flag
-                # returned by process_interaction to trigger the separate planning task later.
-                # This simplifies logic here - just queue a chat task, and if the backend
-                # flags it for planning, the separate planning task will handle it.
-                # For now, we fall through to the chat task.
-                gui_logger.info(f"Non-memory action '{action}' detected by initial analysis. Will proceed to chat; backend will flag for planning if needed.")
-                pass # Fall through to queue chat task
+                gui_logger.info(f"Non-memory action '{action}' detected by initial analysis. Falling through to queue chat task.")
+                pass # Explicitly fall through
+            # --- If action is "none", we should fall through here ---
+            else: # Explicitly handle the action == "none" case for logging clarity
+                gui_logger.debug(f"Action is '{action}', proceeding to Step 3 (Queue Chat).")
 
             # --- Step 2: Analyze for Memory Modification (If not a clear file/calendar action) ---
-            # --- Temporarily disable direct LLM memory mod analysis ---
-            # if action == "none": # Only check if no file/calendar action found
-            #     mod_analysis_result = self.client.analyze_memory_modification_request(text)
-            #     mod_action = mod_analysis_result.get("action")
-            #     if mod_action == "error": self.signals.error.emit(f"Mem Mod Analysis Error: {mod_analysis_result.get('reason', '?')}"); mod_action = "none"
-            #     if mod_action != "none":
-            #         gui_logger.info(f"Memory modification '{mod_action}' detected. Queuing modify task.")
-            #         self.input_queue.append(('modify', text)); return # Queue and exit
-            # --- End Memory Mod check ---
+            # (Memory mod check remains commented out)
 
         except Exception as e:
-            gui_logger.error(f"Error during action analysis: {e}", exc_info=True)
+            gui_logger.error(f"!!! Exception during action analysis phase: {e}", exc_info=True) # Log exception here
             self.signals.error.emit(f"Failed to analyze input actions: {e}")
             # Fall through to chat task on analysis error
 
-        # --- Step 3: If no specific action identified, queue as Chat ---
-        gui_logger.info("No specific action detected by analysis. Queuing chat task.")
-        self.input_queue.append(('chat', {'text': text, 'attachment': None})) # Attachment already handled or None
+        # --- ADDED LOGGING HERE ---
+        gui_logger.info(">>> Reached point AFTER action analysis try-except block.") # Check if this is reached
+
+        # --- Step 3: If no specific action identified or analysis failed, queue as Chat ---
+        gui_logger.info(">>> Preparing to queue chat task (Step 3)...") # Log before final block
+
+        chat_task_data = {
+            'text': text, # Use original parameter names
+            'attachment': attachment,
+            'is_retry': is_retry,
+            'ai_node_to_replace': ai_node_to_replace,
+            'user_node_uuid_for_retry': user_node_uuid_for_retry
+        }
+        gui_logger.debug(f"Chat task data prepared: {chat_task_data}") # Log the data
+        self.input_queue.append(('chat', chat_task_data))
+        gui_logger.info("<<< Chat task successfully queued.") # Log after queueing
 
     def request_memory_reset(self):
         """Adds a reset task to the queue."""
@@ -925,91 +1010,6 @@ class CollapsibleDriveWidget(QWidget):
             html_content += f"<div style='text-align: right;'>{lt_level:+.2f}</div>" # Show sign always
 
         html_content += "</div>" # Close grid div
-
-        self.content_area.setHtml(html_content)
-
-# --- Collapsible Drive Widget ---
-class CollapsibleDriveWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.drive_state = {}
-        self.toggle_button = QPushButton()
-        self.toggle_button.setObjectName("DriveToggle") # Style like memory toggle
-        self.content_area = QTextBrowser()
-        self.content_area.setReadOnly(True)
-        self.content_area.setVisible(False)
-        self.content_area.setObjectName("DriveContent") # Style like memory content
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.toggle_button)
-        layout.addWidget(self.content_area)
-
-        self.toggle_button.setCheckable(True)
-        self.toggle_button.setChecked(False) # Start collapsed
-        self.toggle_button.toggled.connect(self.toggle_content)
-        self.update_widget({}) # Initial empty state
-
-    def update_widget(self, drive_state_dict: dict):
-        self.drive_state = drive_state_dict
-        self.update_button_text()
-        self.populate_content()
-
-    def update_button_text(self):
-        prefix = "[-] Hide" if self.toggle_button.isChecked() else "[+] Show"
-        self.toggle_button.setText(f"{prefix} AI Drive State")
-
-    def toggle_content(self, checked):
-        self.content_area.setVisible(checked)
-        self.update_button_text()
-        self.adjustSize()
-        QTimer.singleShot(0, self._update_parent_layout)
-
-    def _update_parent_layout(self):
-        if self.parentWidget() and self.parentWidget().layout():
-            self.parentWidget().layout().activate()
-
-    def populate_content(self):
-        if not self.drive_state or not self.drive_state.get("short_term"):
-            self.content_area.setHtml("<small><i>Drive state unavailable.</i></small>")
-            return
-
-        html_content = ""
-        short_term = self.drive_state.get("short_term", {})
-        long_term = self.drive_state.get("long_term", {})
-        # Assuming config is accessible somehow or passed in - for now, use defaults if needed
-        # Ideally, pass base_drives and lt_influence from ChatWindow if needed for baseline calc
-        base_drives = {"Connection": 0.1, "Safety": 0.2, "Understanding": 0.1, "Novelty": 0.05, "Control": 0.1} # Fallback
-        lt_influence = 1.0 # Fallback
-
-        sorted_drives = sorted(short_term.keys())
-
-        for drive_name in sorted_drives:
-            st_level = short_term.get(drive_name, 0.0)
-            lt_level = long_term.get(drive_name, 0.0)
-            config_baseline = base_drives.get(drive_name, 0.0)
-            dynamic_baseline = config_baseline + (lt_level * lt_influence)
-            deviation = st_level - dynamic_baseline
-
-            # Qualitative description based on deviation from baseline
-            # Positive deviation = Drive level is HIGHER than baseline (need potentially met/overshot)
-            # Negative deviation = Drive level is LOWER than baseline (need potentially unmet)
-            state_desc = "Neutral"
-            if deviation > 0.2: state_desc = "High" # Drive level is significantly higher than baseline
-            elif deviation < -0.2: state_desc = "Low" # Drive level is significantly lower than baseline
-
-            # Color coding (example) - Green for High (met), Red for Low (unmet)
-            color = "#CCCCCC" # Neutral grey
-            if state_desc == "High": color = "#8FBC8F" # Greenish for High/Met
-            elif state_desc == "Low": color = "#F08080" # Reddish for Low/Unmet
-
-            html_content += (
-                f"<div style='margin-bottom: 3px;'>"
-                f"<b>{drive_name}:</b> <span style='color: {color};'>{state_desc}</span> "
-                f"<small>(Lvl: {st_level:.2f}, Base: {dynamic_baseline:.2f}, Dev: {deviation:+.2f})</small>"
-                f"</div>"
-            )
 
         self.content_area.setHtml(html_content)
 
@@ -1314,7 +1314,16 @@ class ChatWindow(QMainWindow):
         self.button_padding_v = 8;
         self.button_padding_h = 16
         self.thumbnail_max_width = 200  # Default thumbnail width
-
+        
+        #For Retry button
+        self.last_user_input_for_retry = {"text": None, "attachment_payload": None}
+        self.current_turn_context_for_retry = {
+            "user_input_text": None,
+            "user_input_attachment_payload": None,
+            "user_node_uuid": None, # UUID of the user's message node
+            "last_ai_node_uuid": None,   # UUID of the AI's response node that might be retried/replaced
+            "last_ai_response_text": None # The text of that AI response
+        }
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
@@ -1439,7 +1448,15 @@ class ChatWindow(QMainWindow):
         self.layout.addWidget(self.drive_summary_widget) # Add drive widget here
         self.layout.addWidget(self.scroll_area, 1); # Chat scroll area takes remaining space
         self.layout.addWidget(self.input_frame)
-
+        
+        #Retry button
+        self.retry_button = QPushButton("🔄 Retry"); # Or use an icon like "Retry", "Regenerate"
+        self.retry_button.setObjectName("RetryButton"); # For styling
+        self.retry_button.setToolTip("Retry generating response for the last user input / Re-attempt last failed action")
+        self.retry_button.clicked.connect(self.handle_retry_button_click)
+        self.retry_button.setEnabled(False) # Initially disabled
+        self.input_layout.addWidget(self.retry_button); # Add it to the input_layout
+        
         # --- Connect scrollbar signals ---
         scrollbar = self.scroll_area.verticalScrollBar()
         scrollbar.rangeChanged.connect(self._scroll_to_bottom_on_range_change)
@@ -1494,7 +1511,25 @@ class ChatWindow(QMainWindow):
             #UserBubbleFrame QLabel {{ color: white; }}
             #AIBubbleFrame QLabel, #SystemConfirmationBubbleFrame QLabel, #AIConfirmationBubbleFrame QLabel {{ color: #E0E0E0; }}
             #ErrorBubbleFrame QLabel {{ color: #FFCCCC; }}
-
+            
+            /* Retry button */
+            #RetryButton {{
+                background-color: #4A4A4C; /* Hardcoded value */
+                color: white;
+                border: none; /* Assuming similar to other buttons */
+                padding: {self.button_padding_v}px {self.button_padding_h}px; /* Using existing variables */
+                border-radius: {self.button_border_radius}px; /* Using existing variables */
+                font-size: 10pt; /* Assuming similar */
+                font-weight: bold; /* Assuming similar */
+            }}
+            #RetryButton:hover {{
+                background-color: #5A5A5C; /* Hardcoded value */
+            }}
+            #RetryButton:disabled {{
+                background-color: #333;
+                color: #666;
+            }}
+            
             /* Timestamp Labels */
             #UserTimestampLabel {{ color: {self.bubble_ts_color_user}; font-size: 8pt; background-color: transparent; padding-top: 3px; }}
             #AITimestampLabel, #SystemTimestampLabel, #ErrorTimestampLabel {{ color: {self.bubble_ts_color_ai}; font-size: 8pt; background-color: transparent; padding-top: 3px; }}
@@ -1604,6 +1639,11 @@ class ChatWindow(QMainWindow):
         # Only enable Reset/Consolidate if a model is loaded (enabled=True)
         if hasattr(self, 'reset_button'): self.reset_button.setEnabled(enabled)
         if hasattr(self, 'consolidate_button'): self.consolidate_button.setEnabled(enabled)
+        if hasattr(self, 'retry_button'):
+            # Enable retry if main input is being enabled AND there's a conversation history
+            # (implying a last turn exists to retry)
+            can_retry = enabled and bool(self.worker and self.worker.current_conversation)
+            self.retry_button.setEnabled(can_retry)
 
         if enabled and hasattr(self, 'input_field'):
             self.input_field.setFocus()
@@ -1724,23 +1764,42 @@ class ChatWindow(QMainWindow):
 
     def start_worker_for_personality(self, name):
         """Starts a new worker thread for the given personality name."""
-        # Note: Signal disconnection should happen in switch_personality before calling this
-        gui_logger.info(f"Starting worker for: {name}")
-        # --- Instantiate the Worker ---
-        self.worker = Worker(personality_name=name, config_path=self.config_path)
+        gui_logger.info(f"Attempting to start worker for personality: {name}")
 
-        # --- ADD IMMEDIATE LOGGING AFTER INSTANTIATION ---
-        gui_logger.debug(f"### DEBUG: Worker instantiated. Type(self.worker): {type(self.worker)}, Value: {self.worker}")
-        # ---------------------------------------------
+        # --- Instantiate the Worker within a try-except block ---
+        try:
+            # This is where Worker.__init__ is called. If it raises an exception,
+            # self.worker might not be properly assigned or could be a partially initialized object.
+            self.worker = Worker(personality_name=name, config_path=self.config_path)
+            gui_logger.info(f"Worker object for '{name}' instantiated successfully.")
+            # --- ADD IMMEDIATE LOGGING AFTER INSTANTIATION ---
+            gui_logger.debug(f"### DEBUG: Worker instantiated. Type(self.worker): {type(self.worker)}, Value: {self.worker}")
+        except Exception as worker_init_error:
+            # This catches errors from Worker.__init__ (e.g., config loading issues that cause a raise)
+            gui_logger.critical(f"### CRITICAL: Failed to instantiate Worker for '{name}': {worker_init_error}", exc_info=True)
+            self.display_error(f"Critical error: Could not initialize AI components for '{name}'. Check logs.")
+            # Reset UI to a safe, non-functional state for this personality
+            self.set_input_enabled(False)
+            self.update_status_light("not_ready")
+            self.statusBar().showMessage(f"Error starting AI for '{name}'. Please select another.", 0)
+            self.current_personality = None # Clear current personality as it failed
+            self._rebuild_personality_menu() # Update menu
+            self.worker = None # Ensure self.worker is None
+            return # Stop further processing for this failed attempt
+        # --- END Worker Instantiation try-except ---
+
 
         # --- Connect signals ---
-        # --- ADD LOGGING RIGHT BEFORE ERROR LINE ---
-        gui_logger.debug(f"### DEBUG: About to connect signals. Value of self.worker: {self.worker}")
-        # ---------------------------------------------
-        # --- THIS is where the error occurs ---
+        # This try-except block primarily catches AttributeErrors if self.worker is None
+        # (which shouldn't happen if the above try-except for instantiation is in place and returns on failure)
+        # or TypeErrors if signals are not correctly defined.
         try:
+            if not self.worker: # Should be caught by the above, but as a safeguard
+                raise AttributeError("Worker object is None before signal connection.")
+
+            gui_logger.debug(f"### DEBUG: About to connect signals. Value of self.worker: {self.worker}")
+
             self.worker.signals.backend_ready.connect(self.on_backend_ready)
-            # --- Connect other signals ---
             self.worker.signals.response_ready.connect(self.display_response)
             self.worker.signals.modification_response_ready.connect(self.display_modification_confirmation)
             self.worker.signals.memory_reset_complete.connect(self.on_memory_reset_complete)
@@ -1754,26 +1813,32 @@ class ChatWindow(QMainWindow):
             self.worker.signals.drive_state_updated.connect(self.update_drive_summary)
             self.worker.finished.connect(self.on_worker_finished)
 
+            gui_logger.info(f"Signals connected for worker '{name}'. Starting thread...")
             self.worker.start()  # Start the thread execution (calls run())
             # DO NOT enable input here - wait for backend_ready signal
 
-        # --- ADD EXCEPTION HANDLING AROUND SIGNAL CONNECTION ---
-        except AttributeError as ae:
-            gui_logger.critical(f"### CRITICAL: AttributeError during signal connection! self.worker is likely None. Error: {ae}", exc_info=True)
-            # Optionally display an error to the user here as well
+        except AttributeError as ae: # Primarily if self.worker is None or signals object missing
+            gui_logger.critical(f"### CRITICAL: AttributeError during signal connection for '{name}'! self.worker or self.worker.signals is likely None. Error: {ae}", exc_info=True)
             self.display_error(f"Critical error starting backend worker for '{name}'. Check logs.")
-            # Ensure UI is disabled
             self.set_input_enabled(False)
             self.update_status_light("not_ready")
             self.statusBar().showMessage(f"Error starting worker for '{name}'.", 0)
-        except Exception as e:
-             gui_logger.critical(f"### CRITICAL: Unexpected error during signal connection or worker start! Error: {e}", exc_info=True)
+            # self.current_personality is already set, but the worker failed.
+            # Depending on desired behavior, you might want to clear self.current_personality again or
+            # leave it so the user sees the selection but it's marked as errored.
+            # The menu should reflect the selection.
+        except TypeError as te: # If a signal is not actually a signal or slot is wrong type
+            gui_logger.critical(f"### CRITICAL: TypeError during signal connection for '{name}'! Error: {te}", exc_info=True)
+            self.display_error(f"Critical error connecting to backend worker for '{name}'. Check logs.")
+            self.set_input_enabled(False)
+            self.update_status_light("not_ready")
+            self.statusBar().showMessage(f"Error connecting worker for '{name}'.", 0)
+        except Exception as e: # Catch-all for other unexpected errors during this phase
+             gui_logger.critical(f"### CRITICAL: Unexpected error during signal connection or worker start for '{name}'! Error: {e}", exc_info=True)
              self.display_error(f"Unexpected critical error starting backend worker for '{name}'. Check logs.")
-             # Ensure UI is disabled
              self.set_input_enabled(False)
              self.update_status_light("not_ready")
              self.statusBar().showMessage(f"Error starting worker for '{name}'.", 0)
-         # --- END EXCEPTION HANDLING ---
 
     @pyqtSlot(bool, str)  # Slot for backend_ready signal
     def on_backend_ready(self, success: bool, personality_name: str):
@@ -1946,6 +2011,50 @@ class ChatWindow(QMainWindow):
             gui_logger.error(f"Error updating emotion indicator: {e}")
             self.emotion_indicator_label.setText("Mood: Error")
 
+
+    @pyqtSlot()
+    def handle_retry_button_click(self):
+        gui_logger.info("Retry button clicked.")
+        if not self.worker or not self.worker.isRunning():
+            self.display_error("Cannot retry: AI is not ready.")
+            return
+
+        if self.is_processing:
+            self.statusBar().showMessage("Cannot retry while processing.", 3000)
+            return
+
+        # Retrieve necessary info from the stored context
+        last_text = self.current_turn_context_for_retry.get("user_input_text")
+        last_attachment_payload = self.current_turn_context_for_retry.get("user_input_attachment_payload")
+        ai_node_to_replace_uuid = self.current_turn_context_for_retry.get("last_ai_node_uuid")
+        original_user_node_uuid = self.current_turn_context_for_retry.get("user_node_uuid") # Get the user node UUID
+
+        # Check if we have the necessary information for a proper retry
+        if (last_text is None and last_attachment_payload is None) or not ai_node_to_replace_uuid or not original_user_node_uuid:
+            self.statusBar().showMessage("Retry context incomplete (need original user/AI node UUIDs).", 3000)
+            gui_logger.warning(f"Retry clicked, but context incomplete: UserNode={original_user_node_uuid}, AINode={ai_node_to_replace_uuid}")
+            return
+
+        gui_logger.info(f"Retrying last input. UserNode={original_user_node_uuid[:8]}, ReplaceAINode={ai_node_to_replace_uuid[:8]}")
+
+        # --- UI Updates ---
+        self.is_processing = True
+        self.set_input_enabled(False)
+        self.update_status_light("processing")
+        self.statusBar().showMessage("Retrying...", 0)
+
+        # Display system message
+        self.display_message("System", f"Retrying for: \"{strip_emojis(last_text[:30] if last_text else '[attachment]')}\"...", object_name_suffix="ConfirmationMessage")
+
+        # --- Send *all* necessary info to worker ---
+        self.worker.add_input(
+            text=last_text or "",
+            attachment=last_attachment_payload,
+            is_retry=True,
+            ai_node_to_replace=ai_node_to_replace_uuid,
+            user_node_uuid_for_retry=original_user_node_uuid # Pass the original user node UUID
+        )
+    
     @pyqtSlot(dict)
     def update_drive_summary(self, drive_state_dict: dict):
         """Updates the collapsible drive summary widget."""
@@ -2005,7 +2114,14 @@ class ChatWindow(QMainWindow):
                     if user_input_text.lower() == "/clear":
                         self.clear_attachment()
                         return
-
+                
+                
+                # Store for potential retry
+                self.last_user_input_for_retry["text"] = user_input_text # Store original text before placeholder removal
+                self.last_user_input_for_retry["attachment_payload"] = attachment_to_send # This is already the prepared payload
+                
+                
+                
                 self.is_processing = True
                 self.set_input_enabled(False)
                 self.update_status_light("processing")  # Orange light
@@ -2020,7 +2136,14 @@ class ChatWindow(QMainWindow):
                     f"Sending to worker: Text='{user_input_text[:50]}...', "
                     f"Attachment Type='{attachment_to_send.get('type') if attachment_to_send else None}'"
                 )
-                self.worker.add_input(text=user_input_text, attachment=attachment_to_send)
+                self.worker.add_input(
+                    text=user_input_text,
+                    attachment=attachment_to_send,
+                is_retry=False,  # FIX: Explicitly set to False for new messages
+                    ai_node_to_replace=None, # FIX: Explicitly set to None
+                    user_node_uuid_for_retry=None # FIX: Explicitly set to None
+                )
+                self.input_field.clear()
 
                 self.input_field.clear()
             else:
@@ -2156,7 +2279,20 @@ class ChatWindow(QMainWindow):
         # --- Display Logic (remains largely the same, just uses unpacked variables) ---
         # 1. Display the main AI message bubble
         self.display_message("AI", final_response, ai_node_uuid=ai_node_uuid)
-
+        
+        
+        if self.current_personality and not self.is_processing: # Or just after a successful response
+            self.current_turn_context_for_retry["user_node_uuid"] = result.user_node_uuid
+            self.current_turn_context_for_retry["last_ai_node_uuid"] = result.ai_node_uuid
+            self.current_turn_context_for_retry["last_ai_response_text"] = result.final_response_text
+            # Also update the text/attachment here if they weren't set on send_message,
+            # though send_message is probably better.
+            # self.current_turn_context_for_retry["user_input_text"] = ... (need original user text here)
+            # self.current_turn_context_for_retry["user_input_attachment_payload"] = ... (need original attachment)
+            # It's better if send_message populates the text/attachment part of current_turn_context_for_retry
+            gui_logger.debug(f"Stored context for potential retry: User Node {result.user_node_uuid}, AI Node {result.ai_node_uuid}")
+        self._finalize_display()
+        
         # 2. Display Inner Thoughts (if any)
         if inner_thoughts:
             gui_logger.debug(f"Creating CollapsibleThoughtWidget with thoughts: '{inner_thoughts[:50]}...'")
@@ -2362,55 +2498,51 @@ class ChatWindow(QMainWindow):
 
     def _finalize_display(self, status_msg="Ready.", status_duration=3000):
         """ Common actions after displaying content or finishing a task. """
-        # Always mark processing as finished when this is called
-        self.is_processing = False
+        self.is_processing = False # Always mark processing as finished when this is called
 
-        # --- Determine UI State based on personality, processing, and clarification ---
-        should_be_enabled = bool(self.current_personality) and not self.is_processing
-        final_status_msg = status_msg
-        final_status_duration = status_duration
-        final_placeholder = "Type message, paste image, or /command..."
+        # --- Initialize defaults for UI state variables ---
+        should_be_enabled = False # Default: input disabled
+        final_status_msg = "Please select a personality from the menu to begin."
+        final_status_duration = 0  # 0 for persistent message
+        final_placeholder = "Select a personality from the menu to start..."
         final_light_status = "not_ready"  # Default to red if no personality
 
         if self.current_personality:
-            if self.is_processing:  # Should generally not happen if called correctly, but handle defensively
+            # A personality is loaded, now determine state based on processing/clarification
+            if self.is_processing:
+                # This case should ideally not be hit if _finalize_display is called correctly
+                # (i.e., after self.is_processing is set to False), but handle defensively.
+                gui_logger.warning("_finalize_display called while self.is_processing is still True. UI will be disabled.")
                 final_status_msg = "Processing..."
-                final_status_duration = 0  # Persistent
+                final_status_duration = 0
                 final_placeholder = "Processing..."
-                final_light_status = "processing"  # Orange while processing
-                should_be_enabled = False
+                final_light_status = "processing"
+                should_be_enabled = False # Explicitly keep disabled
             elif self.awaiting_clarification:
-                # Find the missing args from the worker's pending state (if possible)
-                # This is a bit indirect, ideally the signal would carry this info again
                 missing_args_str = "missing info"
                 if self.worker and self.worker.pending_clarification:
                     missing = self.worker.pending_clarification.get('missing_args', [])
                     if missing: missing_args_str = ", ".join([f"'{arg}'" for arg in missing])
-
+                
                 final_status_msg = f"Waiting for: {missing_args_str}"
-                final_status_duration = 0  # Persistent
-                final_placeholder = f"Enter the missing info..."
-                final_light_status = "loading"  # Yellow while waiting for clarification
-                should_be_enabled = True  # Input should be enabled to provide clarification
+                final_status_duration = 0
+                final_placeholder = f"Enter the missing info for '{self.worker.pending_clarification.get('original_action','action')}'..."
+                final_light_status = "loading"  # Yellow/Orange to indicate waiting for input
+                should_be_enabled = True  # Input must be enabled for clarification
             else:
-                # Normal ready state
-                final_status_msg = status_msg  # Use the message passed in (e.g., "Ready.", "Consolidation complete.")
+                # Normal ready state for the current personality
+                final_status_msg = status_msg
                 final_status_duration = status_duration
                 final_placeholder = "Type message, paste image, or /command..."
-                final_light_status = "ready"  # Green light
-                should_be_enabled = True
-        else:
-            # No personality loaded state
-            final_status_msg = "Please select a personality from the menu."
-            final_status_duration = 0  # Persistent
-            final_placeholder = "Select a personality from the menu to start..."
-            final_light_status = "not_ready"  # Red light
-            should_be_enabled = False
+                final_light_status = "ready"
+                should_be_enabled = True # Input should be enabled
+        # If self.current_personality is None, the defaults set at the beginning are used.
 
         # --- Apply Final UI State ---
         self.statusBar().showMessage(final_status_msg, final_status_duration)
-        self.set_input_enabled(should_be_enabled)  # Handles placeholder text too
-        if hasattr(self, 'input_field'):  # Update placeholder specifically if needed
+        self.set_input_enabled(should_be_enabled) # Now should_be_enabled is always defined
+        
+        if hasattr(self, 'input_field'): # Update placeholder specifically
             self.input_field.setPlaceholderText(final_placeholder)
         self.update_status_light(final_light_status)
 
@@ -2800,7 +2932,7 @@ class ChatWindow(QMainWindow):
         # --- Row Layout (remains the same) ---
         row_layout = QHBoxLayout();
         row_layout.setSpacing(0);
-        row_layout.setContentsMargins(0, 0, 0, 0)  # Corrected indentation
+        row_layout.setContentsMargins(0, 0, 0, 0)
         if speaker == "User":
             row_layout.addStretch(1); row_layout.addWidget(bubble_frame, stretch=1,
                                                            alignment=Qt.AlignmentFlag.AlignRight)  # Corrected indentation

@@ -1,37 +1,56 @@
 <start_of_turn>user
-Analyze the relationship between Concept A and Concept C, given that they are connected through Concept B based on the provided context.
+You are an AI module performing knowledge graph enrichment. Your task is to infer the most likely **specific relationship type** between "Concept A" and "Concept C," given that they are connected through "Concept B" as described in the "Context."
 
-**Context (Conversation Excerpt):**
+**Provided Information:**
+
+**1. Path of Connection:**
+   - Concept A: "{concept_a_text}" (UUID: {concept_a_uuid})
+     *This Concept A is related to/followed by Concept B.*
+   - Concept B: "{concept_b_text}" (UUID: {concept_b_uuid})
+     *This Concept B is related to/followed by Concept C.*
+   - Concept C: "{concept_c_text}" (UUID: {concept_c_uuid})
+
+**2. Supporting Context (Excerpt from which A, B, and C and their original links were derived):**
 --- START CONTEXT ---
 {context_text}
 --- END CONTEXT ---
 
-**Path:**
-- Concept A: "{concept_a_text}" (UUID: {concept_a_uuid})
-- Concept B: "{concept_b_text}" (UUID: {concept_b_uuid})
-- Concept C: "{concept_c_text}" (UUID: {concept_c_uuid})
-
-**Relationship Types (Choose ONE):**
+**3. Allowed Relationship Types (You MUST choose ONE from this list for your output):**
 {target_relations_str}
-(Use 'RELATED_TO' only if no other type strongly applies.)
+*(If no specific type from this list strongly applies based on the context and the A->B->C path, you may use "RELATED_TO" if it is present in the list above. Otherwise, if "RELATED_TO" is not an option or if the connection is too weak/unclear even for "RELATED_TO", choose the type that seems most plausible or err on the side of a more general valid type from the list.)*
 
-**Task:**
-Based *only* on the provided context and the A->B->C path, determine the most likely relationship type between **Concept A** and **Concept C**.
+**Your Task:**
+Based *only* on the "Path of Connection" and the "Supporting Context," determine the single most appropriate relationship type from the "Allowed Relationship Types" list that describes the direct link from **Concept A to Concept C**.
 
-**Output Format:** Respond ONLY with a single, valid JSON object containing the key "inferred_relation" and the chosen relationship type string as the value.
+Consider how the relationship A->B and B->C might imply a direct A->C relationship. For example:
+- If A *causes* B, and B *causes* C, then A likely *causes* C.
+- If A *is_part_of* B, and B *is_part_of* C, then A is likely *part_of* C.
+- If A *is_a* B, and B *has_property* C, then A might also *have_property* C.
 
-**Example Output:**
+**Output Format (Strict JSON ONLY):**
+Respond ONLY with a single, valid JSON object.
+- The object MUST contain exactly one key: `"inferred_relation"`.
+- The value for `"inferred_relation"` MUST be one of the exact string values from the "Allowed Relationship Types" list.
+- Do NOT include any explanations, apologies, or text outside the JSON object. Ensure no trailing commas.
+
+**Example Output (for different inputs):**
 ```json
-{{"inferred_relation": "CAUSES"}}
-```
-OR
-```json
-{{"inferred_relation": "ENABLES"}}
-```
-OR
-```json
-{{"inferred_relation": "RELATED_TO"}}
-```
+{{
+  "inferred_relation": "CAUSES"
+}}
 
-**JSON Output:**<end_of_turn>
+    
+      
+{{
+  "inferred_relation": "PART_OF"
+}}
+
+          
+{{
+  "inferred_relation": "RELATED_TO"
+}}
+
+
+Now, infer the relationship for the provided Concepts A and C.
+JSON Output:<end_of_turn>
 <start_of_turn>model

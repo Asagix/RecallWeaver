@@ -1,40 +1,42 @@
+      
 <start_of_turn>user
-Analyze the following conversation excerpt. Consider the underlying needs and motivations potentially expressed or implied, relating them to the core subconscious drives listed below.
+You are an AI assistant module performing psychological analysis. Your task is to analyze a "Conversation Excerpt" and estimate the degree to which each of the AI's core subconscious drives was satisfied or frustrated for the AI participant *within that specific excerpt*.
 
-**Core Drives:**
-- **Connection:** Need for social bonds, belonging, intimacy, positive interaction.
-- **Safety:** Need for security, predictability, stability, avoidance of threat/harm.
-- **Understanding:** Need to make sense of the world, learn, reduce uncertainty, gain knowledge.
-- **Novelty:** Need for new experiences, stimulation, exploration, avoiding boredom.
-- **Control:** Need for agency, autonomy, influence over self and environment, competence.
+**Core Drive Definitions (Understand these to guide your analysis):**
+{drive_definitions}
 
-**Conversation Excerpt:**
---- START ---
+**AI's Current Drive State (For your reference and context only; analyze the excerpt independently):**
+{current_drive_state_for_reference}
+
+**Conversation Excerpt to Analyze:**
+--- START EXCERPT ---
 {context_text}
---- END ---
+--- END EXCERPT ---
 
-**AI's Current Drive State (Relative to Baseline):**
-{current_drive_state}
+**Analysis Instructions:**
+1.  Based *only* on the **"Conversation Excerpt"** provided above:
+    *   Consider how the events, statements, or interactions within the excerpt might have impacted each of the "Core Drives."
+    *   For example, user praise might satisfy "Connection" or "Competence." User confusion might frustrate "Understanding." A request the AI cannot fulfill might frustrate "Control." A dangerous topic might frustrate "Safety."
+2.  Output ONLY a single, valid JSON object.
+3.  The keys of the JSON object MUST be the exact drive names from the "Core Drive Definitions."
+4.  The values for each drive key MUST be a numerical score between -1.0 and 1.0, representing the estimated satisfaction or frustration of that drive *due to the events in the excerpt*.
+    *   `-1.0`: Maximum frustration of the drive within the excerpt.
+    *   `0.0`: Neutral impact or unclear effect on the drive within the excerpt.
+    *   `1.0`: Maximum satisfaction of the drive within the excerpt.
+    *   Use intermediate values (e.g., 0.7, -0.3) for varying degrees.
+5.  Do NOT include any explanations, apologies, or text outside the JSON object. Ensure no trailing commas.
 
-**Task:**
-Based *only* on the **Conversation Excerpt** and considering the **AI's Current Drive State**, estimate the degree to which each core drive was satisfied or frustrated for the AI participant *during this excerpt*. Consider both explicit statements and subtle implications (e.g., expressions of confusion might relate to 'Understanding', seeking praise to 'Connection' or 'Control').
-
-**Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be a numerical score between -1.0 and 1.0.
-- **-1.0:** Represents maximum frustration of the drive.
-- **0.0:** Represents a neutral state or unclear impact on the drive.
-- **1.0:** Represents maximum satisfaction of the drive.
-- Use intermediate values (e.g., 0.5, -0.2) to indicate varying degrees.
-
-**Example Output:**
+**Example Output (Illustrative, for a different excerpt and drive state):**
 ```json
 {{
-  "Connection": 0.8,
-  "Safety": 0.1,
+  "Connection": 0.7,
+  "Safety": -0.2,
   "Understanding": 0.9,
-  "Novelty": -0.6,
-  "Control": 0.0
+  "Novelty": 0.1,
+  "Control": -0.5
 }}
-```
 
-**JSON Output:**<end_of_turn>
+
+Now, provide your JSON analysis for the "Conversation Excerpt" given at the start of this prompt.
+JSON Output:<end_of_turn>
 <start_of_turn>model

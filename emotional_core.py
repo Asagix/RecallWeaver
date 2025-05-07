@@ -40,6 +40,11 @@ DEFAULT_EMOTIONAL_CORE_CONFIG = {
     "emotion_model_name": "SamLowe/roberta-base-go_emotions", # Example model
     "analysis_prompt_file": "emotional_analysis_prompt.txt",
     "llm_task_name": "emotional_analysis", # Task name in main config's llm_models
+
+    # --- Device Configuration Defaults ---
+    "device_preference": "auto",  # Options: "auto", "cuda", "cpu"
+    "min_vram_gb_for_emotion_model": 1.0, # Minimum free VRAM in GB
+
     "mood_valence_factor": 0.3, # How much EmotionalCore valence influences final mood
     "mood_arousal_factor": 0.2, # How much EmotionalCore arousal influences final mood
     "store_insights_enabled": False, # Whether to write insights back to KG
@@ -116,24 +121,59 @@ class EmotionalCore:
 
     def _load_config(self) -> dict:
         """Loads the emotional_core specific configuration."""
-        core_config = self.main_config.get('emotional_core', {})
-        # Merge with defaults to ensure all keys exist
-        merged_config = DEFAULT_EMOTIONAL_CORE_CONFIG.copy()
-        # Deep merge for needs_fears_prefs_definitions if it exists in core_config
-        if 'needs_fears_prefs_definitions' in core_config:
-            merged_config['needs_fears_prefs_definitions'] = {
-                **DEFAULT_EMOTIONAL_CORE_CONFIG.get('needs_fears_prefs_definitions', {}),
-                **core_config.get('needs_fears_prefs_definitions', {})
-            }
-            # Further deep merge for needs, fears, preferences individually
-            for key in ['needs', 'fears', 'preferences']:
-                if key in core_config.get('needs_fears_prefs_definitions', {}):
-                     merged_config['needs_fears_prefs_definitions'][key] = {
-                         **DEFAULT_EMOTIONAL_CORE_CONFIG.get('needs_fears_prefs_definitions', {}).get(key, {}),
-                         **core_config.get('needs_fears_prefs_definitions', {}).get(key, {})
-                     }
+        main_app_ec_config = self.main_config.get('emotional_core', {})
 
-        merged_config.update({k: v for k, v in core_config.items() if k != 'needs_fears_prefs_definitions'})
+        # Start with a deep copy of the defaults to ensure all nested structures exist
+        merged_config = {}
+        # Manually deep copy default dictionary structures to avoid modifying the original DEFAULT_EMOTIONAL_CORE_CONFIG
+        for k, v in DEFAULT_EMOTIONAL_CORE_CONFIG.items():
+            if isinstance(v, dict):
+                merged_config[k] = v.copy() # Shallow copy for first level dicts
+                if k == 'needs_fears_prefs_definitions': # Deeper copy for this specific nested structure
+                    merged_config[k] = {
+                        nk: nv.copy() if isinstance(nv, dict) else nv 
+                        for nk, nv in v.items()
+                    }
+                    for sub_key in ['needs', 'fears', 'preferences']:
+                        if sub_key in merged_config[k] and isinstance(merged_config[k][sub_key], dict):
+                             merged_config[k][sub_key] = merged_config[k][sub_key].copy()
+
+            else:
+                merged_config[k] = v
+        
+        # Now, intelligently update merged_config with settings from main_app_ec_config
+        for key, value_from_app_config in main_app_ec_config.items():
+            if key == 'needs_fears_prefs_definitions':
+                if isinstance(value_from_app_config, dict):
+                    # Ensure the base key exists in merged_config
+                    if 'needs_fears_prefs_definitions' not in merged_config or not isinstance(merged_config['needs_fears_prefs_definitions'], dict):
+                        merged_config['needs_fears_prefs_definitions'] = {} # Initialize if missing in defaults (should not happen)
+                    
+                    # Deep merge this specific dictionary
+                    default_nfp_defs = DEFAULT_EMOTIONAL_CORE_CONFIG.get('needs_fears_prefs_definitions', {})
+                    app_nfp_defs = value_from_app_config # Already know it's a dict
+
+                    # Merge top-level keys like 'needs', 'fears', 'preferences'
+                    for nfp_key in ['needs', 'fears', 'preferences']:
+                        default_sub_dict = default_nfp_defs.get(nfp_key, {})
+                        app_sub_dict = app_nfp_defs.get(nfp_key, {})
+
+                        if not isinstance(merged_config['needs_fears_prefs_definitions'].get(nfp_key), dict):
+                             merged_config['needs_fears_prefs_definitions'][nfp_key] = {}
+
+                        if isinstance(default_sub_dict, dict) and isinstance(app_sub_dict, dict):
+                            merged_config['needs_fears_prefs_definitions'][nfp_key] = {
+                                **default_sub_dict,
+                                **app_sub_dict
+                            }
+                        elif isinstance(app_sub_dict, dict): # If default didn't have it or wasn't dict
+                             merged_config['needs_fears_prefs_definitions'][nfp_key] = app_sub_dict.copy()
+                        # If default had it but app_config doesn't, it's already there from default.
+                else:
+                    logger.warning(f"Config for 'needs_fears_prefs_definitions' is not a dictionary. Using defaults.")
+                    # It will use the one from DEFAULT_EMOTIONAL_CORE_CONFIG already in merged_config
+            else: # For other top-level keys
+                merged_config[key] = value_from_app_config # Direct overwrite/add
 
         logger.debug(f"EmotionalCore configuration loaded: {merged_config}")
         return merged_config
@@ -149,26 +189,65 @@ class EmotionalCore:
             logger.warning("No emotion_model_name specified in config. Cannot load emotion classifier.")
             return
 
+        device_preference = self.config.get("device_preference", "auto").lower()
+        min_vram_gb = self.config.get("min_vram_gb_for_emotion_model", 1.0)
+
+        selected_device_str = "cpu" # Default to CPU
+        # The transformers pipeline can take an integer (0 for cuda:0, -1 for CPU) or a string ('cuda:0', 'cpu')
+        # We will determine the torch device string and then convert to integer for pipeline if it handles it better,
+        # or pass the string directly. Let's aim for string "cuda:0" or "cpu".
+        # For the Hugging Face pipeline, device=0 means cuda:0, device=-1 means cpu.
+
+        if device_preference == "cuda" or (device_preference == "auto" and torch.cuda.is_available()):
+            if torch.cuda.is_available():
+                try:
+                    # Check for a specific GPU or use default 0
+                    # For simplicity, we'll use device 0. Multi-GPU selection could be more complex.
+                    gpu_index = 0
+                    torch.cuda.set_device(gpu_index) # Ensure context is on the right device for mem_get_info
+                    free_vram_bytes, total_vram_bytes = torch.cuda.mem_get_info(gpu_index)
+                    free_vram_gb = free_vram_bytes / (1024**3)
+                    logger.info(f"GPU {gpu_index}: Found {free_vram_gb:.2f}GB free VRAM (Total: {total_vram_bytes / (1024**3):.2f}GB). Required: {min_vram_gb}GB.")
+                    if free_vram_gb >= min_vram_gb:
+                        selected_device_str = f"cuda:{gpu_index}"
+                        logger.info(f"Sufficient VRAM available on GPU {gpu_index}. Selecting GPU.")
+                    else:
+                        logger.warning(f"Insufficient VRAM on GPU {gpu_index} ({free_vram_gb:.2f}GB free, {min_vram_gb}GB required). Falling back to CPU.")
+                except Exception as e:
+                    logger.error(f"Error checking GPU VRAM: {e}. Falling back to CPU.", exc_info=True)
+            elif device_preference == "cuda": # "cuda" was specifically requested but not available
+                logger.warning("CUDA device preference selected, but CUDA is not available. Falling back to CPU.")
+            # If 'auto' and CUDA not available, it will naturally use CPU default.
+
+        # Determine the device argument for the pipeline
+        # pipeline device: integer for GPU index or -1 for CPU.
+        # Or, it can often take "cuda:0", "cpu" directly.
+        # Let's use the integer convention which is widely supported for 'device' parameter.
+        pipeline_device_arg = 0 if selected_device_str.startswith("cuda") else -1
+        if selected_device_str.startswith("cuda"):
+            # Extract index if multi-GPU becomes a feature, e.g. "cuda:1" -> 1
+            try:
+                pipeline_device_arg = int(selected_device_str.split(":")[1])
+            except (IndexError, ValueError):
+                pipeline_device_arg = 0 # Default to GPU 0 if parsing fails
+
+        logger.info(f"Attempting to load emotion model on device: {selected_device_str} (pipeline arg: {pipeline_device_arg})")
+
         try:
             logger.info(f"Loading emotion classification pipeline: {model_name}...")
-            # Determine device (use GPU if available and configured)
-            # TODO: Add device selection logic based on config/availability
-            device = 0 if torch.cuda.is_available() else -1 # Basic check: use GPU 0 if available
-            logger.info(f"Using device {device} for emotion model.")
-
-            # Load pipeline (handles model and tokenizer)
-            # Using 'text-classification' pipeline is simpler
             self.emotion_classifier = pipeline(
                 "text-classification",
                 model=model_name,
-                tokenizer=model_name, # Often same as model
-                device=device,
-                top_k=None # Return probabilities for all labels
+                tokenizer=model_name,
+                device=pipeline_device_arg, # Use the integer index or -1 for CPU
+                top_k=None
             )
-            logger.info(f"Emotion classification pipeline loaded successfully for model: {model_name}")
+            logger.info(f"Emotion classification pipeline loaded successfully for model: {model_name} on {selected_device_str}")
         except Exception as e:
-            logger.error(f"Failed to load emotion classification pipeline '{model_name}': {e}", exc_info=True)
+            logger.error(f"Failed to load emotion classification pipeline '{model_name}' on device {selected_device_str} (pipeline arg: {pipeline_device_arg}): {e}", exc_info=True)
             self.emotion_classifier = None
+            if selected_device_str != "cpu": # If GPU load failed, offer a fallback suggestion
+                logger.info("Consider setting 'device_preference: cpu' in config.yaml if GPU issues persist.")
 
     def _load_vader(self):
         """Initializes the VADER sentiment analyzer."""
@@ -260,59 +339,83 @@ class EmotionalCore:
             logger.error("Missing analysis_prompt_file or llm_task_name in EmotionalCore config.")
             return None
 
-        prompt_template = self.client._load_prompt(prompt_file) # Use client's loader
+        prompt_template = self.client._load_prompt(prompt_file)
         if not prompt_template:
             logger.error(f"Failed to load emotional analysis prompt: {prompt_file}")
             return None
 
-        # Format definitions for the prompt
+        # Format definitions (remains the same)
         needs_str = "\n".join([f"- {name}: {desc}" for name, desc in self.needs_defs.items()])
         fears_str = "\n".join([f"- {name}: {desc}" for name, desc in self.fears_defs.items()])
-        # Correctly format preferences based on the updated structure
         prefs_str_parts = []
         for name, pref_data in self.prefs_defs.items():
             if isinstance(pref_data, dict):
                 pref_type = pref_data.get('type', 'N/A')
                 pref_desc = pref_data.get('description', '')
                 prefs_str_parts.append(f"- {name} ({pref_type}): {pref_desc}")
-            else: # Fallback for old string format (though default is now dict)
+            else:
                 prefs_str_parts.append(f"- {name}: {pref_data}")
         prefs_str = "\n".join(prefs_str_parts)
 
+        # Escape braces (remains the same)
+        safe_user_input = user_input.replace('{', '{{').replace('}', '}}')
+        safe_history_context = history_context.replace('{', '{{').replace('}', '}}')
+        safe_kg_context = kg_context.replace('{', '{{').replace('}', '}}')
+        safe_needs_str = needs_str.replace('{', '{{').replace('}', '}}')
+        safe_fears_str = fears_str.replace('{', '{{').replace('}', '}}')
+        safe_prefs_str = prefs_str.replace('{', '{{').replace('}', '}}')
+
+        # --- Moved variable declaration outside try block ---
+        full_prompt = None # Initialize full_prompt to None
 
         try:
+            # Attempt to format the prompt
             full_prompt = prompt_template.format(
-                user_input=user_input,
-                history_context=history_context,
-                kg_context=kg_context,
-                needs_definitions=needs_str,
-                fears_definitions=fears_str,
-                preferences_definitions=prefs_str
+                user_input=safe_user_input,
+                history_context=safe_history_context,
+                kg_context=safe_kg_context,
+                needs_definitions=safe_needs_str,
+                fears_definitions=safe_fears_str,
+                preferences_definitions=safe_prefs_str
             )
+            # --- Moved logging inside the try block, after successful format ---
+            logger.debug(f"Sending emotional analysis LLM prompt (Task: {llm_task}):\n{full_prompt[:500]}...")
+
+        # --- Exception handling remains the same, they just return None ---
         except KeyError as e:
             logger.error(f"Missing placeholder in emotional analysis prompt template '{prompt_file}': {e}")
             return None
+        except IndexError as e:
+            logger.error(f"Positional placeholder error in emotional analysis prompt template '{prompt_file}': {e}. Check the prompt file for stray {{}} or {{0}}.", exc_info=True)
+            logger.error(f"Problematic Template Snippet ({prompt_file}):\n```\n{prompt_template[:500]}...\n```")
+            return None
         except Exception as e:
             logger.error(f"Error formatting emotional analysis prompt: {e}", exc_info=True)
+            logger.error(f"Problematic Template Snippet ({prompt_file}):\n```\n{prompt_template[:500]}...\n```")
             return None
 
-        logger.debug(f"Sending emotional analysis LLM prompt (Task: {llm_task}):\n{full_prompt[:500]}...")
+        # --- Check if formatting failed before calling LLM ---
+        if full_prompt is None:
+            # This case shouldn't be reached if the except blocks return None,
+            # but it's a defensive check.
+            logger.error("Formatting failed, cannot call LLM for emotional analysis.")
+            return None
+
+        # --- Call LLM (Now guaranteed full_prompt is assigned if we reach here) ---
         llm_response = self.client._call_configured_llm(llm_task, prompt=full_prompt)
 
+        # --- Parse response (remains the same) ---
         if not llm_response or llm_response.startswith("Error:"):
             logger.error(f"Emotional analysis LLM call failed: {llm_response}")
             return None
 
-        # Parse the expected JSON output
         try:
             logger.debug(f"Raw emotional analysis LLM response:  ```{llm_response}```")
-            # Extract JSON (assuming it's enclosed in ```json ... ``` or just {})
             match = re.search(r'```json\s*(\{.*?\})\s*```|\{.*?\}', llm_response, re.DOTALL)
             if match:
-                json_str = match.group(1) or match.group(0) # Get content from group 1 if exists, else group 0
+                json_str = match.group(1) or match.group(0)
                 parsed_data = json.loads(json_str)
                 logger.info(f"Parsed emotional interpretation from LLM: {parsed_data}")
-                # Basic validation (can be expanded)
                 if isinstance(parsed_data, dict) and all(k in parsed_data for k in ["needs", "fears", "preferences"]):
                     return parsed_data
                 else:
@@ -327,6 +430,7 @@ class EmotionalCore:
         except Exception as e:
             logger.error(f"Unexpected error parsing emotional analysis LLM response: {e}", exc_info=True)
             return None
+
 
     def aggregate_and_combine(self) -> Tuple[str, Dict[str, float]]:
         """
@@ -444,7 +548,7 @@ class EmotionalCore:
         if tendency == "cautious" or valence < -0.3:
             instructions.append("[System Note: Respond cautiously. Avoid making strong commitments or definitive statements if unsure. Prioritize safety and clarity.]")
         elif tendency == "annoyed" or valence < -0.2 and arousal > 0.5:
-            instructions.append("[System Note: Respond concisely and perhaps slightly formally. Avoid overly enthusiastic or effusive language.]")
+            instructions.append("[System Note: Respond concisely and perhaps slightly formally. Avoid overly enthusiastic or effusidve language.]")
         elif tendency == "positive" or valence > 0.5:
             instructions.append("[System Note: Respond warmly and positively. Use encouraging language.]")
 

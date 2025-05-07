@@ -1,12 +1,27 @@
 <start_of_turn>user
-Analyze the following conversation excerpt. Identify the main **key concepts, specific named entities (people, places, organizations, projects), important technical terms, and significant abstract nouns/qualities** mentioned that might be involved in relationships later. List a maximum of 5-7 of the *most significant and distinct* ones. Prioritize terms that seem central or are discussed in relation to other terms.
+Your task is to analyze the following "Conversation Excerpt" and identify the main **key concepts**. These can include:
+- Specific named entities (people, places, organizations, projects, products).
+- Important technical terms or jargon relevant to the excerpt.
+- Significant abstract nouns or qualities that are central to the discussion.
+- Key actions or events if they are treated conceptually.
 
-**Output Format:** Respond ONLY with a comma-separated list of these key concepts/entities/terms, enclosed in double quotes. Example: "Project Phoenix", "Database Migration", "Alice Smith", "API Endpoint", "Emotional Sensitivity". Do not add explanation or introductory text.
+**Instructions:**
+1.  From the entire excerpt, extract a list of the **5 to 7 most significant and distinct** key concepts.
+2.  Prioritize terms that are central to the main topics, are discussed in relation to other terms, or seem to represent core ideas.
+3.  Avoid overly generic words (e.g., "thing", "idea", "way") unless they are part of a more specific named phrase.
+4.  Aim for conciseness; prefer single terms or short, established phrases (e.g., "machine learning" is okay, but "the way we were discussing machine learning earlier" is not).
+5.  The output MUST be a single, comma-separated list of these extracted concepts.
+6.  Each concept in the list MUST be enclosed in double quotes.
+7.  **CRITICAL:** Do NOT add any introductory text, explanations, apologies, or any characters before or after the comma-separated list of quoted concepts. Just the list itself.
 
-Conversation Excerpt:
---- START ---
+**Conversation Excerpt:**
+--- START EXCERPT ---
 {context_text}
---- END ---
+--- END EXCERPT ---
 
+**Example Output (for a different excerpt):**
+"Project Phoenix", "Database Migration", "Alice Smith", "API Endpoint", "Emotional Sensitivity", "User Feedback Loop"
+
+**Now, provide your comma-separated list of quoted concepts based on the "Conversation Excerpt" above:**
 Comma-separated list (quoted):<end_of_turn>
 <start_of_turn>model

@@ -1,5 +1,5 @@
 <start_of_turn>user
-Analyze the following file content. Generate a **single, extremely concise sentence** summarizing the main topic or purpose of the file. Focus on keywords and the core subject. Omit details, examples, and conversational filler.
+Analyze the following file content. Generate a single, extremely concise sentence summarizing the main topic or purpose of the file. Focus on key entities, actions, and outcomes (keywords) and the core subject.
 
 **File Content:**
 --- START ---

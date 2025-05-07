@@ -1,28 +1,40 @@
 <start_of_turn>user
-Analyze the following conversation context and the extracted key concepts. Identify any analogies *explicitly stated or strongly implied* where one concept is compared to another (e.g., "Concept A is like Concept B", "Concept X functions similarly to Concept Y").
+Analyze the following conversation context and the extracted key concepts. Your task is to identify any analogies *explicitly stated or strongly implied* where one concept is compared to another (e.g., "Concept A is like Concept B," "Concept X functions similarly to Concept Y," "Think of Concept M as a type of Concept N").
 
-**Concepts (Use ONLY these exact strings):**
+**Concepts (You MUST use ONLY these exact strings for the concepts in your output):**
 {concept_list_str}
 
-**Conversation Context:**
---- START ---
+**Conversation Context (Use this to find the analogies):**
+--- START CONTEXT ---
 {context_text}
---- END ---
+--- END CONTEXT ---
 
-**Output Format:** Respond ONLY with a valid JSON list of lists. Each inner list represents one identified analogy and MUST contain exactly two concept strings `[["Concept A", "Concept B"]]`, indicating A is analogous to B.
-- Use the exact concept strings from the list provided above.
-- Only include concepts from the list in the pairs.
-- **CRITICAL:** If no analogies are found between the provided concepts based on the context, output **only** an empty JSON list `[]`.
-- Do NOT invent analogies or use concepts not in the list.
-- **CRITICAL:** Ensure the output is a single, valid JSON list of lists. **Strict JSON format is required.** Do not include trailing commas. Example: `[["Concept A", "Concept B"], ["Concept C", "Concept D"]]`
+**Output Format and Rules:**
+1.  Respond ONLY with a single, valid JSON list of lists.
+2.  Each inner list represents one identified analogy and MUST contain exactly two concept strings: `["Concept A", "Concept B"]`, indicating "Concept A" is analogous to "Concept B".
+3.  **CRITICAL:** Both concept strings in each pair MUST be exact matches from the **"Concepts"** list provided above. Do not shorten, paraphrase, or invent concepts. If a concept involved in a potential analogy is not in the provided list, DO NOT include that analogy.
+4.  Only include analogies that are clearly supported by the "Conversation Context".
+5.  If no valid analogies are found between the provided concepts based on the context, output **only** an empty JSON list: `[]`.
+6.  Do not include explanations, conversational text, or any characters outside the JSON list structure. Ensure no trailing commas.
 
-**Example Output (for different concepts/context):**
+**Example Input (Illustrative - your concepts and context will differ):**
+Concepts:
+- "Human Brain"
+- "Central Processing Unit (CPU)"
+- "City Road Network"
+- "Data Bus"
+- "Information Superhighway"
+Conversation Context:
+The CPU is often thought of as the brain of the computer. Data flows through the system like traffic on a city's road network, and the main data bus acts like the information superhighway connecting different parts.
+
+**Example Output (for the illustrative input above):**
 ```json
 [
-  ["Memory System", "Filing Cabinet"],
-  ["Neural Network", "Brain"]
+  ["Central Processing Unit (CPU)", "Human Brain"],
+  ["Data Bus", "Information Superhighway"],
+  ["Data Bus", "City Road Network"] 
 ]
-```
 
-**JSON Output:**<end_of_turn>
+Now, using the actual Concepts and Conversation Context provided at the beginning of this prompt, provide your JSON Output:
+JSON Output:<end_of_turn>
 <start_of_turn>model

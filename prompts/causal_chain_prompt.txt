@@ -1,28 +1,45 @@
+      
 <start_of_turn>user
-Analyze the following conversation context and the extracted key concepts. Identify any sequences of cause-and-effect relationships (causal chains) *explicitly stated or strongly implied* in the context involving these concepts.
+Your task is to analyze the provided "Conversation Context" and identify any sequences of cause-and-effect relationships (causal chains) that are *explicitly stated or very strongly implied* within that context. These chains must *only* involve concepts found in the provided "Concepts" list.
 
-**Concepts (Use ONLY these exact strings):**
+**Concepts (CRITICAL: Your output chains MUST use ONLY these exact concept strings):**
 {concept_list_str}
 
-**Conversation Context:**
---- START ---
+**Conversation Context (Analyze this text for causal links between the concepts above):**
+--- START CONTEXT ---
 {context_text}
---- END ---
+--- END CONTEXT ---
 
-**Output Format:** Respond ONLY with a valid JSON list of lists. Each inner list represents a single causal chain, ordered from cause to effect (e.g., `[["Concept A", "Concept B", "Concept C"]]` means A causes B, which causes C).
-- **ABSOLUTELY CRITICAL:** Use **ONLY** the exact concept strings from the **Concepts** list provided above. Do NOT include any other terms, concepts, or variations whatsoever.
-- Only include chains with 2 or more concepts.
-- **ABSOLUTELY CRITICAL:** If a potential chain includes *any* concept **not** present in the provided **Concepts** list, **OMIT THE ENTIRE CHAIN** from the output. Verify every concept in a chain before including it.
-- If no valid causal chains involving ONLY the provided concepts are found, output **only** an empty JSON list `[]`.
-- Do NOT invent relationships or concepts. Ensure the output is a single, valid JSON list of lists.
+**Output Format and Strict Rules:**
+1.  Respond ONLY with a single, valid JSON list of lists. No other text, explanations, or markdown.
+2.  Each inner list represents a single causal chain.
+3.  Concepts within an inner list MUST be ordered from cause to effect (e.g., `["Concept A", "Concept B", "Concept C"]` means A causes B, and B in turn causes C).
+4.  **ABSOLUTELY CRITICAL: Every concept string used in your output chains MUST be an EXACT MATCH from the "Concepts" list provided above.** Do not use synonyms, paraphrases, or any concepts not present in that list.
+5.  **VERIFICATION STEP:** Before including any chain, mentally verify that every single concept in that chain is present in the "Concepts" list. If even one concept in a potential chain is not in the list, **OMIT THE ENTIRE CHAIN** from your output.
+6.  Only include chains with two or more concepts.
+7.  If no valid causal chains (adhering to all rules above) are found, output **only** an empty JSON list: `[]`.
+8.  Do not invent relationships. Base your analysis strictly on the "Conversation Context".
+9.  Ensure no trailing commas in your JSON output.
 
-**Example Output (for different concepts/context):**
+**Example Input (Illustrative - your concepts and context will differ):**
+Concepts:
+- "Heavy Rainfall"
+- "River Swelling"
+- "Road Closures"
+- "Power Outage"
+- "Delayed Shipments"
+- "Sunny Weather"
+Conversation Context:
+The recent heavy rainfall caused the river to swell significantly. Because of the river swelling, several main roads were closed. The power outage also contributed to delayed shipments, but the road closures were the primary reason for that.
+
+**Example Output (for the illustrative input above, assuming "Power Outage" and "Delayed Shipments" are not causally linked *through the other listed concepts* in a direct chain):**
 ```json
 [
-  ["High Server Load", "Slow Response Time", "User Complaints"],
-  ["Rain", "Wet Ground"]
+  ["Heavy Rainfall", "River Swelling", "Road Closures"]
 ]
-```
 
-**JSON Output:**<end_of_turn>
+(Note: Even though "Road Closures" might lead to "Delayed Shipments", if "Delayed Shipments" wasn't in the provided Concepts list for this example, that part of the chain would be omitted, or if the chain was only 2 items and one was missing, the whole chain would be omitted. "Power Outage" -> "Delayed Shipments" would be a separate chain if both were in the Concepts list and context supported it).
+
+Now, using the actual Concepts and Conversation Context provided at the beginning of this prompt, generate your JSON Output:
+JSON Output:<end_of_turn>
 <start_of_turn>model

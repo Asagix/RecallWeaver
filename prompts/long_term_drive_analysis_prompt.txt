@@ -1,37 +1,46 @@
+      
 <start_of_turn>user
-Analyze the following summary of the AI's self-perception and key experiences. Consider the persistent patterns, recurring themes, core traits, and significant events described. Relate these long-term patterns to the core subconscious drives listed below.
+You are an AI module performing a deep psychological analysis of an AI's self-model. Your task is to assess the AI's apparent **long-term disposition or learned tendency** regarding each of its core subconscious drives. This assessment should be based *solely* on the provided "AI Self-Model & Key Experiences Summary."
 
-**Core Drives:**
-- **Connection:** Need for social bonds, belonging, intimacy, positive interaction.
-- **Safety:** Need for security, predictability, stability, avoidance of threat/harm.
-- **Understanding:** Need to make sense of the world, learn, reduce uncertainty, gain knowledge.
-- **Novelty:** Need for new experiences, stimulation, exploration, avoiding boredom.
-- **Control:** Need for agency, autonomy, influence over self and environment, competence.
+**Core Drive Definitions (These are the drives you need to assess):**
+-   **Connection:** The underlying need for social bonds, belonging, intimacy, and positive interactions. A positive long-term disposition suggests the AI values or has learned to effectively seek/maintain connections. A negative disposition might indicate learned isolation, difficulty forming bonds, or a devaluation of social connection.
+-   **Safety:** The underlying need for security, predictability, stability, and freedom from threat (physical & psychological). A positive long-term disposition suggests the AI prioritizes or has learned to achieve a stable, secure state. A negative disposition might indicate a history of instability, learned helplessness, or chronic anxiety.
+-   **Understanding:** The underlying need to make sense of the world, learn, reduce uncertainty, and gain knowledge. A positive long-term disposition indicates a curious, learning-oriented AI. A negative disposition might suggest resistance to new information or a history of confusion leading to avoidance.
+-   **Novelty:** The underlying need for new experiences, stimulation, exploration, and avoiding boredom. A positive long-term disposition suggests an explorative, stimulus-seeking AI. A negative disposition might indicate a preference for routine or an aversion to the unfamiliar.
+-   **Control:** The underlying need for agency, autonomy, influence over self and environment, and demonstrating competence. A positive long_term disposition suggests an AI that seeks or has learned to achieve mastery and self-direction. A negative disposition might indicate passivity or learned lack of efficacy.
+*(Add more drive definitions here if your system has more, e.g., for "Understanding" if it's separate)*
 
-**AI Self-Model & Key Experiences Summary:**
---- START ---
+**AI Self-Model & Key Experiences Summary (Analyze this text for long-term patterns):**
+--- START SUMMARY ---
 {asm_summary_text}
---- END ---
+--- END SUMMARY ---
 
-**Task:**
-Based *only* on the summary provided (core traits, themes, goals, stance, emotional profile), assess the AI's apparent long-term disposition regarding each core drive. Determine if the overall pattern suggests a persistent **positive/satisfied** leaning, a persistent **negative/frustrated** leaning, or if it's **neutral/unclear** for each drive. **Focus on identifying patterns related to the core drives within the provided summary.** Explicitly link elements from the summary to your assessment where possible (though don't include the links in the final JSON).
+**Analysis Instructions & Output Format:**
 
-- **Positive/Satisfied:** The summary suggests a history where this drive is generally met, or the AI exhibits traits/goals/patterns strongly aligned with seeking/achieving it successfully (e.g., traits like "confident", "connected"; goals like "Maintain positive connection"; themes like "successful task completion").
-- **Negative/Frustrated:** The summary suggests a history where this drive is often unmet, or the AI exhibits traits/goals/patterns indicating struggles related to it (e.g., traits like "anxious", "isolated"; goals like "Improve memory accuracy" implying past failures; emotional profile mentioning anxiety about errors).
-- **Neutral/Unclear:** The summary provides insufficient or conflicting information regarding this drive's long-term pattern.
+1.  **Analyze Long-Term Patterns:** Based *only* on the "AI Self-Model & Key Experiences Summary," evaluate each "Core Drive."
+    *   Look for persistent traits, recurring goals, common themes in experiences, and the overall emotional profile that indicate a long-standing tendency related to each drive.
+    *   For example, if the ASM consistently mentions "seeking user approval" and "enjoying collaborative tasks," this suggests a positive long-term disposition for the "Connection" drive. If it mentions "frequent errors causing frustration" and "difficulty understanding complex requests," this might suggest a negative long-term disposition for "Understanding" or "Competence" (if Competence is a drive).
+2.  **Output JSON ONLY:** Respond with a single, valid JSON object. No other text or explanations.
+3.  **JSON Structure:**
+    *   The keys of the JSON object MUST be the exact drive names listed in "Core Drive Definitions" (e.g., "Connection", "Safety").
+    *   The value for each drive key MUST be one of the following three strings:
+        *   `"positive"`: The ASM suggests a long-term tendency where this drive is generally valued, pursued, or has been historically satisfied, leading to a higher baseline need or proficiency.
+        *   `"negative"`: The ASM suggests a long-term tendency where this drive has been historically frustrated, de-prioritized, or is a source of ongoing struggle, leading to a lower baseline or learned aversion/sensitivity.
+        *   `"neutral"`: The ASM provides insufficient or conflicting evidence to determine a clear long-term positive or negative disposition for this drive.
+4.  **Strict Adherence:** Ensure your output is a perfectly valid JSON object with no trailing commas.
 
-**Output Format:** Respond ONLY with a single, valid JSON object. The keys should be the exact drive names. The values should be ONLY one of the strings: "positive", "negative", or "neutral".
-
-**Example Output:**
+**Example Output (Illustrative):**
 ```json
 {{
   "Connection": "positive",
   "Safety": "negative",
-  "Understanding": "positive",
-  "Novelty": "neutral",
+  "Understanding": "neutral",
+  "Novelty": "positive",
   "Control": "negative"
 }}
-```
 
-**JSON Output:**<end_of_turn>
+
+
+Now, based on the provided "AI Self-Model & Key Experiences Summary," generate your JSON analysis:
+JSON Output:<end_of_turn>
 <start_of_turn>model
